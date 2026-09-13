@@ -159,9 +159,9 @@ parse_pipe_file(){
 	jq -Rsc --arg mode "$_mode" '
 		split("\n") | map(select(length>0) | split("|") as $f | select(($f|length)>=4) |
 		if $mode=="results" then {
-			provider:($f[0]//""),source_id:($f[1]//""),label:($f[2]//""),endpoint:($f[3]//""),status:($f[4]//""),reason:($f[5]//""),http:($f[6]//""),latency_ms:(($f[7]//"0")|tonumber?//0),checked_at:(($f[8]//"0")|tonumber?//0),endpoint_ping:($f[9]//""),tunnel_ping:($f[10]//""),loss:($f[11]//""),seen_as:($f[12]//""),node:($f[13]//""),node_location:($f[14]//"")
+			provider:($f[0] // ""),source_id:($f[1] // ""),label:($f[2] // ""),endpoint:($f[3] // ""),status:($f[4] // ""),reason:($f[5] // ""),http:($f[6] // ""),latency_ms:(($f[7] // "0") | tonumber? // 0),checked_at:(($f[8] // "0") | tonumber? // 0),endpoint_ping:($f[9] // ""),tunnel_ping:($f[10] // ""),loss:($f[11] // ""),seen_as:($f[12] // ""),node:($f[13] // ""),node_location:($f[14] // "")
 		} else {
-			provider:($f[0]//""),source_id:($f[1]//""),label:($f[2]//""),endpoint:($f[3]//""),endpoint_ping:($f[4]//""),tunnel_ping:($f[5]//""),loss:($f[6]//""),seen_as:($f[7]//""),node:($f[8]//""),node_location:($f[9]//"")
+			provider:($f[0] // ""),source_id:($f[1] // ""),label:($f[2] // ""),endpoint:($f[3] // ""),endpoint_ping:($f[4] // ""),tunnel_ping:($f[5] // ""),loss:($f[6] // ""),seen_as:($f[7] // ""),node:($f[8] // ""),node_location:($f[9] // "")
 		} end)' "$_file" 2>/dev/null
 }
 method_telegram_scan_results(){ read -r _in 2>/dev/null; [ -s "$SCAN_RESULTS" ] || { printf '{"ok":true,"items":[],"raw_count":0}\n'; return; }; _raw=$(wc -l <"$SCAN_RESULTS"|tr -d ' '); _items=$(parse_pipe_file "$SCAN_RESULTS" results); [ -n "$_items" ] || { printf '{"ok":false,"reason":"parse_error","raw_count":%s,"items":[]}\n' "${_raw:-0}"; return; }; _parsed=$(printf '%s' "$_items"|jq 'length' 2>/dev/null); [ "${_parsed:-0}" -gt 0 ] 2>/dev/null || { printf '{"ok":false,"reason":"parse_error","raw_count":%s,"items":[]}\n' "${_raw:-0}"; return; }; printf '{"ok":true,"raw_count":%s,"items":%s}\n' "${_raw:-0}" "$_items"; }

@@ -10,7 +10,15 @@
 	},
 	"admin/services/podkop-bot/settings": {
 		"title": "Настройки", "order": 15,
+		"action": { "type": "firstchild" }
+	},
+	"admin/services/podkop-bot/settings/main": {
+		"title": "Основные", "order": 5,
 		"action": { "type": "view", "path": "podkop-bot/settings" }
+	},
+	"admin/services/podkop-bot/settings/warpscout": {
+		"title": "WARP Rescue / WARPSCOUT", "order": 10,
+		"action": { "type": "view", "path": "podkop-bot/warpscout" }
 	},
 	"admin/services/podkop-bot/transport": {
 		"title": "Транспорт", "order": 20,
@@ -19,10 +27,6 @@
 	"admin/services/podkop-bot/transport/main": {
 		"title": "Пул прокси", "order": 5,
 		"action": { "type": "view", "path": "podkop-bot/transport" }
-	},
-	"admin/services/podkop-bot/transport/warpscout": {
-		"title": "WARP Rescue", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/warpscout" }
 	},
 	"admin/services/podkop-bot/transport/warp-revolver": {
 		"title": "Револьвер WARP", "order": 15,

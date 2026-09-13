@@ -17,16 +17,12 @@
 		"action": { "type": "firstchild" }
 	},
 	"admin/services/podkop-bot/transport/main": {
-		"title": "Proxy Pool", "order": 5,
+		"title": "Пул прокси", "order": 5,
 		"action": { "type": "view", "path": "podkop-bot/transport" }
 	},
 	"admin/services/podkop-bot/transport/warpscout": {
 		"title": "WARP Rescue", "order": 10,
 		"action": { "type": "view", "path": "podkop-bot/warpscout" }
-	},
-	"admin/services/podkop-bot/transport/warpscout-telegram": {
-		"title": "Telegram qualification", "order": 11,
-		"action": { "type": "view", "path": "podkop-bot/warpscout-telegram-scan" }
 	},
 	"admin/services/podkop-bot/wizard": {
 		"title": "Мастер настройки", "order": 25,
@@ -41,8 +37,12 @@
 		"action": { "type": "view", "path": "podkop-bot/runtime" }
 	},
 	"admin/services/podkop-bot/runtime/warpscout": {
-		"title": "WARP Rescue", "order": 10,
+		"title": "WARP Status", "order": 10,
 		"action": { "type": "view", "path": "podkop-bot/warpscout-runtime" }
+	},
+	"admin/services/podkop-bot/runtime/tg-api-routes": {
+		"title": "TG API Routes", "order": 15,
+		"action": { "type": "view", "path": "podkop-bot/warpscout-telegram-scan" }
 	},
 	"admin/services/podkop-bot/update": {
 		"title": "Обновление", "order": 35,

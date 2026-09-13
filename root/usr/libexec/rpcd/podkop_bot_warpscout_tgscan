@@ -243,12 +243,17 @@ method_telegram_scan_status() {
 
 method_telegram_scan_results() {
 	read -r _in 2>/dev/null
-	[ -s "$SCAN_RESULTS" ] || { printf '{"ok":true,"items":[]}\n'; return; }
-	_items=$(jq -Rn '[inputs | split("|") | select(length >= 15) | {
-		provider:.[0], source_id:.[1], label:.[2], endpoint:.[3], status:.[4], reason:.[5], http:.[6], latency_ms:(.[7]|tonumber? // 0), checked_at:(.[8]|tonumber? // 0),
-		endpoint_ping:.[9], tunnel_ping:.[10], loss:.[11], seen_as:.[12], node:.[13], node_location:.[14]
-	}] | sort_by((if .status=="VALID" then 0 elif (.status|startswith("REACHABLE_")) then 1 else 2 end), (if .provider=="proxy" then 0 else 1 end), (.loss|gsub("%";"")|tonumber? // 999999), .latency_ms, (.tunnel_ping|gsub("[^0-9.]";"")|tonumber? // 999999))' "$SCAN_RESULTS" 2>/dev/null)
-	[ -n "$_items" ] || _items='[]'; printf '{"ok":true,"items":%s}\n' "$_items"
+	[ -s "$SCAN_RESULTS" ] || { printf '{"ok":true,"items":[],"raw_count":0}\n'; return; }
+	_raw=$(wc -l < "$SCAN_RESULTS" 2>/dev/null | tr -d ' '); case "$_raw" in ''|*[!0-9]*) _raw=0;; esac
+	_items=$(jq -Rn '[inputs | split("|") as $f | select(($f|length) >= 9) | {
+		provider:($f[0]//""), source_id:($f[1]//""), label:($f[2]//""), endpoint:($f[3]//""), status:($f[4]//""), reason:($f[5]//""), http:($f[6]//""), latency_ms:(($f[7]//"0")|tonumber? // 0), checked_at:(($f[8]//"0")|tonumber? // 0),
+		endpoint_ping:($f[9]//""), tunnel_ping:($f[10]//""), loss:($f[11]//""), seen_as:($f[12]//""), node:($f[13]//""), node_location:($f[14]//"")
+	}] | sort_by((if .status=="VALID" then 0 elif (.status|startswith("REACHABLE_")) then 1 else 2 end), (if .provider=="proxy" then 0 else 1 end), ((.loss//"")|gsub("%";"")|tonumber? // 999999), .latency_ms, ((.tunnel_ping//"")|gsub("[^0-9.]";"")|tonumber? // 999999))' "$SCAN_RESULTS" 2>/dev/null)
+	_rc=$?
+	if [ "$_rc" -ne 0 ] || [ -z "$_items" ]; then printf '{"ok":false,"reason":"parse_error","raw_count":%s,"items":[]}\n' "$_raw"; return; fi
+	_parsed=$(printf '%s' "$_items" | jq 'length' 2>/dev/null); case "$_parsed" in ''|*[!0-9]*) _parsed=0;; esac
+	if [ "$_raw" -gt 0 ] 2>/dev/null && [ "$_parsed" -eq 0 ] 2>/dev/null; then printf '{"ok":false,"reason":"parse_error","raw_count":%s,"items":[]}\n' "$_raw"; return; fi
+	printf '{"ok":true,"raw_count":%s,"items":%s}\n' "$_raw" "$_items"
 }
 
 method_telegram_scan_cancel() {

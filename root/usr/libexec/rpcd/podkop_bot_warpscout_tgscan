@@ -19,6 +19,7 @@ SCAN_PID="$STATE_DIR/warpscout_tgscan.pid"
 SCAN_LOG="$STATE_DIR/warpscout_tgscan.log"
 SCAN_RESULTS="$STATE_DIR/warpscout_tgscan.results"
 SCAN_INPUT="$STATE_DIR/warpscout_tgscan.input"
+SCAN_PLAN="$STATE_DIR/warpscout_tgscan.plan"
 SCAN_SOCKS_PID="$STATE_DIR/warpscout_tgscan_socks.pid"
 
 mkdir -p "$STATE_DIR" 2>/dev/null
@@ -156,6 +157,7 @@ build_input() {
 	_count=$(wc -l < "$_tmp" 2>/dev/null | tr -d ' ')
 	case "$_count" in ''|0|*[!0-9]*) rm -f "$_tmp"; return 1;; esac
 	mv "$_tmp" "$SCAN_INPUT" || { rm -f "$_tmp"; return 1; }
+	cp "$SCAN_INPUT" "$SCAN_PLAN" 2>/dev/null || true
 	printf '%s' "$_count"
 }
 
@@ -241,14 +243,29 @@ method_telegram_scan_status() {
 		"$(json_str "$_state")" "$_running" "$_cur" "$_total" "$(json_str "$_route")" "$(json_str "$_phase")" "$_valid" "$_reachable" "$_failed" "$_started" "$_updated"
 }
 
+parse_route_file() {
+	_f="$1"; [ -s "$_f" ] || { printf '[]'; return; }
+	jq -Rsc 'split("\n") | map(select(length>0) | split("|") as $f | {
+		provider:($f[0]//""), source_id:($f[1]//""), label:($f[2]//""), endpoint:($f[3]//""),
+		endpoint_ping:($f[4]//""), tunnel_ping:($f[5]//""), loss:($f[6]//""), seen_as:($f[7]//""), node:($f[8]//""), node_location:($f[9]//"")
+	})' "$_f" 2>/dev/null
+}
+
+method_telegram_scan_plan() {
+	read -r _in 2>/dev/null
+	_items=$(parse_route_file "$SCAN_PLAN"); _rc=$?
+	if [ "$_rc" -ne 0 ] || [ -z "$_items" ]; then printf '{"ok":false,"reason":"plan_parse_error","items":[]}\n'; return; fi
+	printf '{"ok":true,"items":%s}\n' "$_items"
+}
+
 method_telegram_scan_results() {
 	read -r _in 2>/dev/null
 	[ -s "$SCAN_RESULTS" ] || { printf '{"ok":true,"items":[],"raw_count":0}\n'; return; }
 	_raw=$(wc -l < "$SCAN_RESULTS" 2>/dev/null | tr -d ' '); case "$_raw" in ''|*[!0-9]*) _raw=0;; esac
-	_items=$(jq -Rn '[inputs | split("|") as $f | select(($f|length) >= 9) | {
+	_items=$(jq -Rsc 'split("\n") | map(select(length>0) | split("|") as $f | select(($f|length) >= 9) | {
 		provider:($f[0]//""), source_id:($f[1]//""), label:($f[2]//""), endpoint:($f[3]//""), status:($f[4]//""), reason:($f[5]//""), http:($f[6]//""), latency_ms:(($f[7]//"0")|tonumber? // 0), checked_at:(($f[8]//"0")|tonumber? // 0),
 		endpoint_ping:($f[9]//""), tunnel_ping:($f[10]//""), loss:($f[11]//""), seen_as:($f[12]//""), node:($f[13]//""), node_location:($f[14]//"")
-	}] | sort_by((if .status=="VALID" then 0 elif (.status|startswith("REACHABLE_")) then 1 else 2 end), (if .provider=="proxy" then 0 else 1 end), ((.loss//"")|gsub("%";"")|tonumber? // 999999), .latency_ms, ((.tunnel_ping//"")|gsub("[^0-9.]";"")|tonumber? // 999999))' "$SCAN_RESULTS" 2>/dev/null)
+	}) | sort_by([if .status=="VALID" then 0 elif (.status|startswith("REACHABLE_")) then 1 else 2 end, if .provider=="proxy" then 0 else 1 end, ((.loss//"")|gsub("%";"")|tonumber? // 999999), .latency_ms, ((.tunnel_ping//"")|gsub("[^0-9.]";"")|tonumber? // 999999)])' "$SCAN_RESULTS" 2>/dev/null)
 	_rc=$?
 	if [ "$_rc" -ne 0 ] || [ -z "$_items" ]; then printf '{"ok":false,"reason":"parse_error","raw_count":%s,"items":[]}\n' "$_raw"; return; fi
 	_parsed=$(printf '%s' "$_items" | jq 'length' 2>/dev/null); case "$_parsed" in ''|*[!0-9]*) _parsed=0;; esac
@@ -276,10 +293,10 @@ method_telegram_scan_log() {
 }
 
 case "$1" in
-	list) echo '{ "telegram_scan_start": {}, "telegram_scan_status": {}, "telegram_scan_results": {}, "telegram_scan_cancel": {}, "telegram_scan_log": { "offset": 0 } }' ;;
+	list) echo '{ "telegram_scan_start": {}, "telegram_scan_status": {}, "telegram_scan_plan": {}, "telegram_scan_results": {}, "telegram_scan_cancel": {}, "telegram_scan_log": { "offset": 0 } }' ;;
 	call)
 		case "$2" in
-			telegram_scan_start) method_telegram_scan_start;; telegram_scan_status) method_telegram_scan_status;; telegram_scan_results) method_telegram_scan_results;; telegram_scan_cancel) method_telegram_scan_cancel;; telegram_scan_log) method_telegram_scan_log;;
+			telegram_scan_start) method_telegram_scan_start;; telegram_scan_status) method_telegram_scan_status;; telegram_scan_plan) method_telegram_scan_plan;; telegram_scan_results) method_telegram_scan_results;; telegram_scan_cancel) method_telegram_scan_cancel;; telegram_scan_log) method_telegram_scan_log;;
 			*) echo '{"error":"unknown method"}'; exit 1;;
 		esac;;
 	*) echo '{"error":"unknown command"}'; exit 1;;

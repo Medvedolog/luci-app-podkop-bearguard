@@ -1,0 +1,65 @@
+'use strict';
+'require view';
+'require rpc';
+'require ui';
+'require dom';
+
+var callStatus = rpc.declare({ object:'podkop_bot_warpscout_tgscan', method:'telegram_scan_status' });
+var callResults = rpc.declare({ object:'podkop_bot_warpscout_tgscan', method:'telegram_scan_results' });
+var callStart = rpc.declare({ object:'podkop_bot_warpscout_tgscan', method:'telegram_scan_start' });
+var callCancel = rpc.declare({ object:'podkop_bot_warpscout_tgscan', method:'telegram_scan_cancel' });
+var callLog = rpc.declare({ object:'podkop_bot_warpscout_tgscan', method:'telegram_scan_log', params:['offset'] });
+
+var COLOURS={green:'#33a02c',yellow:'#e8a33d',grey:'#888888',red:'#cc2b2b'};
+function dot(c,label){return E('span',{'style':'display:inline-flex;align-items:center;gap:.4em;'},[E('span',{'style':'width:.7em;height:.7em;border-radius:50%;display:inline-block;background:'+(COLOURS[c]||COLOURS.grey)+';'}),E('span',{},label)]);}
+function row(label,value){return E('div',{'class':'pb-row pb-row--plain'},[E('span',{'class':'pb-row-label'},label),E('span',{'class':'pb-row-val'},value)]);}
+function card(title,children){return E('div',{'class':'cbi-section','style':'max-width:980px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},title)].concat(children));}
+function pbInjectCss(){if(document.getElementById('pb-css'))return;document.querySelector('head').appendChild(E('link',{'id':'pb-css','rel':'stylesheet','type':'text/css','href':L.resource('css/podkop-bot/podkop-bot.css')}));}
+function phaseText(p){return ({queued:_('Ожидание'),tunnel_start:_('Запуск WARP tunnel'),telegram_test:_('Telegram Bot API'),cleanup:_('Остановка tunnel'),done:_('Завершено'),cancelled:_('Отменено')})[p]||p||'—';}
+function statusNode(x){var s=x.status||'';if(s==='VALID')return dot('green',_('VALID · Telegram Bot API'));if(s==='REACHABLE_RATE_LIMITED')return dot('yellow',_('Telegram доступен · 429'));if(s==='REACHABLE_AUTH')return dot('yellow',_('Telegram доступен · 401'));if(s==='REACHABLE_DENIED')return dot('yellow',_('Telegram доступен · 403'));return dot('red',_('FAIL · ')+(x.reason||'?'));}
+
+return view.extend({
+	load:function(){pbInjectCss();return Promise.all([callStatus().catch(function(){return {state:'idle'};}),callResults().catch(function(){return {items:[]};}),callLog(0).catch(function(){return {chunk:'',offset:0};})]);},
+	render:function(data){
+		this.scanStatus=data[0]||{state:'idle'};this.scanResults=data[1]||{items:[]};this.logOffset=(data[2]&&data[2].offset)||0;
+		this.root=E('div',{});this.logText=(data[2]&&data[2].chunk)||'';dom.content(this.root,this.renderBody());
+		this.installVisibilityHooks();if(this.scanStatus.running)this.schedulePoll(200);return this.root;
+	},
+	renderBody:function(){
+		var self=this, st=this.scanStatus||{}, items=(this.scanResults&&this.scanResults.items)||[];
+		var start=E('button',{'class':'cbi-button cbi-button-action','disabled':st.running?'disabled':null,'click':ui.createHandlerFn(this,function(){
+			start.disabled=true;dom.content(self.actionStatus,dot('yellow',_('Запускаю последовательную квалификацию shortlist…')));
+			return callStart().then(function(r){if(!r||!r.ok){start.disabled=false;dom.content(self.actionStatus,dot('red',_('Не удалось запустить: ')+((r&&r.reason)||'?')));return;}self.logOffset=0;self.logText='';return self.refreshNow().then(function(){self.schedulePoll(200);});}).catch(function(){start.disabled=false;dom.content(self.actionStatus,dot('red',_('Ошибка RPC')));});
+		})},_('Проверить весь shortlist'));
+		var cancel=E('button',{'class':'cbi-button cbi-button-negative','disabled':!st.running?'disabled':null,'click':ui.createHandlerFn(this,function(){cancel.disabled=true;return callCancel().then(function(){return self.refreshNow();});})},_('Остановить проверку'));
+		this.actionStatus=E('div',{'style':'margin-top:.6em;'});
+		this.logPre=E('pre',{'style':'max-width:100%;box-sizing:border-box;max-height:360px;overflow:auto;padding:.7em;border-radius:6px;white-space:pre-wrap;font-family:monospace;font-size:82%;line-height:1.35;'},this.logText||_('Лог пуст.'));
+		return E('div',{},[
+			E('h2',{},_('WARP Rescue — Telegram qualification')),
+			E('p',{'class':'pb-hint-90','style':'max-width:980px;'},_('Проверяет сохранённый WARPSCOUT shortlist именно на пригодность для Telegram Bot API. Discovery и исходное ранжирование WARPSCOUT не меняются. Проверка строго последовательная: одновременно работает только один временный WARP SOCKS.')),
+			card(_('Прогресс'),[
+				row(_('Состояние'),this.stateNode(st)),
+				row(_('Прогресс'),String(st.current||0)+' / '+String(st.total||0)),
+				row(_('Текущий endpoint'),st.endpoint||'—'),
+				row(_('Фаза'),phaseText(st.phase)),
+				row(_('VALID'),String(st.passed||0)),
+				row(_('Не прошли VALID'),String(st.failed||0)),
+				E('p',{'class':'pb-hint-90'},_('Telegram timeout не сокращён: connect timeout 5 s, общий max-time 12 s. HTTP 401/403/429 означает, что Telegram достижим, но endpoint не считается VALID для автоматического выбора.')),
+				E('div',{'style':'display:flex;gap:.5em;flex-wrap:wrap;margin-top:.7em;'},[start,cancel]),this.actionStatus
+			]),
+			card(_('Результаты'),[this.resultsTable(items)]),
+			card(_('Журнал'),[this.logPre])
+		]);
+	},
+	stateNode:function(st){if(st.state==='done')return dot('green',_('Завершено'));if(st.state==='running')return dot('yellow',_('Выполняется'));if(st.state==='cancelled')return dot('grey',_('Отменено'));if(st.state==='stale')return dot('red',_('Worker завершился неожиданно'));return dot('grey',_('Не запущено'));},
+	resultsTable:function(items){
+		if(!items.length)return E('p',{'class':'pb-hint-90'},_('Результатов пока нет. Таблица будет наполняться по мере проверки endpoints.'));
+		var rows=items.map(function(x,i){return E('tr',{},[E('td',{},String(i+1)),E('td',{},x.endpoint||'—'),E('td',{},[statusNode(x)]),E('td',{},x.http||'—'),E('td',{},x.latency_ms?String(x.latency_ms)+' ms':'—'),E('td',{},x.loss||'—'),E('td',{},x.tunnel_ping||'—'),E('td',{},(x.node||'—')+' · '+(x.node_location||'—'))]);});
+		return E('div',{'style':'overflow-x:auto;'},[E('table',{'class':'table','style':'min-width:900px;'},[E('thead',{},[E('tr',{},[E('th',{},'#'),E('th',{},_('Endpoint')),E('th',{},_('Telegram')),E('th',{},_('HTTP')),E('th',{},_('TG latency')),E('th',{},_('Loss')),E('th',{},_('Tunnel ping')),E('th',{},_('Node'))])]),E('tbody',{},rows)])]);
+	},
+	refreshNow:function(){var self=this;return Promise.all([callStatus(),callResults()]).then(function(x){self.scanStatus=x[0]||{};self.scanResults=x[1]||{items:[]};return callLog(self.logOffset||0).catch(function(){return null;});}).then(function(l){if(l){if(typeof l.offset==='number')self.logOffset=l.offset;if(l.chunk)self.logText=(self.logText||'')+l.chunk;}dom.content(self.root,self.renderBody());});},
+	pollOnce:function(){var self=this;if(document.visibilityState!=='visible'||(document.hasFocus&&!document.hasFocus())){self.schedulePoll(1500);return;}this.refreshNow().then(function(){if(self.scanStatus&&self.scanStatus.running)self.schedulePoll(1500);}).catch(function(){self.schedulePoll(2200);});},
+	schedulePoll:function(ms){var self=this;if(this.pollTimer)window.clearTimeout(this.pollTimer);this.pollTimer=window.setTimeout(function(){self.pollOnce();},ms||1500);},
+	installVisibilityHooks:function(){var self=this;if(this._hooks)return;this._hooks=true;document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&self.scanStatus&&self.scanStatus.running)self.schedulePoll(100);});window.addEventListener('focus',function(){if(self.scanStatus&&self.scanStatus.running)self.schedulePoll(100);});},
+	handleSave:null,handleSaveApply:null,handleReset:null
+});

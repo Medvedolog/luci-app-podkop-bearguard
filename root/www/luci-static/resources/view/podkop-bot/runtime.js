@@ -113,7 +113,7 @@ return view.extend({
 		this.tgBtn = tgBtn;
 		var warpNextBtn = E('span', {});
 		if (this.warpRouteReady && this.warpItems.length > 1) {
-			warpNextBtn = E('button', { 'class':'cbi-button', 'style':'display:none;', 'click': ui.createHandlerFn(this, 'nextWarpTestRoute'), 'title':_('Остановить текущий тестовый WARP, выбрать следующий endpoint из shortlist и снова поднять локальный SOCKS') }, _('Следующий WARP'));
+			warpNextBtn = E('button', { 'class':'cbi-button', 'style':'display:none;', 'click': ui.createHandlerFn(this, 'nextWarpTestRoute'), 'title':_('Временно проверить следующий WARP endpoint и после теста восстановить WARP Rescue') }, _('Следующий WARP'));
 			this.warpNextBtn = warpNextBtn;
 		}
 		var selectorRow = E('span', {});
@@ -128,7 +128,7 @@ return view.extend({
 				groups.push(E('optgroup', { 'label': _('Транспортные маршруты') }, optProxies));
 			}
 			if (this.warpRouteReady) {
-				groups.push(E('optgroup', { 'label': 'WARP' }, [ E('option', { 'value':'warp:warpscout', 'data-label':_('WARP Rescue · WARPSCOUT') }, _('WARP Rescue · WARPSCOUT — тестовый маршрут')) ]));
+				groups.push(E('optgroup', { 'label': 'WARP' }, [ E('option', { 'value':'warp:warpscout', 'data-label':_('WARP Rescue · WARPSCOUT') }, _('WARP Rescue · WARPSCOUT — ручная проверка')) ]));
 			}
 			var sel = E('select', { 'class':'cbi-input-select', 'style':'width:100%;max-width:500px;box-sizing:border-box;', 'change': ui.createHandlerFn(this, 'onTargetChange') }, groups);
 			this.targetSelect = sel;
@@ -167,7 +167,7 @@ return view.extend({
 		return E('div', {}, [
 			E('h2', {}, _('Runtime — тест сервисов')),
 			E('p', { 'class':'pb-muted' }, _('Проверка туннеля: страна и провайдер выхода, доступность 12 сервисов и их регионы, скорость, признаки блокировок ТСПУ. Маршрут — это через что идёт проверка: секция Podkop, транспортный, WARP или ручной прокси.')),
-			E('p', { 'style':'color:#c60;font-size:90%;margin-top:-.4em;' }, _('⚠ Полная проверка идёт 15–60 секунд и нагружает роутер (параллельные запросы + загрузка до 8 МиБ через туннель). Быстрая кнопка Telegram API проверяет только реальный getMe и почти не создаёт трафика. «Следующий WARP» показывается только для выбранного WARP-маршрута, меняет endpoint из готового shortlist и делает быструю проверку Telegram.')),
+			E('p', { 'style':'color:#c60;font-size:90%;margin-top:-.4em;' }, _('⚠ Полная проверка идёт 15–60 секунд и нагружает роутер (параллельные запросы + загрузка до 8 МиБ через туннель). Быстрая кнопка Telegram API проверяет только реальный getMe и почти не создаёт трафика. Ручная WARP-проверка временно освобождает Rescue SOCKS и после завершения автоматически восстанавливает его.')),
 			selectorRow,
 			E('div', { 'style':'margin:.6em 0;display:flex;gap:.5em;flex-wrap:wrap;align-items:center;' }, [ runBtn, batchBtn, cpToggle, tgBtn, warpNextBtn ]),
 			cpForm,
@@ -182,18 +182,10 @@ return view.extend({
 		if (!st || !st.installed) return E('span', {});
 		var cfg = st.config || {}, active = cfg.active_endpoint || '—', item = st.active_snapshot || null;
 		if (!item) (sl && sl.items || []).some(function(x){ if (x.endpoint === active) { item = x; return true; } return false; });
-		var tg = rt && rt.telegram || {}, tgNode = dot('grey', _('ещё не проверялся'));
-		if (tg.status === 'OK') tgNode = dot('green', _('OK') + (tg.http ? (' · HTTP ' + tg.http) : ''));
-		else if (tg.status === 'RATE_LIMITED') tgNode = dot('yellow', _('Telegram доступен · rate limited (429)'));
-		else if (tg.status === 'AUTH_ERROR') tgNode = dot('yellow', _('Telegram доступен · auth error (401)'));
-		else if (tg.status === 'API_DENIED') tgNode = dot('yellow', _('Telegram доступен · API denied (403)'));
-		else if (tg.status === 'OTHER_API_RESPONSE') tgNode = dot('yellow', _('Telegram отвечает · HTTP ') + (tg.http || '?'));
-		else if (tg.status === 'NETWORK_FAIL') tgNode = dot('red', _('NETWORK_FAIL') + (tg.curl_rc ? (' · curl ' + tg.curl_rc) : ''));
 		var checked = item && item.checked_at ? this.ago(parseInt(item.checked_at,10)) : '—';
-		var tgChecked = tg.checked_at ? this.ago(parseInt(tg.checked_at,10)) : '—';
 		return E('div', { 'class':'cbi-section pb-card', 'style':'max-width:820px;' }, [
 			E('h3', { 'style':'margin-top:0;' }, _('WARPSCOUT / WARP Rescue')),
-			E('p', { 'class':'pb-muted' }, _('Тестовый WARP поднимается автоматически только когда вы запускаете проверку этого маршрута. Это не переключает POLL/FAST бота.')),
+			E('p', { 'class':'pb-muted' }, _('Ручная проверка WARP использует служебный SOCKS только на время теста. Если WARP Rescue был активен, он автоматически восстанавливается после завершения проверки. Это не переключает POLL/FAST бота.')),
 			row(_('Active endpoint'), E('span', {}, active)),
 			row(_('Protocol'), E('span', {}, String(cfg.protocol || '—').toUpperCase())),
 			row(_('NODE'), E('span', {}, item && item.node || '—')),
@@ -202,13 +194,7 @@ return view.extend({
 			row(_('Endpoint ping'), E('span', {}, item && item.endpoint_ping || '—')),
 			row(_('Tunnel ping / loss'), E('span', {}, (item && item.tunnel_ping || '—') + ' / ' + (item && item.loss || '—'))),
 			row(_('Scout data age'), E('span', {}, checked)),
-			row(_('SOCKS process'), rt && rt.running ? dot('green', _('running') + (rt.pid ? (' · PID ' + rt.pid) : '') + (rt.rss_mb != null ? (' · RSS ' + rt.rss_mb + ' MB') : '')) : dot('grey', rt && rt.state || _('stopped'))),
-			row(_('Local SOCKS'), E('span', {}, rt && rt.proxy || ('socks5h://127.0.0.1:' + (cfg.socks_port || 18191)))),
-			row(_('Telegram API'), tgNode),
-			(tg.proxy ? row(_('Telegram test route'), E('span', {}, tg.proxy)) : E('span', {})),
-			(tg.error ? row(_('Telegram error'), E('span', {}, tg.error)) : E('span', {})),
-			row(_('Telegram test age'), E('span', {}, tgChecked)),
-			E('div', { 'style':'margin-top:.7em;' }, [ E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/transport/warpscout') }, _('Открыть WARP Rescue')) ])
+			E('div', { 'style':'margin-top:.7em;' }, [ E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/transport/warpscout-rescue') }, _('Открыть Револьвер WARP')) ])
 		]);
 	},
 
@@ -263,6 +249,13 @@ return view.extend({
 		}).then(function(rt){self.warpRuntime=rt;if(self.warpStatus&&self.warpStatus.config)self.warpStatus.config.active_endpoint=current;return rt;});
 	},
 
+	stopWarpTestRoute: function() {
+		var self=this;
+		return callWarpRtStop().catch(function(){return {ok:false};}).then(function(r){
+			return callWarpRtStatus().catch(function(){return null;}).then(function(rt){self.warpRuntime=rt;return r;});
+		});
+	},
+
 	nextWarpTestRoute: function() {
 		var self=this, items=this.warpItems||[];
 		this.syncSelectedTarget();
@@ -273,7 +266,7 @@ return view.extend({
 		var next=items[(idx+1+items.length)%items.length], ep=next&&next.endpoint;
 		if(!ep){ ui.addNotification(null,E('p',{},_('Не удалось выбрать следующий WARP endpoint.')),'error'); return; }
 		if(this.warpNextBtn)this.warpNextBtn.disabled=true;
-		dom.content(this.tgBody,E('div',{},dot('grey',_('Переключаю WARP на следующий endpoint: ')+ep)));
+		dom.content(this.tgBody,E('div',{},dot('grey',_('Временно проверяю следующий WARP endpoint: ')+ep)));
 		var stop=(this.warpRuntime&&this.warpRuntime.running)?callWarpRtStop():Promise.resolve({ok:true});
 		return stop.then(function(){return callWarpConfigSet('active_endpoint',ep);}).then(function(r){
 			if(!r||!r.ok)throw new Error((r&&r.reason)||'config_set_failed');
@@ -287,8 +280,8 @@ return view.extend({
 			var proxy=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';
 			return callTransportProbe(proxy).then(function(d){dom.content(self.tgBody,self.renderTelegramProbe(d,_('WARP Rescue · WARPSCOUT')+' · '+ep));});
 		}).catch(function(e){
-			dom.content(self.tgBody,E('div',{},dot('red',_('Не удалось переключить WARP: ')+((e&&e.message)||'?'))));
-		}).finally(function(){if(self.warpNextBtn)self.warpNextBtn.disabled=false;});
+			dom.content(self.tgBody,E('div',{},dot('red',_('Не удалось проверить WARP: ')+((e&&e.message)||'?'))));
+		}).then(function(){return self.stopWarpTestRoute();}).finally(function(){if(self.warpNextBtn)self.warpNextBtn.disabled=false;});
 	},
 
 	runTelegramProbe: function() {
@@ -296,8 +289,8 @@ return view.extend({
 		this.syncSelectedTarget();
 		this.tgBtn.disabled = true;
 		if (this.selectedWarp) {
-			dom.content(this.tgBody,E('div',{},dot('grey',_('Поднимаю тестовый WARP и проверяю Telegram…'))));
-			return this.ensureWarpTestRoute().then(function(rt){target=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';label=_('WARP Rescue · WARPSCOUT');return callTransportProbe(target);}).then(function(d){dom.content(self.tgBody,self.renderTelegramProbe(d,label));}).catch(function(e){dom.content(self.tgBody,E('div',{},dot('red',_('WARP-проверка не завершилась: ')+((e&&e.message)||'?'))));}).finally(function(){self.tgBtn.disabled=false;});
+			dom.content(this.tgBody,E('div',{},dot('grey',_('Временно поднимаю WARP и проверяю Telegram…'))));
+			return this.ensureWarpTestRoute().then(function(rt){target=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';label=_('WARP Rescue · WARPSCOUT');return callTransportProbe(target);}).then(function(d){dom.content(self.tgBody,self.renderTelegramProbe(d,label));}).catch(function(e){dom.content(self.tgBody,E('div',{},dot('red',_('WARP-проверка не завершилась: ')+((e&&e.message)||'?'))));}).then(function(){return self.stopWarpTestRoute();}).finally(function(){self.tgBtn.disabled=false;});
 		}
 		if (this.selectedProxy) { target = this.selectedProxy; label = this.selectedProxyLabel || target; }
 		else {
@@ -355,8 +348,8 @@ return view.extend({
 		var self = this; this.runBtn.disabled = true; if (this.batchBtn) this.batchBtn.disabled = true;
 		this.syncSelectedTarget();
 		if(this.selectedWarp){
-			dom.content(this.body,E('div',{'class':'cbi-section pb-wide'},dot('grey',_('Поднимаю тестовый WARP…'))));
-			return this.ensureWarpTestRoute().then(function(rt){var p=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';return callActiveProbe('', '', p, _('WARP Rescue · WARPSCOUT'));}).then(function(d){dom.content(self.body,self.renderProbe(d));}).catch(function(e){dom.content(self.body,E('div',{'class':'cbi-section pb-wide'},dot('red',_('WARP-проверка не завершилась: ')+((e&&e.message)||'?'))));}).finally(function(){self.runBtn.disabled=false;if(self.batchBtn)self.batchBtn.disabled=false;});
+			dom.content(this.body,E('div',{'class':'cbi-section pb-wide'},dot('grey',_('Временно поднимаю WARP для проверки…'))));
+			return this.ensureWarpTestRoute().then(function(rt){var p=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';return callActiveProbe('', '', p, _('WARP Rescue · WARPSCOUT'));}).then(function(d){dom.content(self.body,self.renderProbe(d));}).catch(function(e){dom.content(self.body,E('div',{'class':'cbi-section pb-wide'},dot('red',_('WARP-проверка не завершилась: ')+((e&&e.message)||'?'))));}).then(function(){return self.stopWarpTestRoute();}).finally(function(){self.runBtn.disabled=false;if(self.batchBtn)self.batchBtn.disabled=false;});
 		}
 		var usingProxy = !!this.selectedProxy, sec = usingProxy ? '' : (this.selectedSection || ''), prox = usingProxy ? this.selectedProxy : '', lbl = usingProxy ? (this.selectedProxyLabel || '') : '';
 		dom.content(this.body, E('div', { 'class':'cbi-section pb-wide' }, dot('grey', _('Проверка… (15–40 секунд)'))));
@@ -369,7 +362,7 @@ return view.extend({
 		dom.content(this.body, E('div', { 'class':'cbi-section pb-wide' }, dot('grey', _('Последовательная проверка маршрутов…'))));
 		probeable.forEach(function(s){ chain = chain.then(function(){ return callActiveProbe('', s.name, '', '').then(function(d){ results.push({ sec:s.name, d:d }); }).catch(function(){ results.push({ sec:s.name, d:null }); }); }); });
 		(this.tierProxies || []).forEach(function(p){ chain = chain.then(function(){ return callActiveProbe('', '', p.endpoint, p.label).then(function(d){ results.push({ sec:p.label, d:d, isProxy:true }); }).catch(function(){ results.push({ sec:p.label, d:null, isProxy:true }); }); }); });
-		if(this.warpRouteReady){chain=chain.then(function(){return self.ensureWarpTestRoute().then(function(rt){return callActiveProbe('', '', (rt&&rt.proxy)||'socks5h://127.0.0.1:18191', _('WARP Rescue · WARPSCOUT'));}).then(function(d){results.push({sec:_('WARP Rescue · WARPSCOUT'),d:d,isProxy:true});}).catch(function(){results.push({sec:_('WARP Rescue · WARPSCOUT'),d:null,isProxy:true});});});}
+		if(this.warpRouteReady){chain=chain.then(function(){return self.ensureWarpTestRoute().then(function(rt){return callActiveProbe('', '', (rt&&rt.proxy)||'socks5h://127.0.0.1:18191', _('WARP Rescue · WARPSCOUT'));}).then(function(d){results.push({sec:_('WARP Rescue · WARPSCOUT'),d:d,isProxy:true});}).catch(function(){results.push({sec:_('WARP Rescue · WARPSCOUT'),d:null,isProxy:true});}).then(function(){return self.stopWarpTestRoute();});});}
 		return chain.then(function(){ dom.content(self.body, self.renderBatch(results)); }).finally(function(){ self.runBtn.disabled = false; if (self.batchBtn) self.batchBtn.disabled = false; });
 	},
 

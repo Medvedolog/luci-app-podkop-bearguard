@@ -39,8 +39,6 @@ stop_control(){
 	rm -f "$CONTROL_PID"
 }
 
-# Manual/test WARPSCOUT runtime and Rescue/qualification use the same local
-# SOCKS port. An explicit Rescue operation owns that port and may hand it over.
 handoff_runtime(){
 	pid_alive "$RUNTIME_PID" || return 0
 	echo "[rescue] stopping test WARP runtime and taking ownership of SOCKS port" >>"$RESCUE_LOG"
@@ -53,7 +51,6 @@ handoff_runtime(){
 
 build_magazine(){
 	[ -s "$TG_RESULTS" ] || { rm -f "$RESCUE_MAG" "$RESCUE_MAG.$$" 2>/dev/null; return 1; }
-	# provider|source|label|endpoint|status|reason|http|latency|checked|endpoint_ping|tunnel_ping|loss|...
 	awk -F'|' '$1=="warp" && $5=="VALID" && $4 ~ /^[0-9]+\./ {print $4"|"$8"|"$12"|"$11}' "$TG_RESULTS" \
 		| sort -t'|' -k3,3n -k2,2n > "$RESCUE_MAG.$$"
 	[ -s "$RESCUE_MAG.$$" ] || { rm -f "$RESCUE_MAG.$$" "$RESCUE_MAG" 2>/dev/null; return 1; }
@@ -91,7 +88,8 @@ reload_magazine(){
 	_n=0; while [ "$_n" -lt 420 ]; do pid_alive "$TGSCAN_PID" || break; sleep 1; _n=$((_n+1)); done
 	pid_alive "$TGSCAN_PID" && return 1
 	build_magazine || return 1
-	echo "[rescue] reload: magazine ready, $(magazine_count) VALID WARP routes"
+	cfg_write enabled 1 || return 1
+	echo "[rescue] reload: magazine ready, $(magazine_count) VALID WARP routes; WARP Rescue enabled"
 	return 0
 }
 

@@ -15,6 +15,7 @@ REPORT_FILE="$STATE_DIR/warpscout-report.txt"
 UPDATE_LOG="$STATE_DIR/warpscout_update.log"
 UPDATE_STATE="$STATE_DIR/warpscout_update.state"
 UPDATE_PID="$STATE_DIR/warpscout_update.pid"
+LATEST_CACHE="$STATE_DIR/warpscout_latest.cache"
 INSTALLER_TMP="$STATE_DIR/warpscout-install.sh"
 INSTALLER_URL="https://raw.githubusercontent.com/vernette/warpscout/master/install.sh"
 RELEASE_API="https://api.github.com/repos/vernette/warpscout/releases/latest"
@@ -88,6 +89,16 @@ latest_version() {
 	[ -n "$_t" ] || return 1
 	printf '%s' "${_t#v}"
 }
+latest_cached() {
+	[ -s "$LATEST_CACHE" ] || return 1
+	head -n1 "$LATEST_CACHE" 2>/dev/null | tr -d '\r\n'
+}
+latest_refresh() {
+	_v=$(latest_version) || return 1
+	[ -n "$_v" ] || return 1
+	printf '%s\n' "$_v" > "$LATEST_CACHE" 2>/dev/null || true
+	printf '%s' "$_v"
+}
 
 shortlist_count() { [ -s "$SHORTLIST_FILE" ] && grep -c '^[0-9]' "$SHORTLIST_FILE" 2>/dev/null || echo 0; }
 shortlist_json() {
@@ -110,9 +121,14 @@ active_snapshot_json() {
 
 method_status() {
 	read -r _input 2>/dev/null; cfg_defaults
+	_force=$(printf '%s' "$_input" | jq -r '.force // ""' 2>/dev/null)
 	_cur=""; _latest=""; _installed=false
 	if _cur=$(installed_version); then _installed=true; fi
-	_latest=$(latest_version 2>/dev/null || true)
+	if [ "$_force" = true ] || [ "$_force" = 1 ]; then
+		_latest=$(latest_refresh 2>/dev/null || true)
+	else
+		_latest=$(latest_cached 2>/dev/null || true)
+	fi
 	_upd=false; [ -n "$_cur" ] && [ -n "$_latest" ] && [ "$_cur" != "$_latest" ] && _upd=true
 	_account=false; [ -s "$ACCOUNT_FILE" ] && jq -e 'type=="object"' "$ACCOUNT_FILE" >/dev/null 2>&1 && _account=true
 	_snapshot=$(active_snapshot_json)
@@ -147,7 +163,7 @@ method_remove() {
 	pid_alive "$ACTION_PID" && { printf '{"ok":false,"reason":"action_running"}\n'; return; }
 	ubus call podkop_bot_warpscout_rescue stop '{}' >/dev/null 2>&1 || true
 	ubus call podkop_bot_warpscout_runtime stop '{}' >/dev/null 2>&1 || true
-	rm -f "$BIN" "$ACCOUNT_FILE" "$CONFIG_FILE" "$SHORTLIST_FILE" "$UPLOAD_ACCOUNT" "$REPORT_FILE" \
+	rm -f "$BIN" "$ACCOUNT_FILE" "$CONFIG_FILE" "$SHORTLIST_FILE" "$UPLOAD_ACCOUNT" "$REPORT_FILE" "$LATEST_CACHE" \
 		"$STATE_DIR"/warpscout_socks.pid "$STATE_DIR"/warpscout_socks.state "$STATE_DIR"/warpscout_socks.log \
 		"$STATE_DIR"/warpscout_rescue_socks.pid "$STATE_DIR"/warpscout_rescue_control.pid "$STATE_DIR"/warpscout_rescue.state "$STATE_DIR"/warpscout_rescue.log "$STATE_DIR"/warpscout_rescue.magazine \
 		"$STATE_DIR"/warpscout_tgscan.pid "$STATE_DIR"/warpscout_tgscan.state "$STATE_DIR"/warpscout_tgscan.results "$STATE_DIR"/warpscout_tgscan.log 2>/dev/null
@@ -160,7 +176,7 @@ log_json() {
 	_size=$(wc -c < "$_log" 2>/dev/null | tr -d ' '); [ -n "$_size" ] || _size=0; [ "$_off" -le "$_size" ] 2>/dev/null || _off=0
 	_bytes=$((_size-_off)); [ "$_bytes" -gt 32768 ] 2>/dev/null && _bytes=32768
 	if [ "$_bytes" -gt 0 ] 2>/dev/null; then
-		_chunk_json=$(tail -c +$((_off+1)) "$_log" 2>/dev/null | head -c "$_bytes" | jq -Rs . 2>/dev/null)
+		_chunk_json=$(tail -c +$((_off+1)) "$LOG_FILE" 2>/dev/null | head -c "$_bytes" | jq -Rs . 2>/dev/null)
 		[ -n "$_chunk_json" ] || _chunk_json='""'
 	else
 		_chunk_json='""'

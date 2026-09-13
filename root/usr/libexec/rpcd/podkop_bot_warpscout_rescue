@@ -80,13 +80,16 @@ start_endpoint(){
 wait_file_done(){ _file="$1"; _limit="$2"; _n=0; while [ "$_n" -lt "$_limit" ]; do _s=$(cat "$_file" 2>/dev/null | head -n1); case "$_s" in done\ 0) return 0;; error\ *|done\ *) return 1;; esac; sleep 1; _n=$((_n+1)); done; return 1; }
 
 reload_magazine(){
+	state_write reloading "" 0 0 discovery
 	echo "[rescue] reload: running Discovery"
 	ubus call podkop_bot_warpscout action_run '{"action":"scan","target":""}' >/dev/null 2>&1 || return 1
 	wait_file_done "$STATE_DIR/warpscout_action.state" 240 || return 1
+	state_write reloading "" 0 0 qualification
 	echo "[rescue] reload: Discovery complete, running TG qualification"
 	ubus call podkop_bot_warpscout_tgscan telegram_scan_start '{}' >/dev/null 2>&1 || return 1
 	_n=0; while [ "$_n" -lt 420 ]; do pid_alive "$TGSCAN_PID" || break; sleep 1; _n=$((_n+1)); done
 	pid_alive "$TGSCAN_PID" && return 1
+	state_write reloading "" 0 0 building
 	build_magazine || return 1
 	cfg_write enabled 1 || return 1
 	echo "[rescue] reload: magazine ready, $(magazine_count) VALID WARP routes; WARP Rescue enabled"

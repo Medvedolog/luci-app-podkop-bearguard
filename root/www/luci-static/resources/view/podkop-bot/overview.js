@@ -4,21 +4,10 @@
 'require ui';
 'require dom';
 
-/*
- * luci-app-podkop-bot — Overview (live, v0.16.2)
- *
- * status  → service card (service state, versions, mixed proxy) OR degraded card.
- * service → start/stop/restart, re-renders the card in place (no page reload).
- *
- * §18-quater: a failed rpc becomes a degraded object, never a blank screen.
- * mixed_proxy is an independent sub-layer: it may be unavailable while the rest
- * of the card renders fine (§18q.2).
- * Colours (§18t.1): green ok / grey expected-inactive / yellow config / red broken.
- */
-
 var callStatus  = rpc.declare({ object: 'podkop_bot', method: 'status' });
 var callService = rpc.declare({ object: 'podkop_bot', method: 'service', params: [ 'action' ] });
 var callResources = rpc.declare({ object: 'podkop_bot', method: 'resources' });
+var callWarpStatus = rpc.declare({ object:'podkop_bot_warpscout', method:'status', params:['force'] });
 var callWarpRtStatus = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'status' });
 var callCheckUpdate = rpc.declare({ object: 'podkop_bot', method: 'check_update', params: [ 'force' ] });
 var callSingboxInfo = rpc.declare({ object: 'podkop_bot', method: 'singbox_info' });
@@ -34,282 +23,68 @@ function visiblePoller(ms, tick) {
 	var timer = null, stopped = false, focused = document.hasFocus();
 	function active() { return document.visibilityState === 'visible' && focused; }
 	function schedule() { if (!stopped) timer = setTimeout(loop, ms); }
-	function loop() {
-		if (stopped) return;
-		if (active()) Promise.resolve(tick()).catch(function(){}).then(schedule);
-		else schedule();
-	}
-	function onFocus() {
-		focused = true;
-		if (timer) { clearTimeout(timer); timer = null; }
-		loop();
-	}
+	function loop() { if (stopped) return; if (active()) Promise.resolve(tick()).catch(function(){}).then(schedule); else schedule(); }
+	function onFocus() { focused = true; if (timer) { clearTimeout(timer); timer = null; } loop(); }
 	function onBlur() { focused = false; }
 	function onVis() { if (document.visibilityState === 'visible') onFocus(); }
 	document.addEventListener('visibilitychange', onVis);
 	window.addEventListener('focus', onFocus);
 	window.addEventListener('blur', onBlur);
 	loop();
-	var handle = {
-		stop: function() {
-			stopped = true;
-			if (timer) { clearTimeout(timer); timer = null; }
-			document.removeEventListener('visibilitychange', onVis);
-			window.removeEventListener('focus', onFocus);
-			window.removeEventListener('blur', onBlur);
-			if (_activePoller === handle) _activePoller = null;
-		}
-	};
-	_activePoller = handle;
-	return handle;
+	var handle = { stop:function(){ stopped=true; if(timer){clearTimeout(timer);timer=null;} document.removeEventListener('visibilitychange',onVis); window.removeEventListener('focus',onFocus); window.removeEventListener('blur',onBlur); if(_activePoller===handle)_activePoller=null; } };
+	_activePoller = handle; return handle;
 }
 
 var COLOURS = { green:'#33a02c', yellow:'#e8a33d', grey:'#888888', red:'#cc2b2b' };
-function dot(colour, label) {
-	return E('span', { 'style':'display:inline-flex;align-items:flex-start;gap:.4em;' }, [
-		E('span', { 'style':'width:.7em;height:.7em;border-radius:50%;display:inline-block;flex:0 0 auto;margin-top:.28em;background:'+(COLOURS[colour]||COLOURS.grey)+';' }),
-		E('span', {}, label)
-	]);
-}
-function pbInjectCss() {
-	if (document.getElementById('pb-css')) return;
-	document.querySelector('head').appendChild(E('link', {
-		'id':'pb-css', 'rel':'stylesheet', 'type':'text/css',
-		'href': L.resource('css/podkop-bot/podkop-bot.css')
-	}));
-}
-function row(label, valueNode) {
-	return E('div', { 'class':'pb-row' }, [
-		E('span', { 'class':'pb-row-label' }, label),
-		E('span', { 'class':'pb-row-val' },
-			(valueNode instanceof Node) ? valueNode : (valueNode == null ? '—' : String(valueNode)))
-	]);
-}
-function card(children) {
-	return E('div', { 'class':'cbi-section', 'style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));' }, children);
-}
-function reasonColour(reason) {
-	var red    = [ 'bot_not_installed','installer_missing','installer_error','rpc_error','init_missing' ];
-	var yellow = [ 'token_not_configured','mixed_proxy_disabled' ];
-	if (red.indexOf(reason) >= 0) return 'red';
-	if (yellow.indexOf(reason) >= 0) return 'yellow';
-	return 'grey';
-}
-function mixedNode(mp) {
-	if (!mp || mp.available === false) return dot('grey', (mp && mp.detail) ? mp.detail : _('недоступно'));
-	if (mp.enabled === true) {
-		var txt = _('Включён') + (mp.port ? (' · ' + _('порт') + ' ' + mp.port) : '') + (mp.section ? (' · ' + mp.section) : '');
-		return dot('green', txt);
-	}
-	return dot('yellow', _('Выключен'));
-}
-function deprecationBanner(dep, releasesUrl) {
-	if (!dep || dep.deprecated !== true) return null;
-	var cur = dep.current || '?', min = dep.min_supported || '?';
-	var kids = [
-		E('p', { 'style':'margin:0 0 .4em;font-weight:500;' }, _('Устаревшая версия Podkop')),
-		E('p', { 'style':'margin:0;' }, _('Установлен Podkop %s — ниже минимально поддерживаемой %s. Функции вроде Mixed Proxy отключены. Обновите Podkop.').format(cur, min))
-	];
-	if (releasesUrl) kids.push(E('a', { 'style':'display:inline-block;margin-top:.5em;', 'href': releasesUrl, 'target':'_blank', 'rel':'noopener' }, _('Страница релизов Podkop')));
-	return E('div', { 'style':'max-width:600px;margin:0 0 1em;padding:.7em 1em;border:1px solid #e8a33d;border-radius:6px;background:rgba(232,163,61,.08);' }, kids);
-}
+function dot(colour, label) { return E('span', { 'style':'display:inline-flex;align-items:flex-start;gap:.4em;' }, [E('span', { 'style':'width:.7em;height:.7em;border-radius:50%;display:inline-block;flex:0 0 auto;margin-top:.28em;background:'+(COLOURS[colour]||COLOURS.grey)+';' }),E('span', {}, label)]); }
+function pbInjectCss() { if (document.getElementById('pb-css')) return; document.querySelector('head').appendChild(E('link', {'id':'pb-css','rel':'stylesheet','type':'text/css','href':L.resource('css/podkop-bot/podkop-bot.css')})); }
+function row(label, valueNode) { return E('div', { 'class':'pb-row' }, [E('span', { 'class':'pb-row-label' }, label),E('span', { 'class':'pb-row-val' },(valueNode instanceof Node) ? valueNode : (valueNode == null ? '—' : String(valueNode)))]); }
+function card(children) { return E('div', { 'class':'cbi-section', 'style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));' }, children); }
+function reasonColour(reason) { var red=[ 'bot_not_installed','installer_missing','installer_error','rpc_error','init_missing' ],yellow=[ 'token_not_configured','mixed_proxy_disabled' ]; if(red.indexOf(reason)>=0)return 'red'; if(yellow.indexOf(reason)>=0)return 'yellow'; return 'grey'; }
+function mixedNode(mp) { if (!mp || mp.available === false) return dot('grey', (mp && mp.detail) ? mp.detail : _('недоступно')); if (mp.enabled === true) { var txt=_('Включён')+(mp.port?(' · '+_('порт')+' '+mp.port):'')+(mp.section?(' · '+mp.section):''); return dot('green',txt); } return dot('yellow',_('Выключен')); }
+function deprecationBanner(dep,releasesUrl){if(!dep||dep.deprecated!==true)return null;var cur=dep.current||'?',min=dep.min_supported||'?';var kids=[E('p',{'style':'margin:0 0 .4em;font-weight:500;'},_('Устаревшая версия Podkop')),E('p',{'style':'margin:0;'},_('Установлен Podkop %s — ниже минимально поддерживаемой %s. Функции вроде Mixed Proxy отключены. Обновите Podkop.').format(cur,min))];if(releasesUrl)kids.push(E('a',{'style':'display:inline-block;margin-top:.5em;','href':releasesUrl,'target':'_blank','rel':'noopener'},_('Страница релизов Podkop')));return E('div',{'style':'max-width:600px;margin:0 0 1em;padding:.7em 1em;border:1px solid #e8a33d;border-radius:6px;background:rgba(232,163,61,.08);'},kids);}
+function ago(ts){var n=parseInt(ts||0,10);if(!n)return '—';var s=Math.max(0,Math.floor(Date.now()/1000)-n);if(s<60)return _('только что');if(s<3600)return Math.floor(s/60)+_(' мин назад');if(s<86400)return Math.floor(s/3600)+_(' ч назад');return Math.floor(s/86400)+_(' дн назад');}
 
 return view.extend({
-	load: function() {
-		pbInjectCss();
-		return callStatus().catch(function() {
-			return { available:false, reason:'rpc_error', detail:_('Нет связи с роутером'), action:{ label:_('Повторить'), method:'status', arg:'' } };
-		});
+	load:function(){pbInjectCss();return callStatus().catch(function(){return {available:false,reason:'rpc_error',detail:_('Нет связи с роутером'),action:{label:_('Повторить'),method:'status',arg:''}};});},
+
+	buildCard:function(data){
+		var self=this;
+		if(!data||data.available===false){var children=[E('div',{'style':'margin:.3em 0 1em;'},dot(reasonColour(data&&data.reason),(data&&data.detail)||_('Недоступно')))];if(data&&(data.reason==='bot_not_installed'||data.reason==='installer_missing'))children.push(E('div',{'style':'margin:.6em 0;padding:.7em 1em;border:1px solid #e8a33d;border-radius:6px;background:rgba(232,163,61,.08);'},[E('p',{'style':'margin:0 0 .5em;'},_('Бот ещё не установлен. Мастер настройки проведёт через установку шаг за шагом.')),E('button',{'class':'cbi-button cbi-button-action','click':function(){window.location=L.url('admin/services/podkop-bot/wizard');}},_('Открыть Мастер настройки'))]));var has=data&&(data.reason==='bot_not_installed'||data.reason==='installer_missing');if(data&&data.action&&data.action.label&&!has)children.push(E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(self,'handleAction',data.action)},data.action.label));return card(children);}
+		var running=(data.service_running===true)||(data.running===true),autostart=(data.autostart===true);
+		var btns=E('div',{'style':'margin-top:1em;display:flex;gap:.5em;flex-wrap:wrap;'},[running?E('button',{'class':'cbi-button cbi-button-reset','click':ui.createHandlerFn(self,'handleService','stop_bot')},_('Остановить')):E('button',{'class':'cbi-button cbi-button-apply','click':ui.createHandlerFn(self,'handleService','start_bot')},_('Запустить')),E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(self,'handleService','restart_bot')},_('Перезапустить')),E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(self,'handleOutboundProbe')},_('Полный тест Outbound')),autostart?E('button',{'class':'cbi-button','click':ui.createHandlerFn(self,'handleService','disable_bot')},_('Отключить автозапуск')):E('button',{'class':'cbi-button','click':ui.createHandlerFn(self,'handleService','enable_bot')},_('Включить автозапуск'))]);
+		var statusCard=card([row(_('Служба'),running?dot('green',_('Работает')):dot('red',_('Остановлена'))),row(_('Автозапуск'),autostart?dot('green',_('Включён')):dot('yellow',_('Отключён'))),row(_('Версия бота'),data.bot_version),row(_('Вариант Podkop'),data.podkop_variant),row(_('Версия Podkop'),E('span',{'id':'podkop-ver-cell'},data.podkop_version||'—')),this._sbRow=E('div',{'class':'pb-row pb-row--plain'},[E('span',{'class':'pb-row-label'},_('sing-box')),E('span',{'class':'pb-row-val','id':'podkop-sb-type'},_('…'))]),row(_('Mixed Proxy'),mixedNode(data.mixed_proxy)),this._ghRow=E('div',{'class':'pb-row pb-row--plain'},[E('span',{'class':'pb-row-label'},_('GitHub напрямую')),E('span',{'class':'pb-row-val','id':'podkop-gh-direct'},_('…'))]),btns]);
+		var banner=deprecationBanner(data.podkop_deprecated);return banner?E('div',{},[banner,statusCard]):statusCard;
 	},
 
-	buildCard: function(data) {
-		var self = this;
-		if (!data || data.available === false) {
-			var children = [ E('div', { 'style':'margin:.3em 0 1em;' }, dot(reasonColour(data && data.reason), (data && data.detail) || _('Недоступно'))) ];
-			if (data && (data.reason === 'bot_not_installed' || data.reason === 'installer_missing')) {
-				children.push(E('div', { 'style':'margin:.6em 0;padding:.7em 1em;border:1px solid #e8a33d;border-radius:6px;background:rgba(232,163,61,.08);' }, [
-					E('p', { 'style':'margin:0 0 .5em;' }, _('Бот ещё не установлен. Мастер настройки проведёт через установку шаг за шагом.')),
-					E('button', { 'class':'cbi-button cbi-button-action', 'click': function(){ window.location = L.url('admin/services/podkop-bot/wizard'); } }, _('Открыть Мастер настройки'))
-				]));
-			}
-			var _hasInstallBanner = data && (data.reason === 'bot_not_installed' || data.reason === 'installer_missing');
-			if (data && data.action && data.action.label && !_hasInstallBanner) children.push(E('button', { 'class':'cbi-button cbi-button-action', 'click': ui.createHandlerFn(self, 'handleAction', data.action) }, data.action.label));
-			return card(children);
-		}
-
-		var running = (data.service_running === true) || (data.running === true);
-		var autostart = (data.autostart === true);
-		var btns = E('div', { 'style':'margin-top:1em;display:flex;gap:.5em;flex-wrap:wrap;' }, [
-			running ? E('button', { 'class':'cbi-button cbi-button-reset', 'click': ui.createHandlerFn(self, 'handleService', 'stop_bot') }, _('Остановить')) : E('button', { 'class':'cbi-button cbi-button-apply', 'click': ui.createHandlerFn(self, 'handleService', 'start_bot') }, _('Запустить')),
-			E('button', { 'class':'cbi-button cbi-button-action', 'click': ui.createHandlerFn(self, 'handleService', 'restart_bot') }, _('Перезапустить')),
-			E('button', { 'class':'cbi-button cbi-button-action', 'click': ui.createHandlerFn(self, 'handleOutboundProbe') }, _('Полный тест Outbound')),
-			autostart ? E('button', { 'class':'cbi-button', 'click': ui.createHandlerFn(self, 'handleService', 'disable_bot') }, _('Отключить автозапуск')) : E('button', { 'class':'cbi-button', 'click': ui.createHandlerFn(self, 'handleService', 'enable_bot') }, _('Включить автозапуск'))
-		]);
-		var statusCard = card([
-			row(_('Служба'), running ? dot('green', _('Работает')) : dot('red', _('Остановлена'))),
-			row(_('Автозапуск'), autostart ? dot('green', _('Включён')) : dot('yellow', _('Отключён'))),
-			row(_('Версия бота'), data.bot_version),
-			row(_('Вариант Podkop'), data.podkop_variant),
-			row(_('Версия Podkop'), E('span', { 'id':'podkop-ver-cell' }, data.podkop_version || '—')),
-			this._sbRow = E('div', { 'class':'pb-row pb-row--plain' }, [ E('span', { 'class':'pb-row-label' }, _('sing-box')), E('span', { 'class':'pb-row-val', 'id':'podkop-sb-type' }, _('…')) ]),
-			row(_('Mixed Proxy'), mixedNode(data.mixed_proxy)),
-			this._ghRow = E('div', { 'class':'pb-row pb-row--plain' }, [ E('span', { 'class':'pb-row-label' }, _('GitHub напрямую')), E('span', { 'class':'pb-row-val', 'id':'podkop-gh-direct' }, _('…')) ]),
-			btns
-		]);
-		var banner = deprecationBanner(data.podkop_deprecated);
-		if (banner) return E('div', {}, [ banner, statusCard ]);
-		return statusCard;
+	buildResources:function(r){
+		if(!r||r.ok===false)return E('div',{'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},_('Ресурсы')),row(_('Состояние'),dot('grey',_('недоступно')))]);
+		var sb=r.singbox||{},ram=r.ram||{},sbNode=sb.running?dot('green',_('работает')+' · PID '+((sb.pids&&sb.pids.length)?sb.pids.join(', '):'?')+(sb.count>1?(' ('+sb.count+')'):'')+' · RSS '+(sb.rss_mb!=null?sb.rss_mb:'?')+' MB'):dot('red',_('не запущен')),ramColour=(ram.avail_mb!=null&&ram.avail_mb<60)?'yellow':'green',ramNode=dot(ramColour,(ram.avail_mb!=null?ram.avail_mb:'?')+' / '+(ram.total_mb!=null?ram.total_mb:'?')+' MB '+_('свободно')+(ram.used_pct!=null?(' · '+ram.used_pct+'% занято'):''));
+		return E('div',{'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},_('Ресурсы')),row('sing-box',sbNode),row(_('Оперативная память'),ramNode)]);
 	},
 
-	buildResources: function(r, ws) {
-		if (!r || r.ok === false) {
-			return E('div', { 'class':'cbi-section', 'style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;' }, [
-				E('h3', { 'style':'margin-top:0;' }, _('Ресурсы')),
-				row(_('Состояние'), dot('grey', _('недоступно')))
-			]);
-		}
-		var sb = r.singbox || {}, ram = r.ram || {};
-		var sbNode = sb.running ? dot('green', _('работает') + ' · PID ' + ((sb.pids && sb.pids.length) ? sb.pids.join(', ') : '?') + (sb.count > 1 ? (' (' + sb.count + ')') : '') + ' · RSS ' + (sb.rss_mb != null ? sb.rss_mb : '?') + ' MB') : dot('red', _('не запущен'));
-		var ramColour = (ram.avail_mb != null && ram.avail_mb < 60) ? 'yellow' : 'green';
-		var ramNode = dot(ramColour, (ram.avail_mb != null ? ram.avail_mb : '?') + ' / ' + (ram.total_mb != null ? ram.total_mb : '?') + ' MB ' + _('свободно') + (ram.used_pct != null ? (' · ' + ram.used_pct + '% занято') : ''));
-		var kids = [ E('h3', { 'style':'margin-top:0;' }, _('Ресурсы')), row('sing-box', sbNode) ];
-		if (ws && ws.installed) {
-			var wtxt = 'v' + (ws.version || '?') + ' · ' + (ws.running ? _('работает') : _('остановлен'));
-			if (ws.running && ws.pid) wtxt += ' · PID ' + ws.pid;
-			wtxt += ' · SOCKS5h 127.0.0.1:' + (ws.port || 18191);
-			if (ws.running && ws.rss_mb != null) wtxt += ' · RSS ' + ws.rss_mb + ' MB';
-			kids.push(row('WARPSCOUT', dot(ws.running ? 'green' : 'grey', wtxt)));
-		}
-		kids.push(row(_('Оперативная память'), ramNode));
-		return E('div', { 'class':'cbi-section', 'style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;' }, kids);
+	buildWarpStatus:function(ws,rt,isOpen){
+		if(!ws||!ws.installed)return E('span',{});
+		var cfg=ws.config||{},item=ws.active_snapshot||{},tg=rt&&rt.telegram||{},tgNode=dot('grey',_('ещё не проверялся'));
+		if(tg.status==='OK')tgNode=dot('green',_('OK')+(tg.latency_ms?(' · '+tg.latency_ms+' ms'):''));else if(tg.status==='TIMEOUT')tgNode=dot('red',_('TIMEOUT'));else if(tg.status==='NETWORK_FAIL')tgNode=dot('red',_('NETWORK_FAIL'));else if(tg.status)tgNode=dot('yellow',tg.status+(tg.http?(' · HTTP '+tg.http):''));
+		var summary=E('summary',{'style':'cursor:pointer;font-weight:600;font-size:110%;padding:.1em 0;'},[E('span',{},_('WARP Status')+' · '),dot((rt&&rt.running)?'green':'grey',(rt&&rt.running)?_('тестовый tunnel работает'):_('тестовый tunnel остановлен'))]);
+		return E('details',{'open':isOpen?'':null,'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;margin-top:1em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));'},[summary,E('div',{'style':'margin-top:.8em;'},[row(_('WARPSCOUT'),ws.current||'—'),row(_('WARP Rescue'),cfg.enabled?dot('green',_('включён')):dot('grey',_('выключен'))),row(_('Active endpoint'),cfg.active_endpoint||'—'),row(_('Protocol'),String(cfg.protocol||'—').toUpperCase()),row(_('NODE'),item.node||'—'),row(_('NODE LOCATION'),item.node_location||'—'),row(_('Endpoint ping'),item.endpoint_ping||'—'),row(_('Tunnel ping / loss'),(item.tunnel_ping||'—')+' / '+(item.loss||'—')),row(_('Scout data age'),ago(item.checked_at)),row(_('Test WARP tunnel'),rt&&rt.running?dot('green',_('работает')+(rt.pid?(' · PID '+rt.pid):'')):dot('grey',rt&&rt.state||_('остановлен'))),row(_('Local SOCKS'),rt&&rt.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191))),row(_('Telegram API'),tgNode),row(_('Telegram test age'),ago(tg.checked_at)),E('div',{'style':'margin-top:.7em;display:flex;gap:.5em;flex-wrap:wrap;'},[E('a',{'class':'cbi-button','href':L.url('admin/services/podkop-bot/transport/warpscout')},_('Настройки WARP Rescue')),E('a',{'class':'cbi-button','href':L.url('admin/services/podkop-bot/transport/warp-revolver')},_('Револьвер WARP'))])])]);
 	},
 
-	render: function(data) {
-		this.data = data;
-		var container = E('div', { 'id':'podkop-bot-card' }, [ this.buildCard(data) ]);
-		this.container = container;
-		var resBox = E('div', { 'id':'podkop-bot-resources' }, [ this.buildResources(null, null) ]);
-		this.resBox = resBox;
-		var updBadge = E('div', { 'id':'podkop-bot-updbadge' });
-		this.updBadge = updBadge;
-		callCheckUpdate('false').then(function(d) {
-			if (d && d.ok && d.update_available) {
-				dom.content(updBadge, E('div', { 'style':'margin:.6em 0;padding:.6em .9em;border:1px solid #e8a33d;border-radius:6px;background:rgba(232,163,61,.08);display:flex;align-items:center;gap:.8em;flex-wrap:wrap;' }, [
-					E('span', {}, _('Доступно обновление бота: v') + d.current + ' → v' + d.latest),
-					E('button', { 'class':'cbi-button cbi-button-action', 'style':'padding:.1em .6em;font-size:90%;', 'click': function(){ window.location = L.url('admin/services/podkop-bot/update'); } }, _('Обновить'))
-				]));
-			}
-		}).catch(function(){});
-
-		callPodkopUpdate('').then(function(d) {
-			var cell = document.getElementById('podkop-ver-cell');
-			if (!cell || !d || !d.ok) {
-				if (cell && d && d.available === false) {
-					var fallback = (data && data.podkop_version && data.podkop_version !== 'unknown') ? data.podkop_version : (d.current || '—');
-					dom.content(cell, [ E('span', {}, fallback + ' '), E('span', { 'title': _('Не удалось проверить обновление (GitHub недоступен напрямую и через прокси).') }, '?') ]);
-				}
-				return;
-			}
-			/* status/install.sh is authoritative for the installed fork version. The
-			 * network update checker is allowed to return current=unknown on forks;
-			 * never overwrite a real local version with that weaker result. */
-			var current = (d.current && d.current !== 'unknown') ? d.current : ((data && data.podkop_version && data.podkop_version !== 'unknown') ? data.podkop_version : '—');
-			var mark;
-			if (d.update_available) mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ': v' + current + ' → v' + d.latest + ' — ' + _('доступно обновление') + ' (' + (d.via==='socks'?_('через прокси'):_('напрямую')) + ')' }, '🔔');
-			else mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ' ' + _('проверка обновления завершена') + (d.latest && d.latest !== 'unknown' ? (' (latest v' + d.latest + ')') : '') }, (d.latest && d.latest !== 'unknown') ? '✓' : '?');
-			dom.content(cell, [ E('span', {}, current + ' '), mark, d.update_available ? E('a', { 'style':'margin-left:.5em;font-size:88%;font-weight:600;color:#e8a33d;', 'href': d.releases_url || d.repo_url, 'target':'_blank', 'rel':'noopener', 'title': _('Доступна новая версия — открыть релизы') }, 'new') : E('span', {}) ]);
-		}).catch(function(){});
-
-		var self = this;
-		setTimeout(function() {
-			self.poller = visiblePoller(5000, function() {
-				return Promise.all([
-					callResources().catch(function(){ return null; }),
-					callWarpRtStatus().catch(function(){ return null; })
-				]).then(function(v) {
-					if (self.resBox) dom.content(self.resBox, self.buildResources(v[0], v[1]));
-				});
-			});
-		}, 0);
-		window.addEventListener('beforeunload', function(){ if (self.poller) self.poller.stop(); });
-
-		callSingboxInfo().then(function(si) {
-			var el = document.getElementById('podkop-sb-type');
-			if (el && si && si.ok) {
-				var fl = (si.flavour === 'extended') ? ' · extended' : (si.flavour ? (' · ' + si.flavour) : '');
-				el.textContent = (si.version || 'unknown') + fl;
-			} else if (el) el.textContent = '—';
-		}).catch(function(){ var el = document.getElementById('podkop-sb-type'); if (el) el.textContent = '—'; });
-
-		callTestGithub().then(function(gh) {
-			var el = document.getElementById('podkop-gh-direct');
-			if (!el) return;
-			if (gh && gh.reachable) dom.content(el, dot('green', _('доступен')));
-			else dom.content(el, dot('grey', _('недоступен напрямую')));
-		}).catch(function(){ var el = document.getElementById('podkop-gh-direct'); if (el) dom.content(el, dot('grey', '—')); });
-
-		var appFooter = E('div', { 'style':'max-width:600px;margin-top:.8em;color:#888;font-size:85%;text-align:right;' }, [ E('span', { 'id':'podkop-app-ver' }, '') ]);
-		callAppInfo().then(function(a) {
-			var el = document.getElementById('podkop-app-ver');
-			if (el && a && a.ok) {
-				dom.content(el, [ E('span', {}, _('luci-app-podkop-bot v') + (a.luci_app_version||'?') + ' · '), E('a', { 'href': a.repo || 'https://github.com/Medvedolog/luci-app-podkop-bot', 'target':'_blank', 'rel':'noopener' }, _('репозиторий')) ]);
-				callLuciUpdate('false').then(function(d) {
-					if (d && d.ok && d.update_available) el.appendChild(E('a', { 'style':'margin-left:.5em;font-weight:600;color:#e8a33d;', 'href': d.releases_url || 'https://github.com/Medvedolog/luci-app-podkop-bot/releases', 'target':'_blank', 'rel':'noopener', 'title': _('Доступна новая версия v') + d.latest + ' — открыть релизы' }, 'new'));
-				}).catch(function(){});
-			}
-		}).catch(function(){});
-
-		return E('div', {}, [ E('h2', {}, _('Podkop Bot')), updBadge, container, resBox, appFooter ]);
+	render:function(data){
+		this.data=data;var container=E('div',{'id':'podkop-bot-card'},[this.buildCard(data)]);this.container=container;var resBox=E('div',{'id':'podkop-bot-resources'},[this.buildResources(null)]);this.resBox=resBox;var warpBox=E('div',{'id':'podkop-bot-warp-status'});this.warpBox=warpBox;var updBadge=E('div',{'id':'podkop-bot-updbadge'});this.updBadge=updBadge;
+		callCheckUpdate('false').then(function(d){if(d&&d.ok&&d.update_available)dom.content(updBadge,E('div',{'style':'margin:.6em 0;padding:.6em .9em;border:1px solid #e8a33d;border-radius:6px;background:rgba(232,163,61,.08);display:flex;align-items:center;gap:.8em;flex-wrap:wrap;'},[E('span',{},_('Доступно обновление бота: v')+d.current+' → v'+d.latest),E('button',{'class':'cbi-button cbi-button-action','style':'padding:.1em .6em;font-size:90%;','click':function(){window.location=L.url('admin/services/podkop-bot/update');}},_('Обновить'))]));}).catch(function(){});
+		callPodkopUpdate('').then(function(d){var cell=document.getElementById('podkop-ver-cell');if(!cell||!d||!d.ok){if(cell&&d&&d.available===false){var fallback=(data&&data.podkop_version&&data.podkop_version!=='unknown')?data.podkop_version:(d.current||'—');dom.content(cell,[E('span',{},fallback+' '),E('span',{'title':_('Не удалось проверить обновление (GitHub недоступен напрямую и через прокси).')},'?')]);}return;}var current=(d.current&&d.current!=='unknown')?d.current:((data&&data.podkop_version&&data.podkop_version!=='unknown')?data.podkop_version:'—'),mark;if(d.update_available)mark=E('span',{'style':'cursor:help;','title':(d.name||'Podkop')+': v'+current+' → v'+d.latest+' — '+_('доступно обновление')+' ('+(d.via==='socks'?_('через прокси'):_('напрямую'))+')'},'🔔');else mark=E('span',{'style':'cursor:help;','title':(d.name||'Podkop')+' '+_('проверка обновления завершена')+(d.latest&&d.latest!=='unknown'?(' (latest v'+d.latest+')'):'')},(d.latest&&d.latest!=='unknown')?'✓':'?');dom.content(cell,[E('span',{},current+' '),mark,d.update_available?E('a',{'style':'margin-left:.5em;font-size:88%;font-weight:600;color:#e8a33d;','href':d.releases_url||d.repo_url,'target':'_blank','rel':'noopener','title':_('Доступна новая версия — открыть релизы')},'new'):E('span',{})]);}).catch(function(){});
+		var self=this;setTimeout(function(){self.poller=visiblePoller(5000,function(){var old=self.warpBox&&self.warpBox.querySelector('details'),opened=!!(old&&old.open);return Promise.all([callResources().catch(function(){return null;}),callWarpStatus('').catch(function(){return null;}),callWarpRtStatus().catch(function(){return null;})]).then(function(v){if(self.resBox)dom.content(self.resBox,self.buildResources(v[0]));if(self.warpBox)dom.content(self.warpBox,self.buildWarpStatus(v[1],v[2],opened));});});},0);window.addEventListener('beforeunload',function(){if(self.poller)self.poller.stop();});
+		callSingboxInfo().then(function(si){var el=document.getElementById('podkop-sb-type');if(el&&si&&si.ok){var fl=(si.flavour==='extended')?' · extended':(si.flavour?(' · '+si.flavour):'');el.textContent=(si.version||'unknown')+fl;}else if(el)el.textContent='—';}).catch(function(){var el=document.getElementById('podkop-sb-type');if(el)el.textContent='—';});
+		callTestGithub().then(function(gh){var el=document.getElementById('podkop-gh-direct');if(!el)return;if(gh&&gh.reachable)dom.content(el,dot('green',_('доступен')));else dom.content(el,dot('grey',_('недоступен напрямую')));}).catch(function(){var el=document.getElementById('podkop-gh-direct');if(el)dom.content(el,dot('grey','—'));});
+		var appFooter=E('div',{'style':'max-width:600px;margin-top:.8em;color:#888;font-size:85%;text-align:right;'},[E('span',{'id':'podkop-app-ver'},'')]);callAppInfo().then(function(a){var el=document.getElementById('podkop-app-ver');if(el&&a&&a.ok){dom.content(el,[E('span',{},_('luci-app-podkop-bot v')+(a.luci_app_version||'?')+' · '),E('a',{'href':a.repo||'https://github.com/Medvedolog/luci-app-podkop-bot','target':'_blank','rel':'noopener'},_('репозиторий'))]);callLuciUpdate('false').then(function(d){if(d&&d.ok&&d.update_available)el.appendChild(E('a',{'style':'margin-left:.5em;font-weight:600;color:#e8a33d;','href':d.releases_url||'https://github.com/Medvedolog/luci-app-podkop-bot/releases','target':'_blank','rel':'noopener','title':_('Доступна новая версия v')+d.latest+' — открыть релизы'},'new'));}).catch(function(){});}}).catch(function(){});
+		return E('div',{},[E('h2',{},_('Podkop Bot')),updBadge,container,resBox,warpBox,appFooter]);
 	},
 
-	refresh: function() {
-		var self = this;
-		return callStatus().catch(function() {
-			return { available:false, reason:'rpc_error', detail:_('Нет связи с роутером'), action:{ label:_('Повторить'), method:'status', arg:'' } };
-		}).then(function(data) {
-			self.data = data;
-			dom.content(self.container, self.buildCard(data));
-		});
-	},
-
-	handleOutboundProbe: function() {
-		ui.showModal(_('Полный тест Outbound'), [ E('p', { 'class':'spinning' }, _('Проверяются геолокация, 12 сервисов и скорость (до 8 МиБ)…')) ]);
-		return callActiveProbe('', '', '', '').then(function(d) {
-			if (!d || d.available === false) {
-				ui.showModal(_('Полный тест Outbound'), [ E('p', {}, dot('yellow', (d && d.detail) ? d.detail : _('Проверка недоступна.'))), E('div', { 'class':'right' }, [ E('button', { 'class':'btn', 'click': ui.hideModal }, _('Закрыть')) ]) ]);
-				return;
-			}
-			var svc = (d.services || []).map(function(x) {
-				var c = x.status === 'ok' ? 'green' : ((x.status === 'blocked' || x.status === 'timeout') ? 'red' : 'yellow');
-				var tail = (x.ms ? (' · ' + x.ms + ' ms') : '') + (x.geo ? (' · ' + x.geo) : '') + (x.code && x.code !== '000' ? (' · HTTP ' + x.code) : '');
-				return E('div', { 'style':'margin:.2em 0;' }, dot(c, (x.name || '?') + tail));
-			});
-			var sp = d.speed || {}, spc = sp.status === 'ok' ? 'green' : 'red';
-			ui.showModal(_('Полный тест Outbound'), [
-				E('p', {}, [ E('strong', {}, _('Выход: ')), (d.geo && d.geo.ip ? d.geo.ip : '—') + (d.geo && d.geo.country ? (' · ' + d.geo.country) : '') ]),
-				E('div', { 'style':'max-height:45vh;overflow:auto;margin:.5em 0;' }, svc),
-				E('p', {}, dot(spc, _('Скорость: ') + (sp.mbps || '0') + ' Mbit/s · ' + (sp.status || 'unknown'))),
-				E('div', { 'class':'right' }, [ E('button', { 'class':'cbi-button', 'click': function(){ window.location = L.url('admin/services/podkop-bot/runtime'); } }, _('Открыть Runtime')), ' ', E('button', { 'class':'btn', 'click': ui.hideModal }, _('Закрыть')) ])
-			]);
-		}).catch(function() {
-			ui.showModal(_('Полный тест Outbound'), [ E('p', {}, dot('red', _('Проверка не завершилась.'))), E('div', { 'class':'right' }, [ E('button', { 'class':'btn', 'click': ui.hideModal }, _('Закрыть')) ]) ]);
-		});
-	},
-
-	handleService: function(action) {
-		var self = this;
-		ui.showModal(_('Управление службой'), [ E('p', { 'class':'spinning' }, _('Выполняется: %s…').format(action)) ]);
-		return callService(action).then(function() { ui.hideModal(); return self.refresh(); }).catch(function() { ui.hideModal(); ui.addNotification(null, E('p', {}, _('Не удалось выполнить действие')), 'error'); });
-	},
-
-	handleAction: function(action) {
-		var self = this;
-		if (action && action.method === 'status') return self.refresh();
-		if (action && action.method === 'installer') { window.location = L.url('admin/services/podkop-bot/wizard'); return; }
-		ui.addNotification(null, E('p', {}, _('Действие «%s» появится в следующем срезе.').format(action ? action.label : '')), 'info');
-	},
-
-	handleSave: null,
-	handleSaveApply: null,
-	handleReset: null
+	refresh:function(){var self=this;return callStatus().catch(function(){return {available:false,reason:'rpc_error',detail:_('Нет связи с роутером'),action:{label:_('Повторить'),method:'status',arg:''}};}).then(function(data){self.data=data;dom.content(self.container,self.buildCard(data));});},
+	handleOutboundProbe:function(){ui.showModal(_('Полный тест Outbound'),[E('p',{'class':'spinning'},_('Проверяются геолокация, 12 сервисов и скорость (до 8 МиБ)…'))]);return callActiveProbe('','','','').then(function(d){if(!d||d.available===false){ui.showModal(_('Полный тест Outbound'),[E('p',{},dot('yellow',(d&&d.detail)?d.detail:_('Проверка недоступна.'))),E('div',{'class':'right'},[E('button',{'class':'btn','click':ui.hideModal},_('Закрыть'))])]);return;}var svc=(d.services||[]).map(function(x){var c=x.status==='ok'?'green':((x.status==='blocked'||x.status==='timeout')?'red':'yellow'),tail=(x.ms?(' · '+x.ms+' ms'):'')+(x.geo?(' · '+x.geo):'')+(x.code&&x.code!=='000'?(' · HTTP '+x.code):'');return E('div',{'style':'margin:.2em 0;'},dot(c,(x.name||'?')+tail));}),sp=d.speed||{},spc=sp.status==='ok'?'green':'red';ui.showModal(_('Полный тест Outbound'),[E('p',{},[E('strong',{},_('Выход: ')),(d.geo&&d.geo.ip?d.geo.ip:'—')+(d.geo&&d.geo.country?(' · '+d.geo.country):'')]),E('div',{'style':'max-height:45vh;overflow:auto;margin:.5em 0;'},svc),E('p',{},dot(spc,_('Скорость: ')+(sp.mbps||'0')+' Mbit/s · '+(sp.status||'unknown'))),E('div',{'class':'right'},[E('button',{'class':'cbi-button','click':function(){window.location=L.url('admin/services/podkop-bot/runtime');}},_('Открыть Runtime')),' ',E('button',{'class':'btn','click':ui.hideModal},_('Закрыть'))])]);}).catch(function(){ui.showModal(_('Полный тест Outbound'),[E('p',{},dot('red',_('Проверка не завершилась.'))),E('div',{'class':'right'},[E('button',{'class':'btn','click':ui.hideModal},_('Закрыть'))])]);});},
+	handleService:function(action){var self=this;ui.showModal(_('Управление службой'),[E('p',{'class':'spinning'},_('Выполняется: %s…').format(action))]);return callService(action).then(function(){ui.hideModal();return self.refresh();}).catch(function(){ui.hideModal();ui.addNotification(null,E('p',{},_('Не удалось выполнить действие')),'error');});},
+	handleAction:function(action){var self=this;if(action&&action.method==='status')return self.refresh();if(action&&action.method==='installer'){window.location=L.url('admin/services/podkop-bot/wizard');return;}ui.addNotification(null,E('p',{},_('Действие «%s» появится в следующем срезе.').format(action?action.label:'')),'info');},
+	handleSave:null,handleSaveApply:null,handleReset:null
 });

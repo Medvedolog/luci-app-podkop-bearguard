@@ -46,7 +46,7 @@ handoff_runtime() {
 	pid_alive_file "$RUNTIME_PID_FILE" || return 0
 	ubus call podkop_bot_warpscout_runtime stop '{}' >/dev/null 2>&1 || return 1
 	_n=0
-	while pid_alive_file "$RUNTIME_PID_FILE" && [ "$_n" -lt 30 ]; do sleep 0.1; _n=$((_n+1)); done
+	while pid_alive_file "$RUNTIME_PID_FILE" && [ "$_n" -lt 3 ]; do sleep 1; _n=$((_n+1)); done
 	pid_alive_file "$RUNTIME_PID_FILE" && return 1
 	return 0
 }
@@ -74,7 +74,7 @@ stop_scan_socks() {
 	if _p=$(pid_from_file "$SCAN_SOCKS_PID"); then
 		kill "$_p" 2>/dev/null || true
 		_i=0
-		while kill -0 "$_p" 2>/dev/null && [ "$_i" -lt 20 ]; do sleep 0.1; _i=$((_i+1)); done
+		while kill -0 "$_p" 2>/dev/null && [ "$_i" -lt 2 ]; do sleep 1; _i=$((_i+1)); done
 		kill -9 "$_p" 2>/dev/null || true
 	fi
 	rm -f "$SCAN_SOCKS_PID" 2>/dev/null
@@ -89,11 +89,10 @@ append_result() {
 probe_telegram() {
 	_proxy="$1"; _token="$2"
 	_body="$STATE_DIR/tgroute_body.$$"; _err="$STATE_DIR/tgroute_error.$$"
-	_t0=$(date +%s%3N 2>/dev/null); case "$_t0" in ''|*[!0-9]*) _t0=$(( $(date +%s 2>/dev/null || echo 0) * 1000 ));; esac
-	_http=$(curl -sS -o "$_body" -w '%{http_code}' --proxy "$_proxy" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_token}/getMe" 2>"$_err")
+	_meta=$(curl -sS -o "$_body" -w '%{http_code}|%{time_total}' --proxy "$_proxy" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_token}/getMe" 2>"$_err")
 	_rc=$?
-	_t1=$(date +%s%3N 2>/dev/null); case "$_t1" in ''|*[!0-9]*) _t1=$(( $(date +%s 2>/dev/null || echo 0) * 1000 ));; esac
-	_ms=$((_t1-_t0)); [ "$_ms" -lt 0 ] 2>/dev/null && _ms=0
+	_http=${_meta%%|*}; _secs=${_meta#*|}
+	_ms=$(awk -v t="$_secs" 'BEGIN{if(t+0>=0)printf "%d",(t*1000)+0.5;else print 0}' 2>/dev/null); case "$_ms" in ''|*[!0-9]*) _ms=0;; esac
 	_errtxt=$(head -c 240 "$_err" 2>/dev/null | tr '\n\r\t|' '    ')
 	[ -n "$_token" ] && _errtxt=$(printf '%s' "$_errtxt" | sed "s/${_token}/<redacted>/g")
 	_status=FAIL; _reason="curl_error_${_rc}"

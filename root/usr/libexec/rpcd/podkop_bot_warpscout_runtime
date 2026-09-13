@@ -115,7 +115,7 @@ method_stop() {
 	read -r _in 2>/dev/null
 	if _pid=$(pid_value); then
 		kill "$_pid" 2>/dev/null || true
-		_i=0; while kill -0 "$_pid" 2>/dev/null && [ "$_i" -lt 20 ]; do sleep 0.1; _i=$((_i+1)); done
+		_i=0; while kill -0 "$_pid" 2>/dev/null && [ "$_i" -lt 2 ]; do sleep 1; _i=$((_i+1)); done
 		kill -9 "$_pid" 2>/dev/null || true
 	fi
 	rm -f "$PID_FILE"
@@ -150,13 +150,11 @@ method_telegram_test() {
 
 	_body="$STATE_DIR/warpscout_telegram_body.$$"
 	_err="$STATE_DIR/warpscout_telegram_error.$$"
-	_t0=$(date +%s%3N 2>/dev/null); case "$_t0" in ''|*[!0-9]*) _t0=$(( $(date +%s 2>/dev/null || echo 0) * 1000 ));; esac
-	_http=$(curl -sS -o "$_body" -w '%{http_code}' --proxy "$_proxy" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_token}/getMe" 2>"$_err")
+	_meta=$(curl -sS -o "$_body" -w '%{http_code}|%{time_total}' --proxy "$_proxy" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_token}/getMe" 2>"$_err")
 	_rc=$?
-	_t1=$(date +%s%3N 2>/dev/null); case "$_t1" in ''|*[!0-9]*) _t1=$(( $(date +%s 2>/dev/null || echo 0) * 1000 ));; esac
-	_ms=$((_t1-_t0)); [ "$_ms" -lt 0 ] 2>/dev/null && _ms=0
+	_http=${_meta%%|*}; _secs=${_meta#*|}
+	_ms=$(awk -v t="$_secs" 'BEGIN{if(t+0>=0)printf "%d",(t*1000)+0.5;else print 0}' 2>/dev/null); case "$_ms" in ''|*[!0-9]*) _ms=0;; esac
 	_errtxt=$(head -c 240 "$_err" 2>/dev/null | tr '\n\r\t' '   ')
-	# Never persist the bot token even if a future curl build includes the URL in stderr.
 	[ -n "$_token" ] && _errtxt=$(printf '%s' "$_errtxt" | sed "s/${_token}/<redacted>/g")
 	_status="OTHER_API_RESPONSE"; _reason="api_response"; _reachable=true; _verified=false
 	if [ "$_rc" -eq 28 ]; then

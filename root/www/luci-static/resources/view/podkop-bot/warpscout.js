@@ -70,7 +70,7 @@ return view.extend({
 		this._st=st; this._sl=sl; this._rs=rs;
 		var out=E('div', {}, [
 			E('h2', {}, _('WARP Rescue / WARPSCOUT')),
-			E('p', { 'class':'pb-hint-90', 'style':'max-width:820px;' }, _('WARPSCOUT выполняет Discovery и ранжирование WARP endpoints. Рабочий пользовательский SOCKS — WARP Rescue: он использует только прошедшие TG API Routes кандидаты и живёт на роутере независимо от открытой вкладки LuCI. Служебный test SOCKS используется только внутри ручных тестов и отдельно не показывается.')),
+			E('p', { 'class':'pb-hint-90', 'style':'max-width:820px;' }, _('WARPSCOUT ищет и ранжирует доступные WARP-узлы. WARP Rescue использует только узлы, успешно прошедшие проверку Telegram Bot API, и продолжает работать независимо от открытой страницы LuCI. Для ручных проверок временно запускается отдельный тестовый SOCKS.')),
 			this.statusCard(st),
 			this.accountCard(st),
 			this.configCard(st),
@@ -87,8 +87,8 @@ return view.extend({
 		return card(_('Состояние'), [
 			row(_('WARPSCOUT'), st.installed ? dot('green', _('установлен')) : dot('yellow', _('не установлен'))),
 			row(_('Версия'), st.current || '—'),
-			row(_('Account'), st.account_ready ? dot('green', _('готов')) : dot('yellow', _('отсутствует'))),
-			row(_('Выбранный endpoint'), (st.config && st.config.active_endpoint) || '—'),
+			row(_('Учётная запись WARP'), st.account_ready ? dot('green', _('готова')) : dot('yellow', _('отсутствует'))),
+			row(_('Выбранный WARP-узел'), (st.config && st.config.active_endpoint) || '—'),
 			E('div', { 'style':'margin-top:.7em;display:flex;gap:.5em;flex-wrap:wrap;' }, [
 				E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/update')+'#warpscout-update' }, _('Установка / удаление WARPSCOUT'))
 			])
@@ -97,18 +97,18 @@ return view.extend({
 
 	accountCard: function(st) {
 		var self=this, status=E('div', { 'style':'margin-top:.5em;' });
-		var reg=E('button', { 'class':'cbi-button cbi-button-action', 'disabled':!st.installed ? 'disabled' : null, 'click':ui.createHandlerFn(this,function(){ return self.runAction('register','',status,reg); }) }, st.account_ready ? _('Перерегистрировать account') : _('Создать WARP account'));
+		var reg=E('button', { 'class':'cbi-button cbi-button-action', 'disabled':!st.installed ? 'disabled' : null, 'click':ui.createHandlerFn(this,function(){ return self.runAction('register','',status,reg); }) }, st.account_ready ? _('Перерегистрировать учётную запись') : _('Создать учётную запись WARP'));
 		var imp=E('button', { 'class':'cbi-button', 'click':ui.createHandlerFn(this,function(){
-			dom.content(status,dot('grey',_('Загрузка account JSON…')));
+			dom.content(status,dot('grey',_('Загрузка JSON учётной записи…')));
 			return ui.uploadFile('/tmp/warpscout-account-upload.json', null, _('Файл будет проверен как JSON и сохранён с правами 0600. Секреты не выводятся в LuCI и журнал.')).then(function(){
 				return callImport().then(function(r){
-					dom.content(status, r&&r.ok ? dot('green',_('Account импортирован')) : dot('red',_('Импорт отклонён: ')+((r&&r.reason)||'?')));
+					dom.content(status, r&&r.ok ? dot('green',_('Учётная запись импортирована')) : dot('red',_('Импорт отклонён: ')+((r&&r.reason)||'?')));
 					if(r&&r.ok) return self.refreshView();
 				});
 			}).catch(function(e){ dom.content(status,dot('yellow',(e&&e.message)||_('Загрузка отменена'))); });
-		}) }, _('Импортировать account JSON'));
-		return card(_('WARP account'), [
-			E('p', { 'class':'pb-hint-90' }, st.account_ready ? _('Account готов. Следующий шаг — найти рабочие WARP endpoints.') : _('Сначала создайте или импортируйте WARP account. Без него поиск endpoints недоступен.')),
+		}) }, _('Импортировать JSON учётной записи'));
+		return card(_('Учётная запись WARP'), [
+			E('p', { 'class':'pb-hint-90' }, st.account_ready ? _('Учётная запись готова. Следующий шаг — найти рабочие WARP-узлы.') : _('Сначала создайте или импортируйте учётную запись WARP. Без неё поиск узлов недоступен.')),
 			E('div', { 'class':'pb-action-row', 'style':'display:flex;gap:.5em;flex-wrap:wrap;' }, [reg,imp]), status
 		]);
 	},
@@ -117,7 +117,7 @@ return view.extend({
 		var c=st.config||{}, self=this;
 		function select(values, cur) { var s=E('select',{'class':'cbi-input-select'}); values.forEach(function(v){ s.appendChild(E('option',{value:v[0],selected:v[0]===cur?'selected':null},v[1])); }); return s; }
 		function input(v, ph) { return E('input',{type:'text','class':'cbi-input-text',value:v||'',placeholder:ph||''}); }
-		var policy=select([['manual',_('Manual')],['reserve',_('Reserve')],['emergency',_('Emergency')]],c.policy||'manual');
+		var policy=select([['manual',_('Ручной')],['reserve',_('Резерв')],['emergency',_('Аварийный')]],c.policy||'manual');
 		var proto=select([['awg','AWG'],['wg','WG'],['masque','MASQUE'],['masque-h2','MASQUE-H2']],c.protocol||'awg');
 		var port=input(String(c.socks_port||18191),'18191');
 		var node=input(c.node,'HEL,ARN'), country=input(c.country,'FI,SE'), exnode=input(c.exclude_node,'DME'), excountry=input(c.exclude_country,'RU');
@@ -129,15 +129,15 @@ return view.extend({
 			return p.then(function(){dom.content(status,dot('green',_('Настройки сохранены')));return self.refreshView();}).catch(function(e){dom.content(status,dot('red',_('Ошибка: ')+(e&&e.message||'?')));});
 		})},_('Сохранить'));
 		var advanced=E('details',{'style':'margin-top:.7em;'},[
-			E('summary',{'style':'cursor:pointer;color:#aaa;'},_('Расширенные параметры discovery / reserve')),
+			E('summary',{'style':'cursor:pointer;color:#aaa;'},_('Расширенные параметры поиска и резерва')),
 			E('div',{'style':'margin-top:.7em;'},[
-				row(_('Policy'),policy), row(_('Protocol'),proto),
-				row(_('Node filter'),node), row(_('Country filter'),country), row(_('Exclude node'),exnode), row(_('Exclude country'),excountry),
-				E('p',{'class':'pb-hint-90'},_('Фильтры напрямую передаются WARPSCOUT. LuCI не переоценивает качество найденных endpoints. Запуск и остановка WARP выполняются через WARP Rescue ниже.'))
+				row(_('Режим'),policy), row(_('Протокол'),proto),
+				row(_('Фильтр узлов'),node), row(_('Фильтр стран'),country), row(_('Исключить узлы'),exnode), row(_('Исключить страны'),excountry),
+				E('p',{'class':'pb-hint-90'},_('Фильтры напрямую передаются WARPSCOUT. LuCI не переоценивает качество найденных WARP-узлов. Запуск и остановка WARP выполняются через WARP Rescue ниже.'))
 			])
 		]);
 		return card(_('SOCKS / параметры'), [
-			row(_('Локальный SOCKS5h port'),port),
+			row(_('Порт SOCKS5h'),port),
 			advanced,
 			E('div',{'style':'margin-top:.7em;'},[save]),status
 		]);
@@ -145,10 +145,10 @@ return view.extend({
 
 	scanCard: function(st, sl) {
 		var self=this,status=E('div',{'style':'margin-top:.5em;'}), items=(sl&&sl.items)||[];
-		var scan=E('button',{'class':'cbi-button cbi-button-action','disabled':!(st.installed&&st.account_ready) ? 'disabled' : null,'click':ui.createHandlerFn(this,function(){return self.runAction('scan','',status,scan);})},_('Найти WARP endpoints'));
-		var target=E('button',{'class':'cbi-button','disabled':!(st.installed&&st.account_ready&&st.config&&st.config.active_endpoint) ? 'disabled' : null,'click':ui.createHandlerFn(this,function(){return self.runAction('target',(st.config&&st.config.active_endpoint)||'',status,target);})},_('Перепроверить выбранный (--target)'));
-		var hint=!st.account_ready ? _('Шаг 1: сначала создайте WARP account выше.') : (!items.length ? _('Шаг 2: выполните поиск. После успешного scan ниже появится shortlist найденных endpoints.') : _('Поиск уже выполнен. Можно повторить полный scan или быстро перепроверить выбранный endpoint.'));
-		return card(_('Discovery'), [
+		var scan=E('button',{'class':'cbi-button cbi-button-action','disabled':!(st.installed&&st.account_ready) ? 'disabled' : null,'click':ui.createHandlerFn(this,function(){return self.runAction('scan','',status,scan);})},_('Найти WARP-узлы'));
+		var target=E('button',{'class':'cbi-button','disabled':!(st.installed&&st.account_ready&&st.config&&st.config.active_endpoint) ? 'disabled' : null,'click':ui.createHandlerFn(this,function(){return self.runAction('target',(st.config&&st.config.active_endpoint)||'',status,target);})},_('Перепроверить выбранный узел'));
+		var hint=!st.account_ready ? _('Шаг 1: сначала создайте учётную запись WARP выше.') : (!items.length ? _('Шаг 2: выполните поиск. После успешного поиска ниже появится список найденных WARP-узлов.') : _('Поиск уже выполнен. Можно повторить полный поиск или быстро перепроверить выбранный WARP-узел.'));
+		return card(_('Поиск WARP-узлов'), [
 			E('p',{'class':'pb-hint-90'},hint),
 			E('div',{'class':'pb-action-row','style':'display:flex;gap:.5em;flex-wrap:wrap;'},[scan,target]),status
 		]);
@@ -157,14 +157,14 @@ return view.extend({
 	manualTelegramTest: function(endpoint,status,btn) {
 		var self=this;
 		btn.disabled=true;
-		dom.content(status,dot('yellow',_('Временно поднимаю именно ')+endpoint+_(' и проверяю Telegram Bot API…')));
+		dom.content(status,dot('yellow',_('Временно запускаю WARP-узел ')+endpoint+_(' и проверяю Telegram Bot API…')));
 		return callWarpRtStop().catch(function(){return null;}).then(function(){
 			return callWarpRtStart(endpoint);
 		}).then(function(r){
 			if(!r||!r.ok)throw new Error((r&&r.reason)||'warp_start_failed');
 			return callWarpRtTelegram();
 		}).then(function(t){
-			if(t&&t.verified_bot_api)dom.content(status,dot('green',_('Telegram VALID · HTTP ')+(t.http||'200')+(t.latency_ms?(' · '+t.latency_ms+' ms'):'')));
+			if(t&&t.verified_bot_api)dom.content(status,dot('green',_('Telegram VALID · HTTP ')+(t.http||'200')+(t.latency_ms?(' · '+t.latency_ms+' мс'):'')));
 			else if(t&&t.telegram_reached)dom.content(status,dot('yellow',_('Telegram достижим, но не VALID · HTTP ')+(t.http||'—')));
 			else dom.content(status,dot('red',_('Telegram FAIL · ')+((t&&t.reason)||'?')));
 		}).catch(function(e){
@@ -176,17 +176,17 @@ return view.extend({
 
 	shortlistCard: function(sl) {
 		var self=this, items=(sl&&sl.items)||[], body=E('div',{});
-		if(!items.length) dom.content(body,E('p',{'class':'pb-hint-90'},_('Пока пусто. Если scan в журнале нашёл endpoints, но здесь ничего нет — это ошибка разбора report, а не отсутствие рабочих WARP endpoints.')));
+		if(!items.length) dom.content(body,E('p',{'class':'pb-hint-90'},_('Список пока пуст. Если поиск в журнале нашёл узлы, но здесь ничего нет, значит не удалось разобрать результаты поиска.')));
 		else dom.content(body,items.map(function(x){
 			var active=x.endpoint===sl.active, testStatus=E('span',{'style':'margin-left:.6em;'});
-			var selectBtn=E('button',{'class':'cbi-button'+(active?' cbi-button-positive':''),'disabled':active?'disabled':null,'click':ui.createHandlerFn(self,function(){return callSelect(x.endpoint).then(function(r){if(r&&r.ok)return self.refreshView();});})},active?_('Активный'):_('Выбрать'));
+			var selectBtn=E('button',{'class':'cbi-button'+(active?' cbi-button-positive':''),'disabled':active?'disabled':null,'click':ui.createHandlerFn(self,function(){return callSelect(x.endpoint).then(function(r){if(r&&r.ok)return self.refreshView();});})},active?_('Выбран'):_('Выбрать'));
 			var tgBtn=E('button',{'class':'cbi-button','style':'padding:.2em .65em;font-size:85%;','click':ui.createHandlerFn(self,function(){return self.manualTelegramTest(x.endpoint,testStatus,tgBtn);})},_('TG API'));
 			return E('div',{'style':'border-top:1px solid rgba(127,127,127,.14);padding:.65em 0;'},[
 				E('div',{'style':'display:flex;justify-content:space-between;gap:1em;align-items:center;flex-wrap:wrap;'},[
 					E('strong',{},x.endpoint),
 					E('div',{'style':'display:flex;gap:.45em;align-items:center;flex-wrap:wrap;'},[tgBtn,selectBtn])
 				]),
-				E('div',{'class':'pb-hint-90'},[(x.node||'—')+' · '+(x.node_location||'—')+' · '+_('seen as ')+(x.seen_as||'—')+' · '+_('TUN ')+(x.tunnel_ping||'—')+' · '+_('loss ')+(x.loss||'—'),testStatus])
+				E('div',{'class':'pb-hint-90'},[(x.node||'—')+' · '+(x.node_location||'—')+' · '+_('выход ')+(x.seen_as||'—')+' · '+_('туннель ')+(x.tunnel_ping||'—')+' · '+_('потери ')+(x.loss||'—'),testStatus])
 			]);
 		}));
 		var next=E('button',{'class':'cbi-button','disabled':items.length<2?'disabled':null,'click':ui.createHandlerFn(this,function(){
@@ -194,9 +194,9 @@ return view.extend({
 			var idx=0; for(var i=0;i<items.length;i++) if(items[i].endpoint===sl.active){idx=i;break;}
 			var ep=items[(idx+1)%items.length].endpoint;
 			return callSelect(ep).then(function(r){if(r&&r.ok)return self.refreshView();});
-		})},_('Следующий endpoint'));
-		return card(_('Shortlist'),[
-			E('p',{'class':'pb-hint-90'},_('Shortlist — исходный набор кандидатов WARPSCOUT. TG API Routes квалифицирует эти endpoints; в магазин револьвера попадает только подмножество со статусом VALID. Кнопка TG API ниже — ручная точечная проверка и сама магазин не перестраивает.')),
+		})},_('Следующий WARP-узел'));
+		return card(_('Найденные WARP-узлы'),[
+			E('p',{'class':'pb-hint-90'},_('Здесь показаны кандидаты, найденные WARPSCOUT. В магазин револьвера попадают только WARP-узлы со статусом VALID после проверки Telegram Bot API. Кнопка TG API выполняет точечную проверку выбранного узла и сама магазин не перестраивает.')),
 			body,E('div',{'style':'margin-top:.7em;'},[next])
 		]);
 	},
@@ -209,10 +209,10 @@ return view.extend({
 			return (enabled?callRescueStop():callRescueTrigger()).then(function(r){dom.content(status,r&&r.ok?dot('green',enabled?_('WARP остановлен'):_('WARP запускается')):dot('red',_('Ошибка: ')+((r&&r.reason)||'?')));window.setTimeout(function(){self.refreshView();},700);window.setTimeout(function(){self.refreshView();},3500);});
 		})},enabled?_('Остановить WARP'):_('Запустить WARP'));
 		return card(_('WARP Rescue'),[
-			E('p',{'class':'pb-hint-90'},_('Это основной WARP SOCKS. Служебный test SOCKS не показывается: ручные проверки используют его временно и после завершения восстанавливают тот же ON-AIR endpoint Rescue.')),
+			E('p',{'class':'pb-hint-90'},_('Это основной WARP SOCKS. Для ручных проверок временно запускается отдельный тестовый SOCKS; после завершения восстанавливается тот же ON-AIR WARP-узел Rescue.')),
 			row(_('Состояние'),stateNode),
-			row(_('Endpoint'),E('span',{},rs.endpoint||cfg.active_endpoint||'—')),
-			row(_('Protocol'),E('span',{},String(cfg.protocol||'—').toUpperCase())),
+			row(_('WARP-узел'),E('span',{},rs.endpoint||cfg.active_endpoint||'—')),
+			row(_('Протокол'),E('span',{},String(cfg.protocol||'—').toUpperCase())),
 			row(_('SOCKS'),E('span',{},rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))),
 			row(_('Магазин'),(rs.total||0)>0?dot('green',String(rs.total)+_(' VALID')):dot('grey',_('пуст'))),
 			row(_('Автоперезарядка'),rs.auto?dot('green',_('включена')):dot('grey',_('выключена'))),
@@ -223,9 +223,9 @@ return view.extend({
 	logsCard: function() {
 		this._actionLogPre=logPre(); this._rescueLogPre=logPre();
 		return card(_('Журналы'),[
-			E('p',{'class':'pb-hint-90'},_('Журналы последней операции сохраняются после её завершения. Служебный test SOCKS отдельно не отображается.')),
-			E('details',{},[E('summary',{'style':'cursor:pointer;'},_('Последний Discovery / account log')),this._actionLogPre]),
-			E('details',{'style':'margin-top:.6em;'},[E('summary',{'style':'cursor:pointer;'},_('WARP Rescue log')),this._rescueLogPre])
+			E('p',{'class':'pb-hint-90'},_('Журналы последней операции сохраняются после её завершения. Тестовый SOCKS отдельно не отображается.')),
+			E('details',{},[E('summary',{'style':'cursor:pointer;'},_('Последний поиск / журнал учётной записи')),this._actionLogPre]),
+			E('details',{'style':'margin-top:.6em;'},[E('summary',{'style':'cursor:pointer;'},_('Журнал WARP Rescue')),this._rescueLogPre])
 		]);
 	},
 

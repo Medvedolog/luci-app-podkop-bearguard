@@ -1,8 +1,8 @@
 #!/bin/sh
 # rpcd exec plugin for advisory Telegram Bot API route qualification.
-# Transport routes are resolved by the existing podkop_bot transport_state RPC.
-# WARPSCOUT remains owner of WARP discovery/ranking; this worker only qualifies
-# configured routes against Telegram Bot API and never mutates POLL/FAST state.
+# Transport routes are resolved by the existing podkop_bot transport_state and
+# runtime_sections RPCs. WARPSCOUT remains owner of WARP discovery/ranking; this
+# worker only qualifies configured routes and never mutates POLL/FAST state.
 
 BIN="/usr/bin/warpscout"
 STATE_DIR="/tmp/podkop_bot"
@@ -11,6 +11,7 @@ CONFIG_FILE="$PERSIST_DIR/warpscout.conf"
 ACCOUNT_FILE="$PERSIST_DIR/warpscout-account.json"
 SHORTLIST_FILE="$PERSIST_DIR/warpscout-shortlist.tsv"
 RUNTIME_PID_FILE="$STATE_DIR/warpscout_socks.pid"
+RESCUE_PID_FILE="$STATE_DIR/warpscout_rescue_socks.pid"
 ACTION_PID_FILE="$STATE_DIR/warpscout_action.pid"
 
 SCAN_STATE="$STATE_DIR/warpscout_tgscan.state"
@@ -27,6 +28,11 @@ json_str() { printf '"%s"' "$(json_escape "$1")"; }
 cfg_get() { [ -f "$CONFIG_FILE" ] && sed -n "s/^$1=//p" "$CONFIG_FILE" | head -n1; }
 valid_endpoint() { printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$'; }
 mask_proxy() { printf '%s' "$1" | sed -E 's|(://[^:@/]+:)[^@/]*@|\1***@|'; }
+section_id() {
+	_s=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_]+/_/g; s/^_+//; s/_+$//')
+	[ -n "$_s" ] || _s=route
+	printf 'section_%s' "$_s"
+}
 
 pid_from_file() {
 	_pf="$1"; [ -s "$_pf" ] || return 1
@@ -108,6 +114,23 @@ build_input() {
 	if [ -n "$_ts" ]; then
 		_t1=$(printf '%s' "$_ts" | jq -r 'if (.tier1.mixed_proxy_enabled == true) then (.tier1.endpoint // "") else "" end' 2>/dev/null)
 		[ -n "$_t1" ] && printf 'proxy|tier1|Mixed Proxy|%s||||||\n' "$_t1" >> "$_tmp"
+	fi
+
+	# Mixed Proxy endpoints from every other runtime-capable Podkop/Forkop
+	# section are first-class routes. Their IDs are derived from the UCI section
+	# name, so fork-specific labels do not matter: backup -> section_backup.
+	_rs=$(ubus call podkop_bot runtime_sections '{}' 2>/dev/null)
+	if [ -n "$_rs" ]; then
+		_primary=$(printf '%s' "$_rs" | jq -r '.primary_section // ""' 2>/dev/null)
+		printf '%s' "$_rs" | jq -r --arg p "$_primary" '.sections[]? | select(.name != $p and .enabled_for_runtime == true and (.endpoint // "") != "") | [(.name // "route"), (.endpoint // "")] | @tsv' 2>/dev/null \
+		| while IFS="	" read -r _name _ep; do
+			[ -n "$_ep" ] || continue
+			_sid=$(section_id "$_name")
+			printf 'proxy|%s|Podkop section %s|%s||||||\n' "$_sid" "$_name" "$_ep"
+		done >> "$_tmp"
+	fi
+
+	if [ -n "$_ts" ]; then
 		_i=0
 		printf '%s' "$_ts" | jq -r '.tier2_fallback_socks[]? // empty' 2>/dev/null | while IFS= read -r _fb; do
 			[ -n "$_fb" ] || continue
@@ -185,6 +208,7 @@ method_telegram_scan_start() {
 	command -v ubus >/dev/null 2>&1 || { printf '{"ok":false,"reason":"ubus_missing"}\n'; return; }
 	pid_alive_file "$SCAN_PID" && { printf '{"ok":false,"reason":"already_running"}\n'; return; }
 	pid_alive_file "$RUNTIME_PID_FILE" && { printf '{"ok":false,"reason":"runtime_socks_running"}\n'; return; }
+	pid_alive_file "$RESCUE_PID_FILE" && { printf '{"ok":false,"reason":"rescue_socks_running"}\n'; return; }
 	pid_alive_file "$ACTION_PID_FILE" && { printf '{"ok":false,"reason":"warpscout_action_running"}\n'; return; }
 	_token=$(uci -q get podkop_bot.settings.bot_token 2>/dev/null)
 	[ -n "$_token" ] || { printf '{"ok":false,"reason":"bot_token_missing"}\n'; return; }

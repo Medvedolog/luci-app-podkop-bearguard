@@ -14,7 +14,7 @@
     "write": {
       "ubus": {
         "podkop_bot": ["service", "installer", "ensure_mixed_proxy", "update_upload", "update_paste", "set_transport_policy", "fallback_crud", "set_uci_field", "set_tier1_port", "luci_update_run", "podkop_update_run"],
-        "podkop_bot_warpscout": ["run", "config_set", "account_import", "action_run", "select"],
+        "podkop_bot_warpscout": ["run", "remove", "config_set", "account_import", "action_run", "select"],
         "podkop_bot_warpscout_runtime": ["start", "stop"],
         "podkop_bot_warpscout_tgscan": ["telegram_scan_start", "telegram_scan_cancel"],
         "podkop_bot_warpscout_rescue": ["set", "trigger", "next", "reload", "stop"]

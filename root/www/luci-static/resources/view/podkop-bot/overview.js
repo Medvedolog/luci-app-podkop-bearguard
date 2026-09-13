@@ -216,7 +216,7 @@ return view.extend({
 			var current = (d.current && d.current !== 'unknown') ? d.current : ((data && data.podkop_version && data.podkop_version !== 'unknown') ? data.podkop_version : '—');
 			var mark;
 			if (d.update_available) mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ': v' + current + ' → v' + d.latest + ' — ' + _('доступно обновление') + ' (' + (d.via==='socks'?_('через прокси'):_('напрямую')) + ')' }, '🔔');
-			else mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ' ' + _('проверка обновления завершена') + (d.latest && d.latest !== 'unknown' ? (' (latest v' + d.latest + ')') : '' }, (d.latest && d.latest !== 'unknown') ? '✓' : '?');
+			else mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ' ' + _('проверка обновления завершена') + (d.latest && d.latest !== 'unknown' ? (' (latest v' + d.latest + ')') : '') }, (d.latest && d.latest !== 'unknown') ? '✓' : '?');
 			dom.content(cell, [ E('span', {}, current + ' '), mark, d.update_available ? E('a', { 'style':'margin-left:.5em;font-size:88%;font-weight:600;color:#e8a33d;', 'href': d.releases_url || d.repo_url, 'target':'_blank', 'rel':'noopener', 'title': _('Доступна новая версия — открыть релизы') }, 'new') : E('span', {}) ]);
 		}).catch(function(){});
 

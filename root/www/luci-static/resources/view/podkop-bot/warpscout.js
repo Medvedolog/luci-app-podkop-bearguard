@@ -11,11 +11,10 @@ var callAction = rpc.declare({ object:'podkop_bot_warpscout', method:'action_run
 var callActionLog = rpc.declare({ object:'podkop_bot_warpscout', method:'action_log', params:['offset'] });
 var callShortlist = rpc.declare({ object:'podkop_bot_warpscout', method:'shortlist' });
 var callSelect = rpc.declare({ object:'podkop_bot_warpscout', method:'select', params:['endpoint'] });
-var callRtStatus = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'status' });
-var callRtStart = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'start' });
-var callRtStop = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'stop' });
-var callRtLog = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'log', params:['offset'] });
-var callRtTelegram = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'telegram_test' });
+var callRescueStatus = rpc.declare({ object:'podkop_bot_warpscout_rescue', method:'status' });
+var callRescueTrigger = rpc.declare({ object:'podkop_bot_warpscout_rescue', method:'trigger' });
+var callRescueStop = rpc.declare({ object:'podkop_bot_warpscout_rescue', method:'stop' });
+var callRescueLog = rpc.declare({ object:'podkop_bot_warpscout_rescue', method:'log', params:['offset'] });
 
 var COLOURS = { green:'#33a02c', yellow:'#e8a33d', grey:'#888888', red:'#cc2b2b' };
 function dot(c, label) {
@@ -37,19 +36,13 @@ function pbInjectCss() {
 	if (document.getElementById('pb-css')) return;
 	document.querySelector('head').appendChild(E('link', { 'id':'pb-css', 'rel':'stylesheet', 'type':'text/css', 'href':L.resource('css/podkop-bot/podkop-bot.css') }));
 }
-function timeoutLabel(r) {
-	var ms = parseInt(r && r.latency_ms || 0, 10);
-	var sec = ms > 0 ? (ms / 1000).toFixed(1) : '5.0';
-	var where = (r && r.reason === 'connect_timeout') ? _('connect timeout') : _('request timeout');
-	return _('TIMEOUT') + ' · ' + where + ' · ' + sec + ' s';
-}
 
 return view.extend({
 	loadData: function() {
 		return Promise.all([
 			callStatus('').catch(function(){return {ok:false};}),
 			callShortlist().catch(function(){return {ok:false,items:[]};}),
-			callRtStatus().catch(function(){return {ok:false,running:false,state:'unknown'};})
+			callRescueStatus().catch(function(){return {ok:false,running:false,state:'unknown',total:0};})
 		]);
 	},
 
@@ -70,17 +63,17 @@ return view.extend({
 	},
 
 	renderBody: function(data) {
-		var st=data[0]||{}, sl=data[1]||{items:[]}, rt=data[2]||{};
-		this._st=st; this._sl=sl; this._rt=rt;
+		var st=data[0]||{}, sl=data[1]||{items:[]}, rs=data[2]||{};
+		this._st=st; this._sl=sl; this._rs=rs;
 		var out=E('div', {}, [
 			E('h2', {}, _('WARP Rescue / WARPSCOUT')),
-			E('p', { 'class':'pb-hint-90', 'style':'max-width:820px;' }, _('Порядок работы: 1) WARP account, 2) поиск endpoints, 3) выбор endpoint, 4) тестовый SOCKS, 5) проверка Telegram API. WARPSCOUT выполняет discovery и ранжирование; LuCI только управляет его штатными командами.')),
+			E('p', { 'class':'pb-hint-90', 'style':'max-width:820px;' }, _('WARPSCOUT выполняет Discovery и ранжирование WARP endpoints. Рабочий пользовательский SOCKS — WARP Rescue: он использует только прошедшие TG API Routes кандидаты и живёт на роутере независимо от открытой вкладки LuCI. Служебный test SOCKS используется только внутри ручных тестов и отдельно не показывается.')),
 			this.statusCard(st),
 			this.accountCard(st),
 			this.configCard(st),
 			this.scanCard(st,sl),
 			this.shortlistCard(sl),
-			this.runtimeCard(st,rt,sl),
+			this.rescueCard(st,rs),
 			this.logsCard()
 		]);
 		window.setTimeout(this.loadSavedLogs.bind(this), 0);
@@ -93,7 +86,10 @@ return view.extend({
 			row(_('Версия'), st.current || '—'),
 			row(_('Account'), st.account_ready ? dot('green', _('готов')) : dot('yellow', _('отсутствует'))),
 			row(_('Выбранный endpoint'), (st.config && st.config.active_endpoint) || '—'),
-			E('div', { 'style':'margin-top:.7em;' }, [ E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/update') }, _('Установка / обновление WARPSCOUT')) ])
+			E('div', { 'style':'margin-top:.7em;display:flex;gap:.5em;flex-wrap:wrap;' }, [
+				E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/update')+'#warpscout-update' }, _('Установка / удаление WARPSCOUT')),
+				E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/transport/warpscout-rescue') }, _('Открыть револьвер'))
+			])
 		]);
 	},
 
@@ -119,14 +115,13 @@ return view.extend({
 		var c=st.config||{}, self=this;
 		function select(values, cur) { var s=E('select',{'class':'cbi-input-select'}); values.forEach(function(v){ s.appendChild(E('option',{value:v[0],selected:v[0]===cur?'selected':null},v[1])); }); return s; }
 		function input(v, ph) { return E('input',{type:'text','class':'cbi-input-text',value:v||'',placeholder:ph||''}); }
-		var enabled=E('input',{type:'checkbox',checked:c.enabled?'checked':null});
 		var policy=select([['manual',_('Manual')],['reserve',_('Reserve')],['emergency',_('Emergency')]],c.policy||'manual');
 		var proto=select([['awg','AWG'],['wg','WG'],['masque','MASQUE'],['masque-h2','MASQUE-H2']],c.protocol||'awg');
 		var port=input(String(c.socks_port||18191),'18191');
 		var node=input(c.node,'HEL,ARN'), country=input(c.country,'FI,SE'), exnode=input(c.exclude_node,'DME'), excountry=input(c.exclude_country,'RU');
 		var status=E('div',{'style':'margin-top:.5em;'});
 		var save=E('button',{'class':'cbi-button cbi-button-apply','click':ui.createHandlerFn(this,function(){
-			var ops=[['enabled',enabled.checked?'1':'0'],['policy',policy.value],['protocol',proto.value],['socks_port',port.value.trim()],['node',node.value.trim()],['country',country.value.trim()],['exclude_node',exnode.value.trim()],['exclude_country',excountry.value.trim()]];
+			var ops=[['policy',policy.value],['protocol',proto.value],['socks_port',port.value.trim()],['node',node.value.trim()],['country',country.value.trim()],['exclude_node',exnode.value.trim()],['exclude_country',excountry.value.trim()]];
 			dom.content(status,dot('grey',_('Сохранение…')));
 			var p=Promise.resolve(); ops.forEach(function(x){ p=p.then(function(){return callSet(x[0],x[1]).then(function(r){if(!r||!r.ok) throw new Error((r&&r.reason)||'write_failed');});}); });
 			return p.then(function(){dom.content(status,dot('green',_('Настройки сохранены')));return self.refreshView();}).catch(function(e){dom.content(status,dot('red',_('Ошибка: ')+(e&&e.message||'?')));});
@@ -134,9 +129,9 @@ return view.extend({
 		var advanced=E('details',{'style':'margin-top:.7em;'},[
 			E('summary',{'style':'cursor:pointer;color:#aaa;'},_('Расширенные параметры discovery / reserve')),
 			E('div',{'style':'margin-top:.7em;'},[
-				row(_('Использовать WARP Rescue'),enabled), row(_('Policy'),policy), row(_('Protocol'),proto),
+				row(_('Policy'),policy), row(_('Protocol'),proto),
 				row(_('Node filter'),node), row(_('Country filter'),country), row(_('Exclude node'),exnode), row(_('Exclude country'),excountry),
-				E('p',{'class':'pb-hint-90'},_('Фильтры напрямую передаются WARPSCOUT. LuCI не переоценивает качество найденных endpoints.'))
+				E('p',{'class':'pb-hint-90'},_('Фильтры напрямую передаются WARPSCOUT. LuCI не переоценивает качество найденных endpoints. Запуск и остановка WARP выполняются через WARP Rescue ниже.'))
 			])
 		]);
 		return card(_('SOCKS / параметры'), [
@@ -177,63 +172,38 @@ return view.extend({
 		return card(_('Shortlist'),[body,E('div',{'style':'margin-top:.7em;'},[next])]);
 	},
 
-	runtimeCard: function(st, rt, sl) {
-		var self=this, status=E('div',{'style':'margin-top:.6em;'}), canStart=!!(st.installed&&st.account_ready&&st.config&&st.config.active_endpoint);
-		var start=E('button',{'class':'cbi-button cbi-button-action','disabled':(rt.running||!canStart)?'disabled':null,'click':ui.createHandlerFn(this,function(){
-			start.disabled=true; dom.content(status,dot('yellow',_('WARPSCOUT поднимает тестовый SOCKS…')));
-			return callRtStart().then(function(r){
-				dom.content(status,r&&r.ok?dot('green',_('SOCKS поднят')):dot('red',_('SOCKS не поднялся: ')+((r&&r.reason)||'?')));
-				return self.refreshView();
-			}).catch(function(){dom.content(status,dot('red',_('Ошибка RPC')));start.disabled=false;});
-		})},_('Поднять WARP SOCKS'));
-		var stop=E('button',{'class':'cbi-button','disabled':!rt.running?'disabled':null,'click':ui.createHandlerFn(this,function(){
-			stop.disabled=true; return callRtStop().then(function(r){dom.content(status,r&&r.ok?dot('green',_('SOCKS остановлен')):dot('red',_('Не удалось остановить')));return self.refreshView();}).catch(function(){stop.disabled=false;});
-		})},_('Остановить WARP SOCKS'));
-		var tg=E('button',{'class':'cbi-button','disabled':!rt.running?'disabled':null,'click':ui.createHandlerFn(this,function(){
-			tg.disabled=true; dom.content(status,dot('grey',_('Проверяю api.telegram.org через этот SOCKS…')));
-			return callRtTelegram().then(function(r){dom.content(status,self.telegramResult(r));tg.disabled=false;return self.refreshView();}).catch(function(){dom.content(status,dot('red',_('Telegram probe не завершился')));tg.disabled=false;});
-		})},_('Проверить Telegram API'));
-		var tgLast=(rt.telegram&&rt.telegram.status)?this.telegramResult(rt.telegram):dot('grey',_('ещё не проверялся'));
-		var pre=!canStart ? E('p',{'style':'color:#e8a33d;font-size:90%;'},_('Чтобы поднять WARP SOCKS, сначала выполните Discovery и выберите endpoint.')) : E('span',{});
-		return card(_('Тестовый WARP SOCKS'),[
-			pre,
-			E('p',{'class':'pb-hint-90'},_('WARPSCOUT socks — тестовый туннель без reconnect/failover. Его локальный socks5h можно использовать в Runtime → Тест сервисов как обычный маршрут проверки.')),
-			row(_('WARP tunnel'),rt.running?dot('green',_('OK')+(rt.rss_mb!=null?(' · RSS '+rt.rss_mb+' MB'):'')):dot('grey',rt.state||_('остановлен'))),
-			row(_('Endpoint'),rt.endpoint||((st.config&&st.config.active_endpoint)||'—')),
-			row(_('Protocol'),String(rt.protocol||((st.config&&st.config.protocol)||'—')).toUpperCase()),
-			row(_('SOCKS'),rt.proxy||('socks5h://127.0.0.1:'+((st.config&&st.config.socks_port)||18191))),
-			row(_('Telegram API'),tgLast),
-			(rt.telegram&&rt.telegram.proxy?row(_('Telegram test route'),rt.telegram.proxy):E('span',{})),
-			(rt.telegram&&rt.telegram.error?row(_('Telegram detail'),rt.telegram.error):E('span',{})),
-			E('div',{'class':'pb-action-row','style':'display:flex;gap:.5em;flex-wrap:wrap;margin-top:.7em;'},[start,stop,tg]),status
+	rescueCard: function(st, rs) {
+		var self=this, cfg=st.config||{}, enabled=!!cfg.enabled, status=E('div',{'style':'margin-top:.6em;'});
+		var stateNode=rs.running?dot('green',_('работает')):(rs.busy?dot('yellow',String(rs.state||_('занят'))):dot((rs.state==='exhausted'||rs.state==='reload_failed')?'red':'grey',enabled?_('не запущен'):_('остановлен')));
+		var power=E('button',{'class':'cbi-button '+(enabled?'cbi-button-negative':'cbi-button-positive'),'disabled':rs.busy?'disabled':null,'click':ui.createHandlerFn(this,function(){
+			dom.content(status,dot('yellow',enabled?_('Останавливаю WARP…'):_('Запускаю WARP…')));
+			return (enabled?callRescueStop():callRescueTrigger()).then(function(r){dom.content(status,r&&r.ok?dot('green',enabled?_('WARP остановлен'):_('WARP запускается')):dot('red',_('Ошибка: ')+((r&&r.reason)||'?')));window.setTimeout(function(){self.refreshView();},700);window.setTimeout(function(){self.refreshView();},3500);});
+		})},enabled?_('Остановить WARP'):_('Запустить WARP'));
+		return card(_('WARP Rescue'),[
+			E('p',{'class':'pb-hint-90'},_('Это основной WARP SOCKS. Служебный test SOCKS не показывается: ручные проверки используют его временно и должны возвращать управление Rescue.')),
+			row(_('Состояние'),stateNode),
+			row(_('Endpoint'),E('span',{},rs.endpoint||cfg.active_endpoint||'—')),
+			row(_('Protocol'),E('span',{},String(cfg.protocol||'—').toUpperCase())),
+			row(_('SOCKS'),E('span',{},rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))),
+			row(_('Магазин'),(rs.total||0)>0?dot('green',String(rs.total)+_(' VALID')):dot('grey',_('пуст'))),
+			row(_('Автоперезарядка'),rs.auto?dot('green',_('включена')):dot('grey',_('выключена'))),
+			E('div',{'style':'display:flex;gap:.5em;flex-wrap:wrap;margin-top:.7em;'},[power,E('a',{'class':'cbi-button','href':L.url('admin/services/podkop-bot/transport/warpscout-rescue')},_('Открыть револьвер'))]),status
 		]);
 	},
 
 	logsCard: function() {
-		this._actionLogPre=logPre(); this._rtLogPre=logPre();
+		this._actionLogPre=logPre(); this._rescueLogPre=logPre();
 		return card(_('Журналы'),[
-			E('p',{'class':'pb-hint-90'},_('Журналы последней операции сохраняются после её завершения. Форматирование и переводы строк WARPSCOUT сохраняются; широкие таблицы прокручиваются по горизонтали.')),
+			E('p',{'class':'pb-hint-90'},_('Журналы последней операции сохраняются после её завершения. Служебный test SOCKS отдельно не отображается.')),
 			E('details',{},[E('summary',{'style':'cursor:pointer;'},_('Последний Discovery / account log')),this._actionLogPre]),
-			E('details',{'style':'margin-top:.6em;'},[E('summary',{'style':'cursor:pointer;'},_('Последний WARP SOCKS log')),this._rtLogPre])
+			E('details',{'style':'margin-top:.6em;'},[E('summary',{'style':'cursor:pointer;'},_('WARP Rescue log')),this._rescueLogPre])
 		]);
 	},
 
 	loadSavedLogs: function() {
-		var a=this._actionLogPre, r=this._rtLogPre;
+		var a=this._actionLogPre, r=this._rescueLogPre;
 		if(a) callActionLog(0).then(function(x){a.textContent=(x&&x.chunk)||_('Лог пуст.');}).catch(function(){});
-		if(r) callRtLog(0).then(function(x){r.textContent=(x&&x.chunk)||_('Лог пуст.');}).catch(function(){});
-	},
-
-	telegramResult: function(r) {
-		if(!r) return dot('red',_('нет результата'));
-		var s=r.status||'';
-		if(s==='OK') return dot('green',_('OK')+(r.http?(' · HTTP '+r.http):'')+(r.latency_ms?(' · '+r.latency_ms+' ms'):''));
-		if(s==='TIMEOUT') return dot('red',timeoutLabel(r));
-		if(s==='RATE_LIMITED') return dot('yellow',_('Telegram доступен · rate limited (429)'));
-		if(s==='AUTH_ERROR') return dot('yellow',_('Telegram доступен · ошибка авторизации (401)'));
-		if(s==='API_DENIED') return dot('yellow',_('Telegram доступен · API denied (403)'));
-		if(s==='OTHER_API_RESPONSE') return dot('yellow',_('Telegram отвечает · HTTP ')+(r.http||'?'));
-		return dot('red',_('NETWORK_FAIL')+(r.curl_rc?(' · curl '+r.curl_rc):''));
+		if(r) callRescueLog(0).then(function(x){r.textContent=(x&&x.chunk)||_('Лог пуст.');}).catch(function(){});
 	},
 
 	runAction: function(action,target,status,btn) {

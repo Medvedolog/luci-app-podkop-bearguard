@@ -204,13 +204,20 @@ return view.extend({
 		callPodkopUpdate('').then(function(d) {
 			var cell = document.getElementById('podkop-ver-cell');
 			if (!cell || !d || !d.ok) {
-				if (cell && d && d.available === false) dom.content(cell, [ E('span', {}, (d.current || '—') + ' '), E('span', { 'title': _('Не удалось проверить обновление (GitHub недоступен напрямую и через прокси).') }, '?') ]);
+				if (cell && d && d.available === false) {
+					var fallback = (data && data.podkop_version && data.podkop_version !== 'unknown') ? data.podkop_version : (d.current || '—');
+					dom.content(cell, [ E('span', {}, fallback + ' '), E('span', { 'title': _('Не удалось проверить обновление (GitHub недоступен напрямую и через прокси).') }, '?') ]);
+				}
 				return;
 			}
+			/* status/install.sh is authoritative for the installed fork version. The
+			 * network update checker is allowed to return current=unknown on forks;
+			 * never overwrite a real local version with that weaker result. */
+			var current = (d.current && d.current !== 'unknown') ? d.current : ((data && data.podkop_version && data.podkop_version !== 'unknown') ? data.podkop_version : '—');
 			var mark;
-			if (d.update_available) mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ': v' + d.current + ' → v' + d.latest + ' — ' + _('доступно обновление') + ' (' + (d.via==='socks'?_('через прокси'):_('напрямую')) + ')' }, '🔔');
-			else mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ' ' + _('актуален') + ' (v' + d.latest + ', ' + (d.via==='socks'?_('через прокси'):_('напрямую')) + ')' }, '✓');
-			dom.content(cell, [ E('span', {}, (d.current || '—') + ' '), mark, d.update_available ? E('a', { 'style':'margin-left:.5em;font-size:88%;font-weight:600;color:#e8a33d;', 'href': d.releases_url || d.repo_url, 'target':'_blank', 'rel':'noopener', 'title': _('Доступна новая версия — открыть релизы') }, 'new') : E('span', {}) ]);
+			if (d.update_available) mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ': v' + current + ' → v' + d.latest + ' — ' + _('доступно обновление') + ' (' + (d.via==='socks'?_('через прокси'):_('напрямую')) + ')' }, '🔔');
+			else mark = E('span', { 'style':'cursor:help;', 'title': (d.name||'Podkop') + ' ' + _('проверка обновления завершена') + (d.latest && d.latest !== 'unknown' ? (' (latest v' + d.latest + ')') : '' }, (d.latest && d.latest !== 'unknown') ? '✓' : '?');
+			dom.content(cell, [ E('span', {}, current + ' '), mark, d.update_available ? E('a', { 'style':'margin-left:.5em;font-size:88%;font-weight:600;color:#e8a33d;', 'href': d.releases_url || d.repo_url, 'target':'_blank', 'rel':'noopener', 'title': _('Доступна новая версия — открыть релизы') }, 'new') : E('span', {}) ]);
 		}).catch(function(){});
 
 		var self = this;

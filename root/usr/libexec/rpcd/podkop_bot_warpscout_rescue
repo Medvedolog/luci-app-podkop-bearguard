@@ -29,6 +29,7 @@ json_str(){ printf '"%s"' "$(json_escape "$1")"; }
 cfg_get(){ [ -f "$CONFIG_FILE" ] && sed -n "s/^$1=//p" "$CONFIG_FILE" | head -n1; }
 cfg_write(){ _k="$1"; _v="$2"; [ -f "$CONFIG_FILE" ] || touch "$CONFIG_FILE"; _t="$CONFIG_FILE.$$"; awk -F= -v k="$_k" -v v="$_v" 'BEGIN{d=0}$1==k{print k"="v;d=1;next}{print}END{if(!d)print k"="v}' "$CONFIG_FILE" >"$_t" && mv "$_t" "$CONFIG_FILE"; chmod 600 "$CONFIG_FILE" 2>/dev/null; }
 pid_alive(){ _f="$1"; [ -s "$_f" ] || return 1; _p=$(cat "$_f" 2>/dev/null); case "$_p" in ''|*[!0-9]*) return 1;; esac; kill -0 "$_p" 2>/dev/null; }
+pid_rss_mb(){ _p="$1"; _kb=$(awk '/^VmRSS:/ {print $2; exit}' "/proc/$_p/status" 2>/dev/null); case "$_kb" in ''|*[!0-9]*) printf '0';; *) awk -v k="$_kb" 'BEGIN{printf "%.1f",k/1024}';; esac; }
 state_get(){ [ -s "$RESCUE_STATE" ] && sed -n "s/^$1=//p" "$RESCUE_STATE" | head -n1; }
 state_write(){ _s="$1"; _ep="$2"; _idx="$3"; _total="$4"; _reason="$5"; _now=$(date +%s 2>/dev/null || echo 0); _t="$RESCUE_STATE.$$"; { printf 'state=%s\n' "$_s"; printf 'endpoint=%s\n' "$_ep"; printf 'index=%s\n' "$_idx"; printf 'total=%s\n' "$_total"; printf 'reason=%s\n' "$_reason"; printf 'updated_at=%s\n' "$_now"; } >"$_t" && mv "$_t" "$RESCUE_STATE"; }
 
@@ -129,7 +130,7 @@ fire_worker(){
 			echo "[rescue] try ${_idx}/${_total} $_ep"
 			if start_endpoint "$_ep"; then state_write active "$_ep" "$_idx" "$_total" ok; cfg_write active_endpoint "$_ep"; echo "[rescue] active $_ep"; return 0; fi
 			echo "[rescue] failed $_ep"
-		done < "$RESCUE_MAG"
+	done < "$RESCUE_MAG"
 		[ "$_auto_reload" = 1 ] && [ "$_attempt" -eq 0 ] || break
 		_attempt=1; state_write reloading "" 0 0 exhausted
 		reload_magazine || break
@@ -161,14 +162,15 @@ start_control(){
 
 method_status(){
 	read -r _in 2>/dev/null
-	build_magazine >/dev/null 2>&1 || true
-	_run=false; pid_alive "$RESCUE_PID" && _run=true; _busy=false; pid_alive "$CONTROL_PID" && _busy=true
+	_run=false; _pid=0; _rss=0
+	if pid_alive "$RESCUE_PID"; then _run=true; _pid=$(cat "$RESCUE_PID" 2>/dev/null); _rss=$(pid_rss_mb "$_pid"); fi
+	_busy=false; pid_alive "$CONTROL_PID" && _busy=true
 	_s=$(state_get state); [ -n "$_s" ] || _s=idle; _ep=$(state_get endpoint); _idx=$(state_get index); _reason=$(state_get reason); _upd=$(state_get updated_at)
 	_total=$(magazine_count); [ "$_run" = true ] || [ "$_busy" = true ] || _idx=0
 	_armed=$(cfg_get rescue_auto); [ "$_armed" = 1 ] || _armed=0; _bear=$(cfg_get bearhole_gate); [ "$_bear" = 1 ] || _bear=0; _port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac
 	if [ "$_armed" = 1 ]; then _armed_j=true; else _armed_j=false; fi; if [ "$_bear" = 1 ]; then _bear_j=true; else _bear_j=false; fi
 	if [ "$_total" -gt 0 ] 2>/dev/null; then _mag_j=true; else _mag_j=false; fi
-	printf '{"ok":true,"running":%s,"busy":%s,"state":%s,"endpoint":%s,"index":%s,"total":%s,"magazine_ready":%s,"reason":%s,"updated_at":%s,"auto":%s,"bearhole_gate":%s,"proxy":%s}\n' "$_run" "$_busy" "$(json_str "$_s")" "$(json_str "$_ep")" "${_idx:-0}" "$_total" "$_mag_j" "$(json_str "$_reason")" "${_upd:-0}" "$_armed_j" "$_bear_j" "$(json_str "socks5h://127.0.0.1:$_port")"
+	printf '{"ok":true,"running":%s,"busy":%s,"state":%s,"endpoint":%s,"index":%s,"total":%s,"magazine_ready":%s,"reason":%s,"updated_at":%s,"auto":%s,"bearhole_gate":%s,"proxy":%s,"pid":%s,"rss_mb":%s}\n' "$_run" "$_busy" "$(json_str "$_s")" "$(json_str "$_ep")" "${_idx:-0}" "$_total" "$_mag_j" "$(json_str "$_reason")" "${_upd:-0}" "$_armed_j" "$_bear_j" "$(json_str "socks5h://127.0.0.1:$_port")" "$_pid" "$_rss"
 }
 method_set(){ read -r _in 2>/dev/null; _k=$(printf '%s' "$_in"|jq -r '.key//""'); _v=$(printf '%s' "$_in"|jq -r '.value//""'); case "$_k" in rescue_auto|bearhole_gate) case "$_v" in 0|1) cfg_write "$_k" "$_v"; printf '{"ok":true}\n';; *) printf '{"ok":false,"reason":"bad_value"}\n';; esac;; *) printf '{"ok":false,"reason":"bad_key"}\n';; esac; }
 

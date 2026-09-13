@@ -16,10 +16,13 @@ else
 fi
 VERSION="${VERSION#v}"
 
+MAKE_RELEASE="$(sed -n 's/^PKG_RELEASE:=//p' "$ROOT/Makefile" | head -n1)"
+case "$MAKE_RELEASE" in ''|*[!0-9]*) MAKE_RELEASE=1;; esac
+
 case "$VERSION" in
     *-r[0-9]*) PKG_VERSION="$VERSION"; BASE_VERSION="${VERSION%-r*}" ;;
     *-[0-9]*)  BASE_VERSION="${VERSION%-*}"; PKG_VERSION="${BASE_VERSION}-r${VERSION##*-}" ;;
-    *)         BASE_VERSION="$VERSION"; PKG_VERSION="${VERSION}-r1" ;;
+    *)         BASE_VERSION="$VERSION"; PKG_VERSION="${VERSION}-r${MAKE_RELEASE}" ;;
 esac
 
 # Keep release/package version sources coherent. The staged rpcd payload gets the

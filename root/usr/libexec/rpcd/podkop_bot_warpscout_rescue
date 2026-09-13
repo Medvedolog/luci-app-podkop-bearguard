@@ -12,7 +12,9 @@ CONFIG_FILE="$PERSIST_DIR/warpscout.conf"
 ACCOUNT_FILE="$PERSIST_DIR/warpscout-account.json"
 TG_RESULTS="$STATE_DIR/warpscout_tgscan.results"
 TGSCAN_PID="$STATE_DIR/warpscout_tgscan.pid"
+TGSCAN_STATE="$STATE_DIR/warpscout_tgscan.state"
 ACTION_PID="$STATE_DIR/warpscout_action.pid"
+ACTION_STATE="$STATE_DIR/warpscout_action.state"
 RUNTIME_PID="$STATE_DIR/warpscout_socks.pid"
 RESCUE_PID="$STATE_DIR/warpscout_rescue_socks.pid"
 CONTROL_PID="$STATE_DIR/warpscout_rescue_control.pid"
@@ -44,7 +46,7 @@ handoff_runtime(){
 	echo "[rescue] stopping test WARP runtime and taking ownership of SOCKS port" >>"$RESCUE_LOG"
 	ubus call podkop_bot_warpscout_runtime stop '{}' >/dev/null 2>&1 || return 1
 	_n=0
-	while pid_alive "$RUNTIME_PID" && [ "$_n" -lt 30 ]; do sleep 0.1; _n=$((_n+1)); done
+	while pid_alive "$RUNTIME_PID" && [ "$_n" -lt 3 ]; do sleep 1; _n=$((_n+1)); done
 	pid_alive "$RUNTIME_PID" && return 1
 	return 0
 }
@@ -77,22 +79,41 @@ start_endpoint(){
 	return 0
 }
 
-wait_file_done(){ _file="$1"; _limit="$2"; _n=0; while [ "$_n" -lt "$_limit" ]; do _s=$(cat "$_file" 2>/dev/null | head -n1); case "$_s" in done\ 0) return 0;; error\ *|done\ *) return 1;; esac; sleep 1; _n=$((_n+1)); done; return 1; }
+wait_action_done(){
+	_limit="$1"; _n=0
+	while [ "$_n" -lt "$_limit" ]; do
+		_s=$(head -n1 "$ACTION_STATE" 2>/dev/null)
+		case "$_s" in done\ 0) return 0;; error\ *|done\ *) return 1;; esac
+		sleep 1; _n=$((_n+1))
+	done
+	return 1
+}
+wait_tgscan_done(){
+	_limit="$1"; _n=0
+	while [ "$_n" -lt "$_limit" ]; do
+		_s=$(sed -n 's/^state=//p' "$TGSCAN_STATE" 2>/dev/null | head -n1)
+		case "$_s" in done) return 0;; cancelled|stale) return 1;; esac
+		if ! pid_alive "$TGSCAN_PID" && [ "$_s" != running ] && [ -n "$_s" ]; then return 1; fi
+		sleep 1; _n=$((_n+1))
+	done
+	return 1
+}
 
 reload_magazine(){
 	state_write reloading "" 0 0 discovery
 	echo "[rescue] reload: running Discovery"
 	ubus call podkop_bot_warpscout action_run '{"action":"scan","target":""}' >/dev/null 2>&1 || return 1
-	wait_file_done "$STATE_DIR/warpscout_action.state" 240 || return 1
+	wait_action_done 300 || { echo "[rescue] reload: Discovery failed or timed out"; return 1; }
 	state_write reloading "" 0 0 qualification
 	echo "[rescue] reload: Discovery complete, running TG qualification"
 	ubus call podkop_bot_warpscout_tgscan telegram_scan_start '{}' >/dev/null 2>&1 || return 1
-	_n=0; while [ "$_n" -lt 420 ]; do pid_alive "$TGSCAN_PID" || break; sleep 1; _n=$((_n+1)); done
-	pid_alive "$TGSCAN_PID" && return 1
+	wait_tgscan_done 480 || { echo "[rescue] reload: TG qualification failed or timed out"; return 1; }
 	state_write reloading "" 0 0 building
-	build_magazine || return 1
+	build_magazine || { echo "[rescue] reload: no VALID WARP routes in TG results"; return 1; }
+	_total=$(magazine_count)
+	[ "$_total" -gt 0 ] 2>/dev/null || { echo "[rescue] reload: empty magazine after build"; return 1; }
 	cfg_write enabled 1 || return 1
-	echo "[rescue] reload: magazine ready, $(magazine_count) VALID WARP routes; WARP Rescue enabled"
+	echo "[rescue] reload: magazine ready, $_total VALID WARP routes; WARP Rescue enabled"
 	return 0
 }
 
@@ -117,7 +138,7 @@ fire_worker(){
 }
 
 run_control(){
-	_mode="$1"; _auto="$2"; printf '%s\n' "$$" > "$CONTROL_PID"
+	_mode="$1"; _auto="$2"
 	case "$_mode" in
 		reload)
 			state_write reloading "" 0 0 manual
@@ -126,6 +147,11 @@ run_control(){
 		*) fire_worker "$_auto"; _rc=$?;;
 	esac
 	rm -f "$CONTROL_PID"; return "$_rc"
+}
+start_control(){
+	_mode="$1"; _auto="$2"
+	run_control "$_mode" "$_auto" >>"$RESCUE_LOG" 2>&1 &
+	_cp=$!; printf '%s\n' "$_cp" > "$CONTROL_PID"
 }
 
 method_status(){
@@ -155,9 +181,9 @@ preflight_fire(){
 }
 preflight_reload(){ preflight_common; }
 
-method_trigger(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_fire || return; pid_alive "$RESCUE_PID" && { printf '{"ok":true,"already_active":true}\n'; return; }; _auto=$(cfg_get rescue_auto); [ "$_auto" = 1 ] || _auto=0; run_control fire "$_auto" >>"$RESCUE_LOG" 2>&1 & printf '{"ok":true}\n'; }
-method_next(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_fire || return; stop_rescue; run_control fire 0 >>"$RESCUE_LOG" 2>&1 & printf '{"ok":true}\n'; }
-method_reload(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_reload || return; stop_rescue; run_control reload 0 >>"$RESCUE_LOG" 2>&1 & printf '{"ok":true}\n'; }
+method_trigger(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_fire || return; pid_alive "$RESCUE_PID" && { printf '{"ok":true,"already_active":true}\n'; return; }; _auto=$(cfg_get rescue_auto); [ "$_auto" = 1 ] || _auto=0; start_control fire "$_auto"; printf '{"ok":true}\n'; }
+method_next(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_fire || return; stop_rescue; start_control fire 0; printf '{"ok":true}\n'; }
+method_reload(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_reload || return; stop_rescue; start_control reload 0; printf '{"ok":true}\n'; }
 method_stop(){ read -r _in 2>/dev/null; stop_control; stop_rescue; state_write stopped "" 0 "$(magazine_count)" manual; printf '{"ok":true}\n'; }
 method_log(){ read -r _in 2>/dev/null; _o=$(printf '%s' "$_in"|sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); [ -n "$_o" ]||_o=0; _sz=$(wc -c <"$RESCUE_LOG" 2>/dev/null|tr -d ' '); [ -n "$_sz" ]||_sz=0; [ "$_o" -le "$_sz" ] 2>/dev/null || _o=0; _b=$((_sz-_o)); [ "$_b" -gt 32768 ]&&_b=32768; if [ "$_b" -gt 0 ]; then _c=$(tail -c +$((_o+1)) "$RESCUE_LOG"|head -c "$_b"|jq -Rs .); [ -n "$_c" ]||_c='""'; else _c='""'; fi; printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_c" "$((_o+_b))"; }
 

@@ -72,6 +72,8 @@ return view.extend({
 		this.warpStatus = data[3] || null;
 		this.warpShortlist = data[4] || null;
 		this.warpRuntime = data[5] || null;
+		this.warpItems = (this.warpShortlist && this.warpShortlist.items) ? this.warpShortlist.items : [];
+		this.warpRouteReady = !!(this.warpStatus && this.warpStatus.installed && this.warpStatus.account_ready && this.warpItems.length > 0);
 		this.sections = (sectionsData && sectionsData.sections) ? sectionsData.sections : [];
 		this.selectedSection = (sectionsData && sectionsData.active_section) ? sectionsData.active_section : '';
 		this.sectionsMeta = sectionsData || {};
@@ -94,38 +96,39 @@ return view.extend({
 				this.tierProxies.push({ endpoint: t3, label: _('tier3 · свой прокси') + ' — ' + t3h });
 			}
 		}
-		if (this.warpRuntime && this.warpRuntime.running && this.warpRuntime.proxy) {
-			this.tierProxies.push({ endpoint: this.warpRuntime.proxy, label: _('WARP Rescue · WARPSCOUT · test route') + ' — ' + this.warpRuntime.proxy });
-		}
 		this.selectedProxy = '';
 		this.selectedProxyLabel = '';
+		this.selectedWarp = false;
 
 		var body = E('div', { 'id':'podkop-runtime-body' }, this.renderProbe(probeData));
 		this.body = body;
 		var runBtn = E('button', {
 			'class':'cbi-button cbi-button-action',
 			'click': ui.createHandlerFn(this, 'runProbe')
-		}, (this.sections.length > 1 || this.tierProxies.length > 0) ? _('Проверить выбранный') : _('Проверить сейчас'));
+		}, (this.sections.length > 1 || this.tierProxies.length > 0 || this.warpRouteReady) ? _('Проверить выбранный') : _('Проверить сейчас'));
 		this.runBtn = runBtn;
 		var tgBody = E('div', { 'id':'podkop-runtime-tg', 'style':'margin:.5em 0;' });
 		this.tgBody = tgBody;
 		var tgBtn = E('button', { 'class':'cbi-button', 'click': ui.createHandlerFn(this, 'runTelegramProbe') }, _('Проверить Telegram API'));
 		this.tgBtn = tgBtn;
 		var warpNextBtn = E('span', {});
-		if (this.warpStatus && this.warpStatus.installed && this.warpShortlist && (this.warpShortlist.items || []).length > 1) {
-			warpNextBtn = E('button', { 'class':'cbi-button', 'click': ui.createHandlerFn(this, 'nextWarpTestRoute'), 'title':_('Остановить текущий тестовый WARP, выбрать следующий endpoint из shortlist и снова поднять локальный SOCKS') }, _('Следующий WARP'));
+		if (this.warpRouteReady && this.warpItems.length > 1) {
+			warpNextBtn = E('button', { 'class':'cbi-button', 'style':'display:none;', 'click': ui.createHandlerFn(this, 'nextWarpTestRoute'), 'title':_('Остановить текущий тестовый WARP, выбрать следующий endpoint из shortlist и снова поднять локальный SOCKS') }, _('Следующий WARP'));
 			this.warpNextBtn = warpNextBtn;
 		}
 		var selectorRow = E('span', {});
-		var totalChoices = this.sections.length + this.tierProxies.length;
+		var totalChoices = this.sections.length + this.tierProxies.length + (this.warpRouteReady ? 1 : 0);
 		if (totalChoices > 1) {
 			var optSections = this.sections.map(function(s){
-				return E('option', { 'value': 'sec:' + s.name, 'selected': (s.name === self.selectedSection && !self.selectedProxy) ? '' : null }, s.name + (s.enabled_for_runtime ? '' : _(' (без Mixed Proxy)')));
+				return E('option', { 'value': 'sec:' + s.name, 'selected': (s.name === self.selectedSection) ? '' : null }, s.name + (s.enabled_for_runtime ? '' : _(' (без Mixed Proxy)')));
 			});
 			var groups = [ E('optgroup', { 'label': _('Маршруты Podkop') }, optSections) ];
 			if (this.tierProxies.length > 0) {
 				var optProxies = this.tierProxies.map(function(p){ return E('option', { 'value': 'proxy:' + p.endpoint, 'data-label': p.label }, p.label); });
 				groups.push(E('optgroup', { 'label': _('Транспортные маршруты') }, optProxies));
+			}
+			if (this.warpRouteReady) {
+				groups.push(E('optgroup', { 'label': 'WARP' }, [ E('option', { 'value':'warp:warpscout', 'data-label':_('WARP Rescue · WARPSCOUT') }, _('WARP Rescue · WARPSCOUT — тестовый маршрут')) ]));
 			}
 			var sel = E('select', { 'class':'cbi-input-select', 'style':'width:100%;max-width:500px;box-sizing:border-box;', 'change': ui.createHandlerFn(this, 'onTargetChange') }, groups);
 			this.targetSelect = sel;
@@ -136,7 +139,7 @@ return view.extend({
 			window.setTimeout(function(){ self.syncSelectedTarget(); }, 0);
 		}
 		var batchBtn = E('span', {});
-		if (this.sections.length > 1 || this.tierProxies.length > 0) {
+		if (totalChoices > 1) {
 			batchBtn = E('button', { 'class':'cbi-button', 'click': ui.createHandlerFn(this, 'runAllProbes') }, _('Проверить все маршруты'));
 			this.batchBtn = batchBtn;
 		}
@@ -164,7 +167,7 @@ return view.extend({
 		return E('div', {}, [
 			E('h2', {}, _('Runtime — тест сервисов')),
 			E('p', { 'class':'pb-muted' }, _('Проверка туннеля: страна и провайдер выхода, доступность 12 сервисов и их регионы, скорость, признаки блокировок ТСПУ. Маршрут — это через что идёт проверка: секция Podkop, транспортный, WARP или ручной прокси.')),
-			E('p', { 'style':'color:#c60;font-size:90%;margin-top:-.4em;' }, _('⚠ Полная проверка идёт 15–60 секунд и нагружает роутер (параллельные запросы + загрузка до 8 МиБ через туннель). Быстрая кнопка Telegram API проверяет только реальный getMe и почти не создаёт трафика. «Следующий WARP» только меняет WARP endpoint из готового shortlist и делает быструю проверку Telegram; полный тест запускается отдельно.')),
+			E('p', { 'style':'color:#c60;font-size:90%;margin-top:-.4em;' }, _('⚠ Полная проверка идёт 15–60 секунд и нагружает роутер (параллельные запросы + загрузка до 8 МиБ через туннель). Быстрая кнопка Telegram API проверяет только реальный getMe и почти не создаёт трафика. «Следующий WARP» показывается только для выбранного WARP-маршрута, меняет endpoint из готового shortlist и делает быструю проверку Telegram.')),
 			selectorRow,
 			E('div', { 'style':'margin:.6em 0;display:flex;gap:.5em;flex-wrap:wrap;align-items:center;' }, [ runBtn, batchBtn, cpToggle, tgBtn, warpNextBtn ]),
 			cpForm,
@@ -190,7 +193,7 @@ return view.extend({
 		var tgChecked = tg.checked_at ? this.ago(parseInt(tg.checked_at,10)) : '—';
 		return E('div', { 'class':'cbi-section pb-card', 'style':'max-width:820px;' }, [
 			E('h3', { 'style':'margin-top:0;' }, _('WARPSCOUT / WARP Rescue')),
-			E('p', { 'class':'pb-muted' }, _('Только наблюдение. Scout snapshot и состояние тестового SOCKS показаны отдельно, чтобы не принимать старый scan за живой tunnel state.')),
+			E('p', { 'class':'pb-muted' }, _('Тестовый WARP поднимается автоматически только когда вы запускаете проверку этого маршрута. Это не переключает POLL/FAST бота.')),
 			row(_('Active endpoint'), E('span', {}, active)),
 			row(_('Protocol'), E('span', {}, String(cfg.protocol || '—').toUpperCase())),
 			row(_('NODE'), E('span', {}, item && item.node || '—')),
@@ -219,10 +222,20 @@ return view.extend({
 		return E('div', { 'class':'cbi-section pb-wide', 'style':'margin:.5em 0;padding:.65em .9em;' }, [ dot(colour, text), E('div', { 'style':'color:#888;font-size:85%;margin-top:.3em;' }, (label || d.target || '') + (d.http ? (' · HTTP ' + d.http) : '') + (d.latency_ms != null ? (' · ' + d.latency_ms + ' ms') : '')) ]);
 	},
 
+	updateWarpNextVisibility: function() {
+		if (this.warpNextBtn) this.warpNextBtn.style.display = this.selectedWarp ? '' : 'none';
+	},
+
 	syncSelectedTarget: function() {
 		if (!this.targetSelect) return;
 		var sel = this.targetSelect, v = sel.value || '';
-		if (v.indexOf('proxy:') === 0) {
+		this.selectedWarp = false;
+		if (v.indexOf('warp:') === 0) {
+			this.selectedProxy = '';
+			this.selectedProxyLabel = '';
+			this.selectedSection = '';
+			this.selectedWarp = true;
+		} else if (v.indexOf('proxy:') === 0) {
 			this.selectedProxy = v.slice(6);
 			this.selectedSection = '';
 			var opt = sel.options[sel.selectedIndex];
@@ -232,10 +245,28 @@ return view.extend({
 			this.selectedProxyLabel = '';
 			this.selectedSection = (v.indexOf('sec:') === 0) ? v.slice(4) : v;
 		}
+		this.updateWarpNextVisibility();
+	},
+
+	ensureWarpTestRoute: function() {
+		var self=this, items=this.warpItems||[];
+		if(!this.warpRouteReady || !items.length) return Promise.reject(new Error('warp_not_ready'));
+		var current=this.warpStatus&&this.warpStatus.config&&this.warpStatus.config.active_endpoint||'';
+		var exists=items.some(function(x){return x.endpoint===current;});
+		if(!exists) current=items[0].endpoint;
+		var setp=Promise.resolve({ok:true});
+		if(!this.warpStatus.config || this.warpStatus.config.active_endpoint!==current) setp=callWarpConfigSet('active_endpoint',current);
+		return setp.then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'config_set_failed');
+			if(self.warpRuntime&&self.warpRuntime.running&&self.warpRuntime.endpoint===current)return self.warpRuntime;
+			var stop=(self.warpRuntime&&self.warpRuntime.running)?callWarpRtStop():Promise.resolve({ok:true});
+			return stop.then(function(){return callWarpRtStart();}).then(function(sr){if(!sr||!sr.ok)throw new Error((sr&&sr.reason)||'warp_start_failed');return callWarpRtStatus();});
+		}).then(function(rt){self.warpRuntime=rt;if(self.warpStatus&&self.warpStatus.config)self.warpStatus.config.active_endpoint=current;return rt;});
 	},
 
 	nextWarpTestRoute: function() {
-		var self=this, items=(this.warpShortlist&&this.warpShortlist.items)||[];
+		var self=this, items=this.warpItems||[];
+		this.syncSelectedTarget();
+		if(!this.selectedWarp)return;
 		if(items.length<2){ ui.addNotification(null,E('p',{},_('В shortlist нет следующего WARP endpoint.')),'info'); return; }
 		var current=this.warpStatus&&this.warpStatus.config&&this.warpStatus.config.active_endpoint||'', idx=-1;
 		items.some(function(x,i){if(x.endpoint===current){idx=i;return true;}return false;});
@@ -254,12 +285,7 @@ return view.extend({
 			self.warpRuntime=rt;
 			if(self.warpStatus&&self.warpStatus.config)self.warpStatus.config.active_endpoint=ep;
 			var proxy=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';
-			var label=_('WARP Rescue · WARPSCOUT · test route')+' — '+proxy;
-			self.selectedProxy=proxy; self.selectedProxyLabel=label; self.selectedSection='';
-			if(self.targetSelect){
-				for(var i=0;i<self.targetSelect.options.length;i++)if(self.targetSelect.options[i].value==='proxy:'+proxy){self.targetSelect.selectedIndex=i;break;}
-			}
-			return callTransportProbe(proxy).then(function(d){dom.content(self.tgBody,self.renderTelegramProbe(d,label+' · '+ep));});
+			return callTransportProbe(proxy).then(function(d){dom.content(self.tgBody,self.renderTelegramProbe(d,_('WARP Rescue · WARPSCOUT')+' · '+ep));});
 		}).catch(function(e){
 			dom.content(self.tgBody,E('div',{},dot('red',_('Не удалось переключить WARP: ')+((e&&e.message)||'?'))));
 		}).finally(function(){if(self.warpNextBtn)self.warpNextBtn.disabled=false;});
@@ -268,16 +294,20 @@ return view.extend({
 	runTelegramProbe: function() {
 		var self = this, target = '', label = '';
 		this.syncSelectedTarget();
+		this.tgBtn.disabled = true;
+		if (this.selectedWarp) {
+			dom.content(this.tgBody,E('div',{},dot('grey',_('Поднимаю тестовый WARP и проверяю Telegram…'))));
+			return this.ensureWarpTestRoute().then(function(rt){target=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';label=_('WARP Rescue · WARPSCOUT');return callTransportProbe(target);}).then(function(d){dom.content(self.tgBody,self.renderTelegramProbe(d,label));}).catch(function(e){dom.content(self.tgBody,E('div',{},dot('red',_('WARP-проверка не завершилась: ')+((e&&e.message)||'?'))));}).finally(function(){self.tgBtn.disabled=false;});
+		}
 		if (this.selectedProxy) { target = this.selectedProxy; label = this.selectedProxyLabel || target; }
 		else {
 			var name = this.selectedSection || '';
 			var sec = (this.sections || []).filter(function(x){ return x.name === name; })[0];
 			if (sec) { target = sec.endpoint || ''; label = sec.name + (target ? (' · ' + target) : ''); }
 		}
-		if (!target) { dom.content(this.tgBody, this.renderTelegramProbe({ telegram_reached:false, reason:'mixed_proxy_disabled' }, label)); return; }
-		this.tgBtn.disabled = true;
+		if (!target) { dom.content(this.tgBody, this.renderTelegramProbe({ telegram_reached:false, reason:'mixed_proxy_disabled' }, label)); this.tgBtn.disabled=false; return; }
 		dom.content(this.tgBody, E('div', {}, dot('grey', _('Проверяю реальный Telegram getMe через: ') + label)));
-		return callTransportProbe(target).then(function(d) { dom.content(self.tgBody, self.renderTelegramProbe(d, label)); self.tgBtn.disabled = false; }).catch(function() { dom.content(self.tgBody, self.renderTelegramProbe(null, label)); self.tgBtn.disabled = false; });
+		return callTransportProbe(target).then(function(d) { dom.content(self.tgBody, self.renderTelegramProbe(d, label)); }).catch(function() { dom.content(self.tgBody, self.renderTelegramProbe(null, label)); }).finally(function(){self.tgBtn.disabled=false;});
 	},
 
 	runCustomProxy: function() {
@@ -311,9 +341,10 @@ return view.extend({
 		}).catch(function(e){ dom.content(self.body, E('div', { 'class':'cbi-section pb-wide' }, [ dot('red', _('Ошибка включения Mixed Proxy')), E('div', { 'style':'color:#888;font-size:85%;margin-top:.4em;' }, (e && e.message) ? String(e.message) : '') ])); });
 	},
 
-	onTargetChange: function(ev) {
+	onTargetChange: function() {
 		var self = this;
 		this.syncSelectedTarget();
+		if (this.selectedWarp) { dom.content(this.body,this.renderWarpRuntime()); return Promise.resolve(); }
 		if (this.selectedProxy) {
 			return callActiveProbe('true', '', this.selectedProxy, this.selectedProxyLabel).then(function(d) { dom.content(self.body, self.renderProbe(d)); }).catch(function(){ dom.content(self.body, self.renderProbe(null)); });
 		}
@@ -323,6 +354,10 @@ return view.extend({
 	runProbe: function() {
 		var self = this; this.runBtn.disabled = true; if (this.batchBtn) this.batchBtn.disabled = true;
 		this.syncSelectedTarget();
+		if(this.selectedWarp){
+			dom.content(this.body,E('div',{'class':'cbi-section pb-wide'},dot('grey',_('Поднимаю тестовый WARP…'))));
+			return this.ensureWarpTestRoute().then(function(rt){var p=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';return callActiveProbe('', '', p, _('WARP Rescue · WARPSCOUT'));}).then(function(d){dom.content(self.body,self.renderProbe(d));}).catch(function(e){dom.content(self.body,E('div',{'class':'cbi-section pb-wide'},dot('red',_('WARP-проверка не завершилась: ')+((e&&e.message)||'?'))));}).finally(function(){self.runBtn.disabled=false;if(self.batchBtn)self.batchBtn.disabled=false;});
+		}
 		var usingProxy = !!this.selectedProxy, sec = usingProxy ? '' : (this.selectedSection || ''), prox = usingProxy ? this.selectedProxy : '', lbl = usingProxy ? (this.selectedProxyLabel || '') : '';
 		dom.content(this.body, E('div', { 'class':'cbi-section pb-wide' }, dot('grey', _('Проверка… (15–40 секунд)'))));
 		return callActiveProbe('', sec, prox, lbl).then(function(d) { dom.content(self.body, self.renderProbe(d)); }).catch(function(e){ dom.content(self.body, E('div', { 'class':'cbi-section pb-wide' }, [ dot('red', _('Проба не завершилась (превышено время или ошибка вызова).')), E('div', { 'style':'color:#888;font-size:85%;margin-top:.4em;' }, (e && e.message) ? String(e.message) : '') ])); }).finally(function(){ self.runBtn.disabled = false; if (self.batchBtn) self.batchBtn.disabled = false; });
@@ -334,6 +369,7 @@ return view.extend({
 		dom.content(this.body, E('div', { 'class':'cbi-section pb-wide' }, dot('grey', _('Последовательная проверка маршрутов…'))));
 		probeable.forEach(function(s){ chain = chain.then(function(){ return callActiveProbe('', s.name, '', '').then(function(d){ results.push({ sec:s.name, d:d }); }).catch(function(){ results.push({ sec:s.name, d:null }); }); }); });
 		(this.tierProxies || []).forEach(function(p){ chain = chain.then(function(){ return callActiveProbe('', '', p.endpoint, p.label).then(function(d){ results.push({ sec:p.label, d:d, isProxy:true }); }).catch(function(){ results.push({ sec:p.label, d:null, isProxy:true }); }); }); });
+		if(this.warpRouteReady){chain=chain.then(function(){return self.ensureWarpTestRoute().then(function(rt){return callActiveProbe('', '', (rt&&rt.proxy)||'socks5h://127.0.0.1:18191', _('WARP Rescue · WARPSCOUT'));}).then(function(d){results.push({sec:_('WARP Rescue · WARPSCOUT'),d:d,isProxy:true});}).catch(function(){results.push({sec:_('WARP Rescue · WARPSCOUT'),d:null,isProxy:true});});});}
 		return chain.then(function(){ dom.content(self.body, self.renderBatch(results)); }).finally(function(){ self.runBtn.disabled = false; if (self.batchBtn) self.batchBtn.disabled = false; });
 	},
 
@@ -345,7 +381,7 @@ return view.extend({
 				if (!r.d || r.d.available === false) return row(r.sec, dot('grey', _('нет данных / Mixed Proxy выключен')));
 				var d = r.d, g = d.geo || {}, tg = (d.services || []).filter(function(s){ return s.name === 'Telegram API'; })[0];
 				var tgTxt = tg ? (', Telegram ' + (tg.status === 'ok' ? 'ok' : tg.status)) : '', name = self.serverName(d), speed = (d.speed && d.speed.mbps) ? (d.speed.mbps + ' Mbps') : '';
-				return row(r.sec, E('span', {}, name + ' · ' + (g.country || '—') + tgTxt + (speed ? (' · ' + speed) : '')));
+				return row(r.sec, E('span', {}, name + ' · ' + (g.country || '—') + tgTxt + (speed ? (' · ' + speed) : ''));
 			}))
 		]);
 	},

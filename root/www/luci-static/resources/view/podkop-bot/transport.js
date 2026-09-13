@@ -94,16 +94,20 @@ return view.extend({
 		this.chainBox=E('div',{'id':'podkop-tiers'},this.renderTiers(this.tiers,d));
 		var addBtn=E('button',{'class':'cbi-button cbi-button-add','click':ui.createHandlerFn(this,function(){return self.fbForm(-1,'');})},_('Добавить резервный прокси'));
 		var testAllBtn=E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(this,'testFullChain')},_('Тест всей цепочки')); this._testAllBtn=testAllBtn;
-		var reloadBtn=E('button',{'class':'cbi-button','click':ui.createHandlerFn(this,function(){return self.refreshState();})},_('Обновить состояние'));
-		var actionRow=E('div',{'class':'pb-action-row','style':'margin-top:1em;display:flex;gap:.5em;flex-wrap:wrap;align-items:center;'},[addBtn,testAllBtn,reloadBtn]);
-		this._chainMeta=E('div',{'style':'margin-top:.5em;color:#888;font-size:85%;'});
+		var reloadBtn=E('button',{'class':'cbi-button','click':ui.createHandlerFn(this,function(){return self.refreshState();})},_('Перечитать состояние'));
+		var actionRow=E('div',{'class':'pb-action-row','style':'margin:.7em 0 .3em;display:flex;gap:.5em;flex-wrap:wrap;align-items:center;'},[addBtn,testAllBtn,reloadBtn]);
+		var actionHint=E('div',{'class':'pb-hint-90','style':'margin-bottom:.8em;line-height:1.55;'},[
+			E('div',{},[E('strong',{},_('Тест всей цепочки')),': ',_('реально проверяет Telegram через каждый доступный маршрут сверху вниз и обновляет ok/fail и задержку.')]),
+			E('div',{},[E('strong',{},_('Перечитать состояние')),': ',_('не проверяет сеть — только заново читает текущую конфигурацию и состояние бота, Podkop/Forkop и WARP.')])
+		]);
+		this._chainMeta=E('div',{'style':'margin:.4em 0 .6em;color:#888;font-size:85%;'});
 		var ttl=600, stale=!_chainCheckedAt||(Math.floor(Date.now()/1000)-_chainCheckedAt)>ttl;
 		if(!_chainTestedThisSession||stale)window.setTimeout(function(){self.testFullChain();},60);else window.setTimeout(function(){self.applyChainCache();},60);
 		return E('div',{},[
 			E('h2',{},_('Транспорт бота')),
 			E('p',{'class':'pb-muted'},_('Как бот связывается с api.telegram.org, если прямой доступ заблокирован. Автоопределённые секции Podkop/Forkop и настроенный WARP Rescue входят в эту же цепочку. Активный путь подсвечен.')),
 			this.botTransportCard(d),
-			E('div',{'class':'cbi-section pb-card'},[E('h3',{'style':'margin-top:0;'},_('Цепочка fallback')),this.chainBox,this.addFbRow(),actionRow,this._chainMeta]),
+			E('div',{'class':'cbi-section pb-card'},[E('h3',{'style':'margin-top:0;'},_('Цепочка fallback')),actionRow,actionHint,this._chainMeta,this.chainBox,this.addFbRow()]),
 			pbFooter()
 		]);
 	},
@@ -219,7 +223,7 @@ return view.extend({
 	probeOne:function(t){var node=t._resultNode,self=this;dom.content(node,_('проверка…'));var target=t.id==='tier4'?'direct':fbEndpoint(t.endpoint);function recolour(c){if(t._dotWrap)dom.content(t._dotWrap,[dot(c,t.name+(t._active?'  ✓ '+_('активен'):''))]);}function store(html,colour){_chainCache[chainKey(t)]={html:html,colour:colour,active:!!t._active};saveChainProbeCache();}return callProbe(target).then(function(r){if(r&&r.result==='ok'){var ms=(r.latency_ms!=null&&r.latency_ms>0)?(' · '+r.latency_ms+' мс'):'';var html='✓ ok'+(r.http?(' ('+r.http+')'):'')+ms;dom.content(node,html);recolour('green');store(html,'green');}else if(r&&r.result==='unknown'){var h='— '+(r.reason||'unknown');dom.content(node,h);store(h,'grey');}else{var hf='✗ fail'+(r&&r.http?(' ('+r.http+')'):'');dom.content(node,hf);recolour('yellow');store(hf,'yellow');}}).catch(function(){var he='✗ '+_('ошибка');dom.content(node,he);recolour('yellow');store(he,'yellow');});},
 	testFullChain:function(){var self=this,seq=this.tiers.filter(function(t){return t.endpoint&&t.endpoint!==''&&!t._noProbe;}),i=0;if(this._testAllBtn)this._testAllBtn.disabled=true;function finish(){_chainCheckedAt=Math.floor(Date.now()/1000);_chainTestedThisSession=true;saveChainProbeCache();self.renderChainMeta();if(self._testAllBtn)self._testAllBtn.disabled=false;}function next(){if(i>=seq.length){finish();return Promise.resolve();}return self.probeOne(seq[i]).then(function(){i++;return next();});}ui.addNotification(null,E('p',{},_('Проверяю цепочку сверху вниз…')),'info');return next().catch(function(){if(self._testAllBtn)self._testAllBtn.disabled=false;});},
 	applyChainCache:function(){(this.tiers||[]).forEach(function(t){var c=_chainCache[chainKey(t)];if(!c)return;if(t._resultNode)dom.content(t._resultNode,c.html);if(t._dotWrap)dom.content(t._dotWrap,[dot(c.colour,t.name+(c.active?'  ✓ '+_('активен'):''))]);});this.renderChainMeta();},
-	renderChainMeta:function(){if(!this._chainMeta)return;if(!_chainCheckedAt){dom.content(this._chainMeta,'');return;}var d=new Date(_chainCheckedAt*1000);dom.content(this._chainMeta,_('Проверено: ')+d.toLocaleString());},
+	renderChainMeta:function(){if(!this._chainMeta)return;if(!_chainCheckedAt){dom.content(this._chainMeta,'');return;}var d=new Date(_chainCheckedAt*1000);dom.content(this._chainMeta,_('Последний тест цепочки: ')+d.toLocaleString());},
 	enableMixedProxy:function(){var self=this;ui.showModal(_('Включить Mixed Proxy'),[E('p',{},_('Включить Mixed Proxy для primary-секции? Это нужно, чтобы tier1 (быстрый SOCKS) работал.')),E('div',{'class':'right'},[E('button',{'class':'cbi-button','click':ui.hideModal},_('Отмена')),' ',E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(this,function(){ui.hideModal();return callEnsureMP().then(function(r){if(r&&r.ok){var msg=r.already_enabled?_('Mixed Proxy уже включён'):(r.probe==='ok'?_('Mixed Proxy включён, SOCKS отвечает'):_('Mixed Proxy включён'));ui.addNotification(null,E('p',{},msg+(r.endpoint?(' · '+r.endpoint):'')),'info');return self.refreshState(true);}var rm={not_proxy_section:_('Секция не является proxy — Mixed Proxy неприменим'),probe_failed:_('Включён, но SOCKS не ответил — откат выполнен'),variant_unknown:_('Вариант podkop не определён'),uci_missing:_('Конфиг podkop не найден'),commit_failed:_('Ошибка записи конфига')};ui.addNotification(null,E('p',{},_('Не удалось включить: ')+(rm[r&&r.reason]||(r&&r.detail)||'?')),'error');}).catch(function(){ui.addNotification(null,E('p',{},_('Ошибка вызова')),'error');});})},_('Включить'))])]);},
 	row:function(label,valNode){return E('div',{'class':'pb-row pb-row--plain'},[E('span',{'class':'pb-row-label'},label),E('span',{'class':'pb-row-val'},[valNode])]);},
 	handleSave:null,handleSaveApply:null,handleReset:null

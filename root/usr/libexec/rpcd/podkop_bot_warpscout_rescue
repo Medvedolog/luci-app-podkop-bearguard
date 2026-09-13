@@ -190,10 +190,12 @@ method_trigger(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_common ||
 method_next(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_fire || return; stop_rescue; start_control fire 0; printf '{"ok":true}\n'; }
 method_reload(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_reload || return; stop_rescue; start_control reload 0; printf '{"ok":true}\n'; }
 method_stop(){ read -r _in 2>/dev/null; stop_control; stop_rescue; cfg_write enabled 0; state_write stopped "" 0 "$(magazine_count)" manual; printf '{"ok":true}\n'; }
+method_pause(){ read -r _in 2>/dev/null; stop_control; stop_rescue; state_write paused "$(state_get endpoint)" 0 "$(magazine_count)" runtime_test; printf '{"ok":true}\n'; }
+method_resume(){ read -r _in 2>/dev/null; [ "$(cfg_get enabled)" = 1 ] || { printf '{"ok":true,"disabled":true}\n'; return; }; pid_alive "$RESCUE_PID" && { printf '{"ok":true,"already_active":true}\n'; return; }; preflight_common || return; _auto=$(cfg_get rescue_auto); [ "$_auto" = 1 ] || _auto=0; start_control fire "$_auto"; printf '{"ok":true}\n'; }
 method_log(){ read -r _in 2>/dev/null; _o=$(printf '%s' "$_in"|sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); [ -n "$_o" ]||_o=0; _sz=$(wc -c <"$RESCUE_LOG" 2>/dev/null|tr -d ' '); [ -n "$_sz" ]||_sz=0; [ "$_o" -le "$_sz" ] 2>/dev/null || _o=0; _b=$((_sz-_o)); [ "$_b" -gt 32768 ]&&_b=32768; if [ "$_b" -gt 0 ]; then _c=$(tail -c +$((_o+1)) "$RESCUE_LOG"|head -c "$_b"|jq -Rs .); [ -n "$_c" ]||_c='""'; else _c='""'; fi; printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_c" "$((_o+_b))"; }
 
 case "$1" in
- list) echo '{"status":{},"set":{"key":"x","value":"x"},"trigger":{},"next":{},"reload":{},"stop":{},"log":{"offset":0}}';;
- call) case "$2" in status)method_status;;set)method_set;;trigger)method_trigger;;next)method_next;;reload)method_reload;;stop)method_stop;;log)method_log;;*)echo '{"error":"unknown method"}';exit 1;;esac;;
+ list) echo '{"status":{},"set":{"key":"x","value":"x"},"trigger":{},"next":{},"reload":{},"stop":{},"pause":{},"resume":{},"log":{"offset":0}}';;
+ call) case "$2" in status)method_status;;set)method_set;;trigger)method_trigger;;next)method_next;;reload)method_reload;;stop)method_stop;;pause)method_pause;;resume)method_resume;;log)method_log;;*)echo '{"error":"unknown method"}';exit 1;;esac;;
  *) echo '{"error":"unknown command"}'; exit 1;;
 esac

@@ -13,6 +13,7 @@ PID_FILE="$STATE_DIR/warpscout_socks.pid"
 LOG_FILE="$STATE_DIR/warpscout_socks.log"
 STATE_FILE="$STATE_DIR/warpscout_socks.state"
 TG_STATE_FILE="$STATE_DIR/warpscout_telegram.state"
+TGSCAN_PID_FILE="$STATE_DIR/warpscout_tgscan.pid"
 
 mkdir -p "$STATE_DIR" 2>/dev/null
 
@@ -28,6 +29,12 @@ pid_value() {
 	printf '%s' "$_p"
 }
 is_running() { _p=$(pid_value) || return 1; kill -0 "$_p" 2>/dev/null; }
+tgscan_running() {
+	[ -s "$TGSCAN_PID_FILE" ] || return 1
+	_p=$(cat "$TGSCAN_PID_FILE" 2>/dev/null)
+	case "$_p" in ''|*[!0-9]*) return 1;; esac
+	kill -0 "$_p" 2>/dev/null
+}
 
 installed_version() {
 	[ -x "$BIN" ] || return 1
@@ -73,6 +80,7 @@ method_start() {
 	read -r _in 2>/dev/null
 	[ -x "$BIN" ] || { printf '{"ok":false,"reason":"not_installed"}\n'; return; }
 	[ -s "$ACCOUNT_FILE" ] || { printf '{"ok":false,"reason":"account_missing"}\n'; return; }
+	tgscan_running && { printf '{"ok":false,"reason":"telegram_scan_running"}\n'; return; }
 	_ep=$(cfg_get active_endpoint); valid_endpoint "$_ep" || { printf '{"ok":false,"reason":"no_active_endpoint"}\n'; return; }
 	_proto=$(cfg_get protocol); case "$_proto" in wg|awg|masque|masque-h2) :;; *) _proto=awg;; esac
 	_port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac

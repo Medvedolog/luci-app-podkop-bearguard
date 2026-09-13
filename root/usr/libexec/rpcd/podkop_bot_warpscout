@@ -141,6 +141,19 @@ method_run() {
 	pid_alive "$UPDATE_PID" && { printf '{"ok":false,"reason":"already_running"}\n'; return; }
 	: > "$UPDATE_LOG"; printf 'running\n' > "$UPDATE_STATE"; run_update_worker & _pid=$!; printf '%s\n' "$_pid" > "$UPDATE_PID"; printf '{"ok":true,"pid":%s}\n' "$_pid"
 }
+method_remove() {
+	read -r _input 2>/dev/null
+	pid_alive "$UPDATE_PID" && { printf '{"ok":false,"reason":"update_running"}\n'; return; }
+	pid_alive "$ACTION_PID" && { printf '{"ok":false,"reason":"action_running"}\n'; return; }
+	ubus call podkop_bot_warpscout_rescue stop '{}' >/dev/null 2>&1 || true
+	ubus call podkop_bot_warpscout_runtime stop '{}' >/dev/null 2>&1 || true
+	rm -f "$BIN" "$ACCOUNT_FILE" "$CONFIG_FILE" "$SHORTLIST_FILE" "$UPLOAD_ACCOUNT" "$REPORT_FILE" \
+		"$STATE_DIR"/warpscout_socks.pid "$STATE_DIR"/warpscout_socks.state "$STATE_DIR"/warpscout_socks.log \
+		"$STATE_DIR"/warpscout_rescue_socks.pid "$STATE_DIR"/warpscout_rescue_control.pid "$STATE_DIR"/warpscout_rescue.state "$STATE_DIR"/warpscout_rescue.log "$STATE_DIR"/warpscout_rescue.magazine \
+		"$STATE_DIR"/warpscout_tgscan.pid "$STATE_DIR"/warpscout_tgscan.state "$STATE_DIR"/warpscout_tgscan.results "$STATE_DIR"/warpscout_tgscan.log 2>/dev/null
+	if [ -e "$BIN" ]; then printf '{"ok":false,"reason":"remove_failed"}\n'; return; fi
+	printf '{"ok":true}\n'
+}
 
 log_json() {
 	_log="$1"; _statef="$2"; _off="$3"; [ -n "$_off" ] || _off=0
@@ -195,10 +208,6 @@ build_scan_args() {
 parse_report() {
 	[ -s "$REPORT_FILE" ] || return 1
 	_now=$(date +%s 2>/dev/null || echo 0); _tmp="$STATE_DIR/warpscout-shortlist.$$"; : > "$_tmp"
-	# WARPSCOUT report format is flat text: commented header, working rows,
-	# optional torn-down rows, then a per-node summary. Parse the first three
-	# working endpoint rows directly instead of depending on an exact header
-	# layout. SEEN AS may include a flag glyph before the two-letter region.
 	awk -v now="$_now" '
 		BEGIN{rows=0;stop=0}
 		/^# [0-9]+ torn down/ {stop=1}
@@ -270,11 +279,11 @@ method_select() { read -r _in 2>/dev/null; _ep=$(printf '%s' "$_in" | jq -r '.en
 
 case "$1" in
 	list)
-		echo '{ "status": { "force": "x" }, "run": {}, "log": { "offset": 0 }, "config_set": { "key":"x", "value":"x" }, "account_import": {}, "action_run": { "action":"x", "target":"x" }, "action_log": { "offset":0 }, "shortlist": {}, "select": { "endpoint":"x" } }'
+		echo '{ "status": { "force": "x" }, "run": {}, "remove": {}, "log": { "offset": 0 }, "config_set": { "key":"x", "value":"x" }, "account_import": {}, "action_run": { "action":"x", "target":"x" }, "action_log": { "offset":0 }, "shortlist": {}, "select": { "endpoint":"x" } }'
 		;;
 	call)
 		case "$2" in
-			status) method_status;; run) method_run;; log) method_log;; config_set) method_config_set;; account_import) method_account_import;; action_run) method_action_run;; action_log) method_action_log;; shortlist) method_shortlist;; select) method_select;;
+			status) method_status;; run) method_run;; remove) method_remove;; log) method_log;; config_set) method_config_set;; account_import) method_account_import;; action_run) method_action_run;; action_log) method_action_log;; shortlist) method_shortlist;; select) method_select;;
 			*) echo '{"error":"unknown method"}'; exit 1;;
 		esac
 		;;

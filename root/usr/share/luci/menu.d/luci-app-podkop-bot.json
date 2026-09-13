@@ -51,8 +51,7 @@
 		"action": { "type": "view", "path": "podkop-bot/runtime" }
 	},
 	"admin/services/podkop-bot/runtime/tg-api-routes": {
-		"title": "TG API Routes", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/warpscout-telegram-scan" }
+		"action": { "type": "alias", "path": "admin/services/podkop-bot/runtime/services" }
 	},
 	"admin/services/podkop-bot/update": {
 		"title": "Обновление", "order": 35,

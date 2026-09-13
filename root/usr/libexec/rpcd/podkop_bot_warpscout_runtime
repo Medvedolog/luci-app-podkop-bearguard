@@ -2,7 +2,8 @@
 # rpcd exec plugin for ephemeral WARPSCOUT SOCKS runtime and Telegram API probe.
 # WARPSCOUT owns tunnel setup/validation; this wrapper only starts/stops the
 # upstream test SOCKS process and checks whether api.telegram.org is usable
-# through that concrete route.
+# through that concrete route. If WARP Rescue owns the shared port, manual
+# runtime tests pause it temporarily and restore it when the test stops.
 
 BIN="/usr/bin/warpscout"
 STATE_DIR="/tmp/podkop_bot"
@@ -15,6 +16,7 @@ STATE_FILE="$STATE_DIR/warpscout_socks.state"
 TG_STATE_FILE="$STATE_DIR/warpscout_telegram.state"
 TGSCAN_PID_FILE="$STATE_DIR/warpscout_tgscan.pid"
 RESCUE_PID_FILE="$STATE_DIR/warpscout_rescue_socks.pid"
+RESTORE_RESCUE_FILE="$STATE_DIR/warpscout_socks.restore_rescue"
 
 mkdir -p "$STATE_DIR" 2>/dev/null
 
@@ -61,6 +63,7 @@ runtime_json() {
 	_running=false; _pid=0; _rss=0
 	if is_running; then _running=true; _pid=$(pid_value); _rss=$(pid_rss_mb "$_pid"); else rm -f "$PID_FILE" 2>/dev/null; fi
 	_state=$(cat "$STATE_FILE" 2>/dev/null | head -n1); [ -n "$_state" ] || _state=stopped
+	_restore=false; [ -f "$RESTORE_RESCUE_FILE" ] && _restore=true
 	_tg_status=""; _tg_http=""; _tg_ms=""; _tg_checked=""; _tg_rc=""; _tg_error=""; _tg_proxy=""; _tg_reason=""
 	if [ -s "$TG_STATE_FILE" ]; then
 		_tg_status=$(sed -n 's/^status=//p' "$TG_STATE_FILE" | head -n1)
@@ -72,24 +75,37 @@ runtime_json() {
 		_tg_proxy=$(sed -n 's/^proxy=//p' "$TG_STATE_FILE" | head -n1)
 		_tg_reason=$(sed -n 's/^reason=//p' "$TG_STATE_FILE" | head -n1)
 	fi
-	printf '{"ok":true,"installed":%s,"version":%s,"running":%s,"state":%s,"pid":%s,"rss_mb":%s,"endpoint":%s,"protocol":%s,"listen":"127.0.0.1","port":%s,"proxy":%s,"telegram":{"status":%s,"reason":%s,"http":%s,"latency_ms":%s,"checked_at":%s,"curl_rc":%s,"error":%s,"proxy":%s}}\n' \
-		"$_installed" "$(json_str "$_version")" "$_running" "$(json_str "$_state")" "$_pid" "$_rss" "$(json_str "$_ep")" "$(json_str "$_proto")" "$_port" "$(json_str "socks5h://127.0.0.1:$_port")" \
+	printf '{"ok":true,"installed":%s,"version":%s,"running":%s,"state":%s,"pid":%s,"rss_mb":%s,"endpoint":%s,"protocol":%s,"listen":"127.0.0.1","port":%s,"proxy":%s,"restore_rescue":%s,"telegram":{"status":%s,"reason":%s,"http":%s,"latency_ms":%s,"checked_at":%s,"curl_rc":%s,"error":%s,"proxy":%s}}\n' \
+		"$_installed" "$(json_str "$_version")" "$_running" "$(json_str "$_state")" "$_pid" "$_rss" "$(json_str "$_ep")" "$(json_str "$_proto")" "$_port" "$(json_str "socks5h://127.0.0.1:$_port")" "$_restore" \
 		"$(json_str "$_tg_status")" "$(json_str "$_tg_reason")" "$(json_str "$_tg_http")" "$(json_str "$_tg_ms")" "$(json_str "$_tg_checked")" "$(json_str "$_tg_rc")" "$(json_str "$_tg_error")" "$(json_str "$_tg_proxy")"
 }
 
 method_status() { read -r _in 2>/dev/null; runtime_json; }
+
+restore_rescue_if_needed() {
+	[ -f "$RESTORE_RESCUE_FILE" ] || return 0
+	rm -f "$RESTORE_RESCUE_FILE"
+	ubus call podkop_bot_warpscout_rescue resume '{}' >/dev/null 2>&1 || return 1
+	return 0
+}
 
 method_start() {
 	read -r _in 2>/dev/null
 	[ -x "$BIN" ] || { printf '{"ok":false,"reason":"not_installed"}\n'; return; }
 	[ -s "$ACCOUNT_FILE" ] || { printf '{"ok":false,"reason":"account_missing"}\n'; return; }
 	tgscan_running && { printf '{"ok":false,"reason":"telegram_scan_running"}\n'; return; }
-	rescue_running && { printf '{"ok":false,"reason":"rescue_socks_running"}\n'; return; }
 	_ep=$(cfg_get active_endpoint); valid_endpoint "$_ep" || { printf '{"ok":false,"reason":"no_active_endpoint"}\n'; return; }
 	_proto=$(cfg_get protocol); case "$_proto" in wg|awg|masque|masque-h2) :;; *) _proto=awg;; esac
 	_port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac
 	[ "$_port" -ge 1024 ] 2>/dev/null && [ "$_port" -le 65535 ] 2>/dev/null || { printf '{"ok":false,"reason":"bad_port"}\n'; return; }
 	if is_running; then printf '{"ok":true,"already_running":true}\n'; return; fi
+
+	if rescue_running; then
+		ubus call podkop_bot_warpscout_rescue pause '{}' >/dev/null 2>&1 || { printf '{"ok":false,"reason":"rescue_pause_failed"}\n'; return; }
+		: > "$RESTORE_RESCUE_FILE"
+		_i=0; while rescue_running && [ "$_i" -lt 3 ]; do sleep 1; _i=$((_i+1)); done
+		if rescue_running; then rm -f "$RESTORE_RESCUE_FILE"; printf '{"ok":false,"reason":"rescue_pause_failed"}\n'; return; fi
+	fi
 
 	: > "$LOG_FILE"
 	printf 'starting\n' > "$STATE_FILE"
@@ -107,6 +123,7 @@ method_start() {
 		wait "$_pid" 2>/dev/null; _rc=$?
 		rm -f "$PID_FILE"
 		printf 'failed %s\n' "$_rc" > "$STATE_FILE"
+		restore_rescue_if_needed >/dev/null 2>&1 || true
 		printf '{"ok":false,"reason":"socks_start_failed","exit_code":%s}\n' "$_rc"
 	fi
 }
@@ -120,7 +137,8 @@ method_stop() {
 	fi
 	rm -f "$PID_FILE"
 	printf 'stopped\n' > "$STATE_FILE"
-	printf '{"ok":true,"running":false}\n'
+	_restored=true; restore_rescue_if_needed || _restored=false
+	printf '{"ok":true,"running":false,"rescue_restored":%s}\n' "$_restored"
 }
 
 method_log() {

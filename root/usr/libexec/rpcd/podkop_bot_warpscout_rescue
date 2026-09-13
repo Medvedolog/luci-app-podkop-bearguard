@@ -1,0 +1,108 @@
+#!/bin/sh
+# WARP Rescue revolver controller.
+# Consumes VALID WARPSCOUT candidates from TG API qualification results,
+# serially tries them, keeps one rescue SOCKS alive, and can reload the
+# magazine through Discovery + qualification when exhausted.
+# It does not mutate POLL/FAST state; the bot state machine may call trigger.
+
+BIN="/usr/bin/warpscout"
+STATE_DIR="/tmp/podkop_bot"
+PERSIST_DIR="/etc/podkop_bot"
+CONFIG_FILE="$PERSIST_DIR/warpscout.conf"
+ACCOUNT_FILE="$PERSIST_DIR/warpscout-account.json"
+TG_RESULTS="$STATE_DIR/warpscout_tgscan.results"
+TGSCAN_PID="$STATE_DIR/warpscout_tgscan.pid"
+ACTION_PID="$STATE_DIR/warpscout_action.pid"
+RUNTIME_PID="$STATE_DIR/warpscout_socks.pid"
+RESCUE_PID="$STATE_DIR/warpscout_rescue_socks.pid"
+RESCUE_STATE="$STATE_DIR/warpscout_rescue.state"
+RESCUE_LOG="$STATE_DIR/warpscout_rescue.log"
+RESCUE_MAG="$STATE_DIR/warpscout_rescue.magazine"
+
+mkdir -p "$STATE_DIR" "$PERSIST_DIR" 2>/dev/null
+
+json_escape(){ printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\r\t' '   '; }
+json_str(){ printf '"%s"' "$(json_escape "$1")"; }
+cfg_get(){ [ -f "$CONFIG_FILE" ] && sed -n "s/^$1=//p" "$CONFIG_FILE" | head -n1; }
+cfg_write(){ _k="$1"; _v="$2"; [ -f "$CONFIG_FILE" ] || touch "$CONFIG_FILE"; _t="$CONFIG_FILE.$$"; awk -F= -v k="$_k" -v v="$_v" 'BEGIN{d=0}$1==k{print k"="v;d=1;next}{print}END{if(!d)print k"="v}' "$CONFIG_FILE" >"$_t" && mv "$_t" "$CONFIG_FILE"; chmod 600 "$CONFIG_FILE" 2>/dev/null; }
+pid_alive(){ _f="$1"; [ -s "$_f" ] || return 1; _p=$(cat "$_f" 2>/dev/null); case "$_p" in ''|*[!0-9]*) return 1;; esac; kill -0 "$_p" 2>/dev/null; }
+state_get(){ [ -s "$RESCUE_STATE" ] && sed -n "s/^$1=//p" "$RESCUE_STATE" | head -n1; }
+state_write(){ _s="$1"; _ep="$2"; _idx="$3"; _total="$4"; _reason="$5"; _now=$(date +%s 2>/dev/null || echo 0); _t="$RESCUE_STATE.$$"; { printf 'state=%s\n' "$_s"; printf 'endpoint=%s\n' "$_ep"; printf 'index=%s\n' "$_idx"; printf 'total=%s\n' "$_total"; printf 'reason=%s\n' "$_reason"; printf 'updated_at=%s\n' "$_now"; } >"$_t" && mv "$_t" "$RESCUE_STATE"; }
+
+stop_rescue(){ if _p=$(cat "$RESCUE_PID" 2>/dev/null); then case "$_p" in ''|*[!0-9]*) :;; *) kill "$_p" 2>/dev/null || true; sleep 1; kill -9 "$_p" 2>/dev/null || true;; esac; fi; rm -f "$RESCUE_PID"; }
+
+build_magazine(){
+	[ -s "$TG_RESULTS" ] || return 1
+	# provider|source|label|endpoint|status|reason|http|latency|checked|...
+	awk -F'|' '$1=="warp" && $5=="VALID" && $4 ~ /^[0-9]+\./ {print $4"|"$8"|"$12"|"$11}' "$TG_RESULTS" \
+		| sort -t'|' -k3,3n -k2,2n > "$RESCUE_MAG.$$"
+	[ -s "$RESCUE_MAG.$$" ] || { rm -f "$RESCUE_MAG.$$"; return 1; }
+	mv "$RESCUE_MAG.$$" "$RESCUE_MAG"
+}
+
+probe_tg(){
+	_port="$1"; _tok=$(uci -q get podkop_bot.settings.bot_token 2>/dev/null); [ -n "$_tok" ] || return 2
+	_b="$STATE_DIR/rescue_tg_body.$$"
+	_h=$(curl -sS -o "$_b" -w '%{http_code}' --proxy "socks5h://127.0.0.1:$_port" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_tok}/getMe" 2>/dev/null); _rc=$?
+	_ok=1; [ "$_rc" -eq 0 ] && [ "$_h" = 200 ] && jq -e '.ok==true' "$_b" >/dev/null 2>&1 && _ok=0
+	rm -f "$_b"; return "$_ok"
+}
+
+start_endpoint(){
+	_ep="$1"; _port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac
+	_proto=$(cfg_get protocol); case "$_proto" in wg|awg|masque|masque-h2) :;; *) _proto=awg;; esac
+	stop_rescue
+	( exec "$BIN" socks -a "$ACCOUNT_FILE" -e "$_ep" -p "$_proto" -l 127.0.0.1 -P "$_port" ) >>"$RESCUE_LOG" 2>&1 &
+	_p=$!; printf '%s\n' "$_p" > "$RESCUE_PID"; sleep 3
+	kill -0 "$_p" 2>/dev/null || { stop_rescue; return 1; }
+	probe_tg "$_port" || { stop_rescue; return 1; }
+	return 0
+}
+
+wait_file_done(){ _file="$1"; _limit="$2"; _n=0; while [ "$_n" -lt "$_limit" ]; do _s=$(cat "$_file" 2>/dev/null | head -n1); case "$_s" in done\ 0) return 0;; error\ *|done\ *) return 1;; esac; sleep 1; _n=$((_n+1)); done; return 1; }
+
+reload_magazine(){
+	echo "[rescue] magazine empty: running Discovery"
+	ubus call podkop_bot_warpscout action_run '{"action":"scan","target":""}' >/dev/null 2>&1 || return 1
+	wait_file_done "$STATE_DIR/warpscout_action.state" 240 || return 1
+	echo "[rescue] Discovery complete: running TG qualification"
+	ubus call podkop_bot_warpscout_tgscan telegram_scan_start '{}' >/dev/null 2>&1 || return 1
+	_n=0; while [ "$_n" -lt 420 ]; do pid_alive "$TGSCAN_PID" || break; sleep 1; _n=$((_n+1)); done
+	pid_alive "$TGSCAN_PID" && return 1
+	build_magazine
+}
+
+fire_worker(){
+	_auto_reload="$1"; : > "$RESCUE_LOG"
+	_attempt=0
+	while :; do
+		build_magazine || true
+		_total=$(wc -l < "$RESCUE_MAG" 2>/dev/null | tr -d ' '); case "$_total" in ''|*[!0-9]*) _total=0;; esac
+		_idx=0; _last=$(state_get endpoint)
+		while IFS='|' read -r _ep _lat _loss _tun; do
+			[ -n "$_ep" ] || continue; _idx=$((_idx+1)); [ "$_ep" = "$_last" ] && [ "$_total" -gt 1 ] && continue
+			state_write firing "$_ep" "$_idx" "$_total" try
+			echo "[rescue] try ${_idx}/${_total} $_ep"
+			if start_endpoint "$_ep"; then state_write active "$_ep" "$_idx" "$_total" ok; cfg_write active_endpoint "$_ep"; echo "[rescue] active $_ep"; return 0; fi
+			echo "[rescue] failed $_ep"
+		done < "$RESCUE_MAG"
+		[ "$_auto_reload" = 1 ] && [ "$_attempt" -eq 0 ] || break
+		_attempt=1; state_write reloading "" 0 0 exhausted
+		reload_magazine || break
+	done
+	stop_rescue; state_write exhausted "" 0 0 no_valid_endpoint; echo "[rescue] exhausted"; return 1
+}
+
+method_status(){ read -r _in 2>/dev/null; _run=false; pid_alive "$RESCUE_PID" && _run=true; _s=$(state_get state); [ -n "$_s" ] || _s=idle; _ep=$(state_get endpoint); _idx=$(state_get index); _total=$(state_get total); _reason=$(state_get reason); _upd=$(state_get updated_at); _armed=$(cfg_get rescue_auto); [ "$_armed" = 1 ] || _armed=0; _bear=$(cfg_get bearhole_gate); [ "$_bear" = 1 ] || _bear=0; printf '{"ok":true,"running":%s,"state":%s,"endpoint":%s,"index":%s,"total":%s,"reason":%s,"updated_at":%s,"auto":%s,"bearhole_gate":%s,"proxy":%s}\n' "$_run" "$(json_str "$_s")" "$(json_str "$_ep")" "${_idx:-0}" "${_total:-0}" "$(json_str "$_reason")" "${_upd:-0}" "$([ "$_armed" = 1 ]&&echo true||echo false)" "$([ "$_bear" = 1 ]&&echo true||echo false)" "$(json_str "socks5h://127.0.0.1:$(cfg_get socks_port)")"; }
+method_set(){ read -r _in 2>/dev/null; _k=$(printf '%s' "$_in"|jq -r '.key//""'); _v=$(printf '%s' "$_in"|jq -r '.value//""'); case "$_k" in rescue_auto|bearhole_gate) case "$_v" in 0|1) cfg_write "$_k" "$_v"; printf '{"ok":true}\n';; *) printf '{"ok":false,"reason":"bad_value"}\n';; esac;; *) printf '{"ok":false,"reason":"bad_key"}\n';; esac; }
+method_trigger(){ read -r _in 2>/dev/null; [ "$(cfg_get enabled)" = 1 ] || { printf '{"ok":false,"reason":"warpscout_disabled"}\n'; return; }; [ -x "$BIN" ] && [ -s "$ACCOUNT_FILE" ] || { printf '{"ok":false,"reason":"not_ready"}\n'; return; }; pid_alive "$RUNTIME_PID" && { printf '{"ok":false,"reason":"runtime_socks_running"}\n'; return; }; pid_alive "$TGSCAN_PID" && { printf '{"ok":false,"reason":"qualification_running"}\n'; return; }; pid_alive "$ACTION_PID" && { printf '{"ok":false,"reason":"discovery_running"}\n'; return; }; pid_alive "$RESCUE_PID" && { printf '{"ok":true,"already_active":true}\n'; return; }; _auto=$(cfg_get rescue_auto); [ "$_auto" = 1 ] || _auto=0; fire_worker "$_auto" >/dev/null 2>&1 & printf '{"ok":true}\n'; }
+method_next(){ read -r _in 2>/dev/null; stop_rescue; fire_worker 0 >/dev/null 2>&1 & printf '{"ok":true}\n'; }
+method_reload(){ read -r _in 2>/dev/null; stop_rescue; ( reload_magazine && fire_worker 0 ) >>"$RESCUE_LOG" 2>&1 & printf '{"ok":true}\n'; }
+method_stop(){ read -r _in 2>/dev/null; stop_rescue; state_write stopped "" 0 0 manual; printf '{"ok":true}\n'; }
+method_log(){ read -r _in 2>/dev/null; _o=$(printf '%s' "$_in"|sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); [ -n "$_o" ]||_o=0; _sz=$(wc -c <"$RESCUE_LOG" 2>/dev/null|tr -d ' '); [ -n "$_sz" ]||_sz=0; _b=$((_sz-_o)); [ "$_b" -gt 32768 ]&&_b=32768; if [ "$_b" -gt 0 ]; then _c=$(tail -c +$((_o+1)) "$RESCUE_LOG"|head -c "$_b"|jq -Rs .); else _c='""'; fi; printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_c" "$((_o+_b))"; }
+
+case "$1" in
+ list) echo '{"status":{},"set":{"key":"x","value":"x"},"trigger":{},"next":{},"reload":{},"stop":{},"log":{"offset":0}}';;
+ call) case "$2" in status)method_status;;set)method_set;;trigger)method_trigger;;next)method_next;;reload)method_reload;;stop)method_stop;;log)method_log;;*)echo '{"error":"unknown method"}';exit 1;;esac;;
+ *) echo '{"error":"unknown command"}'; exit 1;;
+esac

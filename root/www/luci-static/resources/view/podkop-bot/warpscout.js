@@ -90,8 +90,7 @@ return view.extend({
 			row(_('Account'), st.account_ready ? dot('green', _('готов')) : dot('yellow', _('отсутствует'))),
 			row(_('Выбранный endpoint'), (st.config && st.config.active_endpoint) || '—'),
 			E('div', { 'style':'margin-top:.7em;display:flex;gap:.5em;flex-wrap:wrap;' }, [
-				E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/update')+'#warpscout-update' }, _('Установка / удаление WARPSCOUT')),
-				E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/transport/warp-revolver') }, _('Открыть револьвер'))
+				E('a', { 'class':'cbi-button', 'href':L.url('admin/services/podkop-bot/update')+'#warpscout-update' }, _('Установка / удаление WARPSCOUT'))
 			])
 		]);
 	},

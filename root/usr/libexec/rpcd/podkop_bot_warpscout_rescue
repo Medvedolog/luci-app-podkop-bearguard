@@ -233,7 +233,7 @@ method_trigger(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_common ||
 method_next(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_fire || return; stop_rescue; start_control fire 0 ""; printf '{"ok":true}\n'; }
 method_fire(){ read -r _in 2>/dev/null; _ep=$(printf '%s' "$_in" | jq -r '.endpoint // ""' 2>/dev/null); valid_endpoint "$_ep" || { printf '{"ok":false,"reason":"bad_endpoint"}\n'; return; }; magazine_has "$_ep" || { printf '{"ok":false,"reason":"not_in_magazine"}\n'; return; }; preflight_fire || return; : >"$RESCUE_LOG"; if pid_alive "$RESCUE_PID" && [ "$(state_get endpoint)" = "$_ep" ]; then printf '{"ok":true,"already_active":true}\n'; return; fi; stop_rescue; start_control selected 0 "$_ep"; printf '{"ok":true}\n'; }
 method_reload(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_reload || return; stop_rescue; start_control reload 0 ""; printf '{"ok":true}\n'; }
-method_stop(){ read -r _in 2>/dev/null; stop_control; stop_rescue; cfg_write enabled 0; state_write stopped "" 0 "$(magazine_count)" manual; printf '{"ok":true}\n'; }
+method_stop(){ read -r _in 2>/dev/null; stop_control; stop_rescue; rm -f "$RESCUE_MAG" "$RESCUE_MAG.$$" 2>/dev/null; cfg_write enabled 0; state_write stopped "" 0 0 manual; printf '{"ok":true}\n'; }
 method_pause(){ read -r _in 2>/dev/null; _resume_ep=$(state_get endpoint); stop_control; stop_rescue; state_write paused "$_resume_ep" 0 "$(magazine_count)" runtime_test; printf '{"ok":true}\n'; }
 method_resume(){
 	read -r _in 2>/dev/null

@@ -381,7 +381,7 @@ return view.extend({
 				if (!r.d || r.d.available === false) return row(r.sec, dot('grey', _('нет данных / Mixed Proxy выключен')));
 				var d = r.d, g = d.geo || {}, tg = (d.services || []).filter(function(s){ return s.name === 'Telegram API'; })[0];
 				var tgTxt = tg ? (', Telegram ' + (tg.status === 'ok' ? 'ok' : tg.status)) : '', name = self.serverName(d), speed = (d.speed && d.speed.mbps) ? (d.speed.mbps + ' Mbps') : '';
-				return row(r.sec, E('span', {}, name + ' · ' + (g.country || '—') + tgTxt + (speed ? (' · ' + speed) : ''));
+				return row(r.sec, E('span', {}, name + ' · ' + (g.country || '—') + tgTxt + (speed ? (' · ' + speed) : '')));
 			}))
 		]);
 	},

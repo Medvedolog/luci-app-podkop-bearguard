@@ -25,7 +25,7 @@
 		"action": { "type": "firstchild" }
 	},
 	"admin/services/podkop-bot/transport/main": {
-		"title": "Пул прокси", "order": 5,
+		"title": "Цепочка прокси", "order": 5,
 		"action": { "type": "view", "path": "podkop-bot/transport" }
 	},
 	"admin/services/podkop-bot/transport/warp-revolver": {
@@ -43,7 +43,7 @@
 		"action": { "type": "view", "path": "podkop-bot/wizard" }
 	},
 	"admin/services/podkop-bot/runtime": {
-		"title": "Runtime", "order": 30,
+		"title": "Проверка маршрутов", "order": 30,
 		"action": { "type": "firstchild" }
 	},
 	"admin/services/podkop-bot/runtime/services": {

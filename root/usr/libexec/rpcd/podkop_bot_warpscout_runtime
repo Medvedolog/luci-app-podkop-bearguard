@@ -11,11 +11,13 @@ PERSIST_DIR="/etc/podkop_bot"
 CONFIG_FILE="$PERSIST_DIR/warpscout.conf"
 ACCOUNT_FILE="$PERSIST_DIR/warpscout-account.json"
 PID_FILE="$STATE_DIR/warpscout_socks.pid"
+ENDPOINT_FILE="$STATE_DIR/warpscout_socks.endpoint"
 LOG_FILE="$STATE_DIR/warpscout_socks.log"
 STATE_FILE="$STATE_DIR/warpscout_socks.state"
 TG_STATE_FILE="$STATE_DIR/warpscout_telegram.state"
 TGSCAN_PID_FILE="$STATE_DIR/warpscout_tgscan.pid"
 RESCUE_PID_FILE="$STATE_DIR/warpscout_rescue_socks.pid"
+RESCUE_STATE_FILE="$STATE_DIR/warpscout_rescue.state"
 RESTORE_RESCUE_FILE="$STATE_DIR/warpscout_socks.restore_rescue"
 
 mkdir -p "$STATE_DIR" 2>/dev/null
@@ -24,6 +26,7 @@ json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\r\t' ' 
 json_str() { printf '"%s"' "$(json_escape "$1")"; }
 cfg_get() { [ -f "$CONFIG_FILE" ] && sed -n "s/^$1=//p" "$CONFIG_FILE" | head -n1; }
 valid_endpoint() { printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$'; }
+rescue_state_endpoint() { [ -s "$RESCUE_STATE_FILE" ] && sed -n 's/^endpoint=//p' "$RESCUE_STATE_FILE" | head -n1; }
 
 pid_value() {
 	[ -s "$PID_FILE" ] || return 1
@@ -56,7 +59,8 @@ pid_rss_mb() {
 }
 
 runtime_json() {
-	_ep=$(cfg_get active_endpoint); _proto=$(cfg_get protocol); [ -n "$_proto" ] || _proto=awg
+	_ep=$(cat "$ENDPOINT_FILE" 2>/dev/null | head -n1); [ -n "$_ep" ] || _ep=$(cfg_get active_endpoint)
+	_proto=$(cfg_get protocol); [ -n "$_proto" ] || _proto=awg
 	_port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac
 	_installed=false; _version=""
 	if _version=$(installed_version); then _installed=true; fi
@@ -94,11 +98,24 @@ method_start() {
 	[ -x "$BIN" ] || { printf '{"ok":false,"reason":"not_installed"}\n'; return; }
 	[ -s "$ACCOUNT_FILE" ] || { printf '{"ok":false,"reason":"account_missing"}\n'; return; }
 	tgscan_running && { printf '{"ok":false,"reason":"telegram_scan_running"}\n'; return; }
-	_ep=$(cfg_get active_endpoint); valid_endpoint "$_ep" || { printf '{"ok":false,"reason":"no_active_endpoint"}\n'; return; }
+	_req_ep=$(printf '%s' "$_in" | jq -r '.endpoint // ""' 2>/dev/null)
+	_ep=""
+	if [ -n "$_req_ep" ]; then
+		valid_endpoint "$_req_ep" || { printf '{"ok":false,"reason":"bad_endpoint"}\n'; return; }
+		_ep="$_req_ep"
+	elif rescue_running; then
+		_ep=$(rescue_state_endpoint)
+	fi
+	[ -n "$_ep" ] || _ep=$(cfg_get active_endpoint)
+	valid_endpoint "$_ep" || { printf '{"ok":false,"reason":"no_active_endpoint"}\n'; return; }
 	_proto=$(cfg_get protocol); case "$_proto" in wg|awg|masque|masque-h2) :;; *) _proto=awg;; esac
 	_port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac
 	[ "$_port" -ge 1024 ] 2>/dev/null && [ "$_port" -le 65535 ] 2>/dev/null || { printf '{"ok":false,"reason":"bad_port"}\n'; return; }
-	if is_running; then printf '{"ok":true,"already_running":true}\n'; return; fi
+	if is_running; then
+		_cur=$(cat "$ENDPOINT_FILE" 2>/dev/null | head -n1)
+		if [ "$_cur" = "$_ep" ]; then printf '{"ok":true,"already_running":true,"endpoint":%s}\n' "$(json_str "$_ep")"; return; fi
+		printf '{"ok":false,"reason":"different_test_endpoint_running","endpoint":%s}\n' "$(json_str "$_cur")"; return
+	fi
 
 	if rescue_running; then
 		ubus call podkop_bot_warpscout_rescue pause '{}' >/dev/null 2>&1 || { printf '{"ok":false,"reason":"rescue_pause_failed"}\n'; return; }
@@ -107,6 +124,7 @@ method_start() {
 		if rescue_running; then rm -f "$RESTORE_RESCUE_FILE"; printf '{"ok":false,"reason":"rescue_pause_failed"}\n'; return; fi
 	fi
 
+	printf '%s\n' "$_ep" > "$ENDPOINT_FILE"
 	: > "$LOG_FILE"
 	printf 'starting\n' > "$STATE_FILE"
 	(
@@ -207,7 +225,7 @@ method_telegram_test() {
 
 case "$1" in
 	list)
-		echo '{ "status": {}, "start": {}, "stop": {}, "log": { "offset": 0 }, "telegram_test": {} }'
+		echo '{ "status": {}, "start": { "endpoint": "x" }, "stop": {}, "log": { "offset": 0 }, "telegram_test": {} }'
 		;;
 	call)
 		case "$2" in

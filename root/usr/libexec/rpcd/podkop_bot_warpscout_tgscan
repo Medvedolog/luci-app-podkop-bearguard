@@ -38,6 +38,7 @@ pid_alive_file() { _p=$(pid_from_file "$1") || return 1; kill -0 "$_p" 2>/dev/nu
 
 state_write() {
 	_state="$1"; _current="$2"; _total="$3"; _route="$4"; _phase="$5"; _valid="$6"; _reachable="$7"; _failed="$8"; _started="$9"
+	_route=$(mask_proxy "$_route")
 	_now=$(date +%s 2>/dev/null || echo 0); _tmp="$SCAN_STATE.$$"
 	{
 		printf 'state=%s\n' "$_state"
@@ -162,7 +163,7 @@ run_worker() {
 			state_write running "$_idx" "$_total" "$_label" telegram_test "$_valid" "$_reachable" "$_failed" "$_started"
 			echo "[tgroutes] ${_idx}/${_total} $_source: Telegram Bot API"
 		fi
-		state_write running "$_idx" "$_total" "$_label${_kind:+ · }${_target}" telegram_test "$_valid" "$_reachable" "$_failed" "$_started"
+		state_write running "$_idx" "$_total" "$_label · $_display" telegram_test "$_valid" "$_reachable" "$_failed" "$_started"
 		_probe=$(probe_telegram "$_proxy" "$_token")
 		_status=$(printf '%s' "$_probe" | cut -d'|' -f1); _reason=$(printf '%s' "$_probe" | cut -d'|' -f2); _http=$(printf '%s' "$_probe" | cut -d'|' -f3); _ms=$(printf '%s' "$_probe" | cut -d'|' -f4); _detail=$(printf '%s' "$_probe" | cut -d'|' -f5-)
 		_now=$(date +%s 2>/dev/null || echo 0)

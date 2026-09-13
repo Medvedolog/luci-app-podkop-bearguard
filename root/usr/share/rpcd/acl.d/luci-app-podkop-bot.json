@@ -7,7 +7,7 @@
         "podkop_bot_warpscout": ["status", "log", "action_log", "shortlist"],
         "podkop_bot_warpscout_runtime": ["status", "log", "telegram_test"],
         "podkop_bot_warpscout_tgscan": ["telegram_scan_status", "telegram_scan_results", "telegram_scan_log"],
-        "podkop_bot_warpscout_rescue": ["status", "log"]
+        "podkop_bot_warpscout_rescue": ["status", "magazine", "log"]
       },
       "uci": ["podkop_bot"]
     },
@@ -17,7 +17,7 @@
         "podkop_bot_warpscout": ["run", "remove", "config_set", "account_import", "action_run", "select"],
         "podkop_bot_warpscout_runtime": ["start", "stop"],
         "podkop_bot_warpscout_tgscan": ["telegram_scan_start", "telegram_scan_cancel"],
-        "podkop_bot_warpscout_rescue": ["set", "trigger", "next", "reload", "stop"]
+        "podkop_bot_warpscout_rescue": ["set", "trigger", "next", "fire", "reload", "stop"]
       },
       "uci": ["podkop_bot"]
     }

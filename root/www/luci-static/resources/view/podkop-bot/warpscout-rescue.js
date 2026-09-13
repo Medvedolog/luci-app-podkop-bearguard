@@ -32,21 +32,21 @@ return view.extend({
 		if(!items.length)return E('div',{'class':'cbi-section pb-card','style':'max-width:820px;'},[E('h3',{'style':'margin-top:0;'},_('Магазин')),E('p',{'class':'pb-hint-90'},_('Магазин пуст. Выполните «Перезарядить»: Discovery → TG API Routes → отбор VALID WARP.'))]);
 		var body=items.map(function(x){
 			var active=x.state==='active',next=x.state==='next';
-			var badge=active?dot('green','ACTIVE'):(next?dot('yellow','NEXT'):dot('grey','READY'));
+			var badge=active?dot('green','ON-AIR'):(next?dot('yellow','NEXT'):dot('grey','READY'));
 			var fire=E('button',{
-				'class':'cbi-button cbi-button-action',
-				'style':'padding:.18em .65em;font-size:82%;min-height:0;',
+				'class':'cbi-button',
+				'style':active?'padding:.18em .65em;font-size:82%;min-height:0;background:#33a02c;color:#fff;border-color:#33a02c;':'padding:.18em .65em;font-size:82%;min-height:0;background:#e8a33d;color:#111;border-color:#e8a33d;',
 				'disabled':(active||rs.busy)?'disabled':null,
 				'click':ui.createHandlerFn(self,function(){
 					dom.content(actionStatus,dot('yellow','FIRE · '+x.endpoint+'…'));
 					fire.disabled=true;
 					return callRescueFire(x.endpoint).then(function(r){
-						dom.content(actionStatus,r&&r.ok?dot('green',r.already_active?_('Уже активен'):_('Патрон выбран — проверяется Telegram и поднимается Rescue')):dot('red',_('Ошибка: ')+rescueError(r&&r.reason)));
+						dom.content(actionStatus,r&&r.ok?dot('green',r.already_active?_('Уже ON-AIR'):_('Патрон выбран — проверяется Telegram и поднимается Rescue')):dot('red',_('Ошибка: ')+rescueError(r&&r.reason)));
 						window.setTimeout(function(){self.refreshView();},700);
 						window.setTimeout(function(){self.refreshView();},4200);
 					}).catch(function(){dom.content(actionStatus,dot('red',_('Ошибка RPC')));}).finally(function(){fire.disabled=false;});
 				})
-			},active?'ACTIVE':'FIRE');
+			},active?'ON-AIR':'FIRE');
 			var details=[];
 			if(x.node||x.node_location)details.push((x.node||'—')+(x.node_location?(' · '+x.node_location):''));
 			if(x.seen_as)details.push(_('seen as ') + x.seen_as);

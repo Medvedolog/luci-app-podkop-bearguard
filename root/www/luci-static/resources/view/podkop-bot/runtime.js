@@ -11,7 +11,10 @@ var callTransportProbe = rpc.declare({ object:'podkop_bot', method:'transport_pr
 var callEnsureMixedProxy = rpc.declare({ object:'podkop_bot', method:'ensure_mixed_proxy', params:['section'] });
 var callWarpStatus = rpc.declare({ object:'podkop_bot_warpscout', method:'status', params:['force'] });
 var callWarpShortlist = rpc.declare({ object:'podkop_bot_warpscout', method:'shortlist' });
+var callWarpConfigSet = rpc.declare({ object:'podkop_bot_warpscout', method:'config_set', params:['key','value'] });
 var callWarpRtStatus = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'status' });
+var callWarpRtStart = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'start' });
+var callWarpRtStop = rpc.declare({ object:'podkop_bot_warpscout_runtime', method:'stop' });
 
 var COLOURS = { green:'#33a02c', yellow:'#e8a33d', grey:'#888888', red:'#cc2b2b' };
 function dot(c, label) {
@@ -108,6 +111,11 @@ return view.extend({
 		this.tgBody = tgBody;
 		var tgBtn = E('button', { 'class':'cbi-button', 'click': ui.createHandlerFn(this, 'runTelegramProbe') }, _('Проверить Telegram API'));
 		this.tgBtn = tgBtn;
+		var warpNextBtn = E('span', {});
+		if (this.warpStatus && this.warpStatus.installed && this.warpShortlist && (this.warpShortlist.items || []).length > 1) {
+			warpNextBtn = E('button', { 'class':'cbi-button', 'click': ui.createHandlerFn(this, 'nextWarpTestRoute'), 'title':_('Остановить текущий тестовый WARP, выбрать следующий endpoint из shortlist и снова поднять локальный SOCKS') }, _('Следующий WARP'));
+			this.warpNextBtn = warpNextBtn;
+		}
 		var selectorRow = E('span', {});
 		var totalChoices = this.sections.length + this.tierProxies.length;
 		if (totalChoices > 1) {
@@ -125,8 +133,6 @@ return view.extend({
 				E('label', { 'style':'display:block;color:#888;font-size:90%;margin-bottom:.2em;' }, _('Маршрут проверки')),
 				sel
 			]);
-			/* Browsers may restore a previous <select> value without firing change.
-			 * Keep JS routing state aligned with what the user actually sees. */
 			window.setTimeout(function(){ self.syncSelectedTarget(); }, 0);
 		}
 		var batchBtn = E('span', {});
@@ -158,9 +164,9 @@ return view.extend({
 		return E('div', {}, [
 			E('h2', {}, _('Runtime — тест сервисов')),
 			E('p', { 'class':'pb-muted' }, _('Проверка туннеля: страна и провайдер выхода, доступность 12 сервисов и их регионы, скорость, признаки блокировок ТСПУ. Маршрут — это через что идёт проверка: секция Podkop, транспортный, WARP или ручной прокси.')),
-			E('p', { 'style':'color:#c60;font-size:90%;margin-top:-.4em;' }, _('⚠ Полная проверка идёт 15–60 секунд и нагружает роутер (параллельные запросы + загрузка до 8 МиБ через туннель). Быстрая кнопка Telegram API проверяет только реальный getMe и почти не создаёт трафика.')),
+			E('p', { 'style':'color:#c60;font-size:90%;margin-top:-.4em;' }, _('⚠ Полная проверка идёт 15–60 секунд и нагружает роутер (параллельные запросы + загрузка до 8 МиБ через туннель). Быстрая кнопка Telegram API проверяет только реальный getMe и почти не создаёт трафика. «Следующий WARP» только меняет WARP endpoint из готового shortlist и делает быструю проверку Telegram; полный тест запускается отдельно.')),
 			selectorRow,
-			E('div', { 'style':'margin:.6em 0;display:flex;gap:.5em;flex-wrap:wrap;align-items:center;' }, [ runBtn, batchBtn, cpToggle, tgBtn ]),
+			E('div', { 'style':'margin:.6em 0;display:flex;gap:.5em;flex-wrap:wrap;align-items:center;' }, [ runBtn, batchBtn, cpToggle, tgBtn, warpNextBtn ]),
 			cpForm,
 			tgBody,
 			body,
@@ -226,6 +232,37 @@ return view.extend({
 			this.selectedProxyLabel = '';
 			this.selectedSection = (v.indexOf('sec:') === 0) ? v.slice(4) : v;
 		}
+	},
+
+	nextWarpTestRoute: function() {
+		var self=this, items=(this.warpShortlist&&this.warpShortlist.items)||[];
+		if(items.length<2){ ui.addNotification(null,E('p',{},_('В shortlist нет следующего WARP endpoint.')),'info'); return; }
+		var current=this.warpStatus&&this.warpStatus.config&&this.warpStatus.config.active_endpoint||'', idx=-1;
+		items.some(function(x,i){if(x.endpoint===current){idx=i;return true;}return false;});
+		var next=items[(idx+1+items.length)%items.length], ep=next&&next.endpoint;
+		if(!ep){ ui.addNotification(null,E('p',{},_('Не удалось выбрать следующий WARP endpoint.')),'error'); return; }
+		if(this.warpNextBtn)this.warpNextBtn.disabled=true;
+		dom.content(this.tgBody,E('div',{},dot('grey',_('Переключаю WARP на следующий endpoint: ')+ep)));
+		var stop=(this.warpRuntime&&this.warpRuntime.running)?callWarpRtStop():Promise.resolve({ok:true});
+		return stop.then(function(){return callWarpConfigSet('active_endpoint',ep);}).then(function(r){
+			if(!r||!r.ok)throw new Error((r&&r.reason)||'config_set_failed');
+			return callWarpRtStart();
+		}).then(function(r){
+			if(!r||!r.ok)throw new Error((r&&r.reason)||'warp_start_failed');
+			return callWarpRtStatus();
+		}).then(function(rt){
+			self.warpRuntime=rt;
+			if(self.warpStatus&&self.warpStatus.config)self.warpStatus.config.active_endpoint=ep;
+			var proxy=(rt&&rt.proxy)||'socks5h://127.0.0.1:18191';
+			var label=_('WARP Rescue · WARPSCOUT · test route')+' — '+proxy;
+			self.selectedProxy=proxy; self.selectedProxyLabel=label; self.selectedSection='';
+			if(self.targetSelect){
+				for(var i=0;i<self.targetSelect.options.length;i++)if(self.targetSelect.options[i].value==='proxy:'+proxy){self.targetSelect.selectedIndex=i;break;}
+			}
+			return callTransportProbe(proxy).then(function(d){dom.content(self.tgBody,self.renderTelegramProbe(d,label+' · '+ep));});
+		}).catch(function(e){
+			dom.content(self.tgBody,E('div',{},dot('red',_('Не удалось переключить WARP: ')+((e&&e.message)||'?'))));
+		}).finally(function(){if(self.warpNextBtn)self.warpNextBtn.disabled=false;});
 	},
 
 	runTelegramProbe: function() {

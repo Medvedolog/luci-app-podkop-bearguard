@@ -72,6 +72,12 @@ sh -n "$BOT"
 grep -Fq 'PODKOP_TRANSPORT_PATCH_V2' "$BOT" || { echo "transport patch missing from staged bot" >&2; exit 1; }
 grep -Fq 'action=hold_direct' "$BOT" || { echo "POLL direct-demotion guard missing from staged bot" >&2; exit 1; }
 grep -Fq 'ROUTE_KEY="warp_rescue"' "$BOT" || { echo "WARP Rescue runtime tier missing from staged bot" >&2; exit 1; }
+# vendor.sha256 describes the payload that is actually installed.  The source
+# tree still verifies its pristine standalone blob in check-sources.sh.
+(
+    cd "$OUT/root/usr/lib/podkop_bot"
+    sha256sum podkop_bot > vendor.sha256
+)
 
 for f in \
     usr/libexec/rpcd/podkop_bot \

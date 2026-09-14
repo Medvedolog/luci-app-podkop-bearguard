@@ -32,21 +32,41 @@ jobs:
         with:
           version: v0.5.1
 
+      - uses: owfeed/owlab/setup@v0.6.5
+        with:
+          version: v0.6.5
+
       - name: Reproducible package timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
-      - run: ./tools/stage.sh
+      - name: Stage LuCI package
+        run: ./tools/stage.sh
       - run: owfeed plan
       - run: owfeed check
       - run: owfeed build
       - run: sh tools/check-package.sh
 
+      - name: Build native hwelp-proxy with OpenWrt SDKs
+        working-directory: hwelp-proxy
+        run: owlab build
+
+      - name: Merge native artifacts into artifact contract
+        run: |
+          set -eu
+          for d in hwelp-proxy/dist/*; do
+            [ -d "$d" ] || continue
+            arch=$(basename "$d")
+            mkdir -p "dist/$arch"
+            cp -a "$d"/. "dist/$arch/"
+          done
+          find dist -maxdepth 2 -type f -print | sort
+          test -n "$(find dist/aarch64_cortex-a53 -maxdepth 1 -type f -name 'hwelp-proxy*' -print -quit)"
+          test -n "$(find dist/x86_64 -maxdepth 1 -type f -name 'hwelp-proxy*' -print -quit)"
+
       - uses: actions/upload-artifact@v7
         with:
           name: owfeed-packages
-          path: |
-            dist/noarch
-            dist/all
+          path: dist/
           if-no-files-found: error
 
   verify:
@@ -60,14 +80,11 @@ jobs:
           name: owfeed-packages
           path: dist/
 
-      # Bootstrap contract: these clean userspaces intentionally do not install
-      # Bearhole's optional socket/struct/uloop engine modules. The management
-      # package must still install and LuCI must stay usable; runtime activation
-      # is fail-closed by rpcd/init until the engine is available.
+      # The noarch management package must install without the native engine.
       - name: OpenWrt 25.12 APKv3
-        uses: owfeed/owlab/action@v0.6.1
+        uses: owfeed/owlab/action@v0.6.5
         with:
-          version: v0.6.1
+          version: v0.6.5
           releases: "25.12.5"
           install: dist/noarch/luci-app-podkop-bot-*.apk
           assert: |
@@ -76,7 +93,6 @@ jobs:
             file /usr/libexec/rpcd/podkop_bot_bearhole
             file /usr/lib/podkop_bot/install.sh
             file /usr/lib/podkop_bot/bearhole.sh
-            file /usr/bin/podkop-bearhole-proxy
             file /etc/init.d/podkop-bearhole
             file /etc/config/podkop_bearhole
             file /usr/lib/podkop_bot/vendor.sha256
@@ -84,15 +100,10 @@ jobs:
             file /usr/share/rpcd/acl.d/luci-app-podkop-bot.json
             file /www/luci-static/resources/view/podkop-bot/overview.js
             file /www/luci-static/resources/view/podkop-bot/runtime-async.js
-            file /www/luci-static/resources/view/podkop-bot/transport.js
             file /www/luci-static/resources/view/podkop-bot/transport-ux.js
             file /www/luci-static/resources/view/podkop-bot/bearhole.js
-            exec test -x /usr/libexec/rpcd/podkop_bot
-            exec test -x /usr/libexec/rpcd/podkop_bot_bearhole
-            exec test -x /usr/lib/podkop_bot/install.sh
-            exec test -x /usr/lib/podkop_bot/bearhole.sh
-            exec test -x /usr/bin/podkop-bearhole-proxy
-            exec test -x /etc/init.d/podkop-bearhole
+            exec test ! -e /usr/bin/podkop-bearhole-proxy
+            exec test ! -e /usr/bin/hwelp-proxy
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
             http 200 /cgi-bin/luci/admin/services/podkop-bot/settings/wizard
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
@@ -101,9 +112,9 @@ jobs:
             http 200 /cgi-bin/luci/admin/services/podkop-bot/update
 
       - name: OpenWrt 24.10 IPK
-        uses: owfeed/owlab/action@v0.6.1
+        uses: owfeed/owlab/action@v0.6.5
         with:
-          version: v0.6.1
+          version: v0.6.5
           releases: "24.10.8"
           install: dist/all/luci-app-podkop-bot_*.ipk
           assert: |
@@ -112,7 +123,6 @@ jobs:
             file /usr/libexec/rpcd/podkop_bot_bearhole
             file /usr/lib/podkop_bot/install.sh
             file /usr/lib/podkop_bot/bearhole.sh
-            file /usr/bin/podkop-bearhole-proxy
             file /etc/init.d/podkop-bearhole
             file /etc/config/podkop_bearhole
             file /usr/lib/podkop_bot/vendor.sha256
@@ -120,15 +130,10 @@ jobs:
             file /usr/share/rpcd/acl.d/luci-app-podkop-bot.json
             file /www/luci-static/resources/view/podkop-bot/overview.js
             file /www/luci-static/resources/view/podkop-bot/runtime-async.js
-            file /www/luci-static/resources/view/podkop-bot/transport.js
             file /www/luci-static/resources/view/podkop-bot/transport-ux.js
             file /www/luci-static/resources/view/podkop-bot/bearhole.js
-            exec test -x /usr/libexec/rpcd/podkop_bot
-            exec test -x /usr/libexec/rpcd/podkop_bot_bearhole
-            exec test -x /usr/lib/podkop_bot/install.sh
-            exec test -x /usr/lib/podkop_bot/bearhole.sh
-            exec test -x /usr/bin/podkop-bearhole-proxy
-            exec test -x /etc/init.d/podkop-bearhole
+            exec test ! -e /usr/bin/podkop-bearhole-proxy
+            exec test ! -e /usr/bin/hwelp-proxy
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
             http 200 /cgi-bin/luci/admin/services/podkop-bot/settings/wizard
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
@@ -136,20 +141,26 @@ jobs:
             http 200 /cgi-bin/luci/admin/services/podkop-bot/runtime/services
             http 200 /cgi-bin/luci/admin/services/podkop-bot/update
 
-      - name: OpenWrt 24.10 HWELP proxy runtime smoke
-        uses: owfeed/owlab/action@v0.6.1
+      - name: OpenWrt 24.10 native HWELP runtime smoke
+        uses: owfeed/owlab/action@v0.6.5
         with:
-          version: v0.6.1
+          version: v0.6.5
           releases: "24.10.8"
-          install: dist/all/luci-app-podkop-bot_*.ipk
+          install: |
+            dist/all/luci-app-podkop-bot_*.ipk
+            dist/x86_64/hwelp-proxy_*.ipk
           assert: |
-            exec opkg update >/dev/null
-            exec opkg install ucode-mod-socket ucode-mod-struct ucode-mod-uloop >/dev/null
-            exec /usr/bin/ucode /usr/bin/podkop-bearhole-proxy --check
+            package luci-app-podkop-bot
+            package hwelp-proxy
+            exec /usr/bin/hwelp-proxy --check
+            exec /usr/bin/hwelp-proxy --version | grep -q '^hwelp-proxy '
             exec /etc/init.d/rpcd restart; sleep 2
             exec ubus call podkop_bot_bearhole start '{}' | jq -e '.ok == true' >/dev/null
-            exec i=0; while [ "$i" -lt 120 ]; do s="$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null || true)"; printf '%s' "$s" | jq -e '.state == "ready" and .running == true' >/dev/null 2>&1 && break; printf '%s' "$s" | jq -e '.state == "failed"' >/dev/null 2>&1 && exit 1; sleep 1; i=$((i+1)); done; [ "$i" -lt 120 ]
+            exec i=0; while [ "$i" -lt 120 ]; do s="$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null || true)"; printf '%s' "$s" | jq -e '.state == "ready" and .running == true and .hwelp_installed == true' >/dev/null 2>&1 && break; printf '%s' "$s" | jq -e '.state == "failed"' >/dev/null 2>&1 && { printf '%s\n' "$s"; exit 1; }; sleep 1; i=$((i+1)); done; [ "$i" -lt 120 ]
             exec curl -q -4 -fsS --proxy http://127.0.0.1:1066 --connect-timeout 5 --max-time 15 https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt >/dev/null
+            exec ubus call podkop_bot_bearhole set_port '{"port":1067}' | jq -e '.ok == true' >/dev/null
+            exec i=0; while [ "$i" -lt 120 ]; do s="$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null || true)"; printf '%s' "$s" | jq -e '.state == "ready" and .running == true and .port == 1067' >/dev/null 2>&1 && break; printf '%s' "$s" | jq -e '.state == "failed"' >/dev/null 2>&1 && { printf '%s\n' "$s"; exit 1; }; sleep 1; i=$((i+1)); done; [ "$i" -lt 120 ]
+            exec curl -q -4 -fsS --proxy http://127.0.0.1:1067 --connect-timeout 5 --max-time 15 https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt >/dev/null
             exec ubus call podkop_bot_bearhole set_enabled '{"enabled":false}' | jq -e '.ok == true' >/dev/null
             exec test ! -e /etc/profile.d/99-podkop-bearhole.sh
 

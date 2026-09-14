@@ -5,8 +5,6 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${OUT:-$ROOT/dist}"
 
-# Release tags are authoritative. Branch/PR CI uses the checked-in app version
-# so a release-preparation commit can be tested before its tag exists.
 if [ "$#" -gt 0 ]; then
     VERSION="$1"
 elif [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
@@ -38,13 +36,9 @@ done
 rm -rf "$OUT/root" "$OUT/scripts"
 mkdir -p "$OUT/root" "$OUT/scripts"
 printf '%s\n' "$PKG_VERSION" > "$OUT/VERSION"
-
-# root/ is already laid out as an OpenWrt root filesystem.
 cp -a "$ROOT/root/." "$OUT/root/"
 
-# The old ucode proxy was bundled in early Bearhole development builds. Native
-# hwelp-proxy is now an independent architecture-specific package installed on
-# demand, so never ship the legacy helper inside the noarch LuCI package.
+# Native hwelp-proxy is an independent architecture-specific package.
 rm -f "$OUT/root/usr/bin/podkop-bearhole-proxy"
 
 RPCD="$OUT/root/usr/libexec/rpcd/podkop_bot"
@@ -52,6 +46,21 @@ RPCD="$OUT/root/usr/libexec/rpcd/podkop_bot"
 sed -i "s/^LUCI_APP_VERSION=\"[^\"]*\"/LUCI_APP_VERSION=\"$BASE_VERSION\"/" "$RPCD"
 RPC_VERSION="$(sed -n 's/^LUCI_APP_VERSION="\([^"]*\)".*/\1/p' "$RPCD" | head -n1)"
 [ "$RPC_VERSION" = "$BASE_VERSION" ] || { echo "failed to synchronize staged rpcd version" >&2; exit 1; }
+
+# The update backend was written when Bearhole used a fixed 1066 gateway. Keep
+# source compatibility for now, but make the installed payload read the validated
+# UCI port so changing HWELP's port also affects curl/apk/opkg update subprocesses.
+python3 - "$RPCD" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = '_bh_gateway="http://127.0.0.1:1066"'
+new = '_bh_gateway="http://127.0.0.1:$(uci -q get podkop_bearhole.main.port 2>/dev/null || printf 1066)"'
+count = s.count(old)
+if count != 2:
+    raise SystemExit(f'expected 2 fixed Bearhole gateways in rpcd, found {count}')
+p.write_text(s.replace(old, new))
+PY
 
 for f in \
     usr/libexec/rpcd/podkop_bot \

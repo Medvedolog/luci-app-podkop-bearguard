@@ -32,7 +32,9 @@ packages:
     files: ./dist/root
 
     description: "LuCI web interface for installing, configuring and diagnosing the podkop_bot Telegram management service on OpenWrt."
-    depends: [libc, luci-base, jq, curl]
+    depends: [libc, luci-base, jq, curl, ucode, ucode-mod-fs, ucode-mod-socket, ucode-mod-struct, ucode-mod-uloop]
+    conffiles:
+      - /etc/config/podkop_bearhole
     license: GPL-2.0-or-later
     url: https://github.com/Medvedolog/luci-app-podkop-bot
     maintainer: "Medvedolog <Medvedolog@github.com>"

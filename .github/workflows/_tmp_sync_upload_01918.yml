@@ -1,0 +1,38 @@
+name: tmp-sync-0.19.18-upload-fix
+on:
+  push:
+    branches: [dev/0.19.18-bearhole-mvp]
+permissions:
+  contents: write
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev/0.19.18-bearhole-mvp
+          fetch-depth: 0
+      - name: Sync fixed standalone bot
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/Medvedolog/podkop_bot/bb745c1d5ce0cb606b16dd52e1d48a48ca579648/podkop_bot.sh -o root/usr/lib/podkop_bot/podkop_bot
+          chmod 0755 root/usr/lib/podkop_bot/podkop_bot
+          (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
+          sed -i 's/^PKG_RELEASE:=32$/PKG_RELEASE:=33/' Makefile
+          sh -n root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'Имя файла может быть любым' root/usr/lib/podkop_bot/podkop_bot
+          ! grep -Fq 'podkop_bot*.sh|podkop_bot' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'PKG_RELEASE:=33' Makefile
+          git diff --check
+      - name: Commit and clean one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/_tmp_sync_upload_01918.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/vendor.sha256 Makefile .github/workflows/_tmp_sync_upload_01918.yml
+          git commit -m 'fix(bot): accept manual script upload regardless of filename'
+          git push origin HEAD:dev/0.19.18-bearhole-mvp

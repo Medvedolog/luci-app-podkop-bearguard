@@ -6,9 +6,11 @@ Updated: 2026-09-14
 
 - Repository: `Medvedolog/luci-app-podkop-bot`
 - Development branch: `dev/0.19.18-warpscout-luci`
-- Current package version: `0.19.18-r14`
-- Current r14 commit: `abf6ab5a8b085806bf87a5aef709da4cb52e677f`
-- CI: GitHub Actions run `#173`, success
+- Current package version: **`0.19.18-r17`**
+- Current branch head before this docs refresh: `f9bc51960bf9cb6d5759228981463b5f720b35ae`
+- Latest validated package CI: GitHub Actions run `34822264197`, run number `#196`, success
+- Artifact: `owfeed-packages`, id `10338378001`, digest `sha256:910eed092bf8f0c0af16728c5571eedca2e11df17154df0b6d083bee9826ec55`
+- Package names: `luci-app-podkop-bot_0.19.18-r17_all.ipk` and `luci-app-podkop-bot-0.19.18-r17.apk`
 - Do **not** merge to `main`, create a tag, or publish a release without an explicit user command.
 
 ## Current product model
@@ -45,7 +47,30 @@ Hidden manual/test runtime:
 
 - PID file: `/tmp/podkop_bot/warpscout_socks.pid`
 
-Manual WARP checks must not silently test a different exit from the one shown to the operator. If Rescue needs to be paused for a hidden-runtime operation, the exact previous endpoint/state should be restored on success or error. This exact-restore guarantee still needs backend hardening/router verification; do not overclaim it in UI/docs.
+Manual WARP checks must not silently test a different exit from the one shown to the operator. If Rescue needs to be paused for a hidden-runtime operation, the exact previous endpoint/state should be restored on success or error.
+
+Since r16, long WARP/manual route probes run in a detached backend worker and request server-side runtime cleanup/restore when the worker exits. This removes the browser/XHR from the critical restore path, but router-level validation under browser/network loss is still required before claiming the recovery path fully proven.
+
+## Long diagnostics / XHR model
+
+All heavy route/service diagnostics use the same detached pattern:
+
+`start → background worker → short status polling → result`
+
+This covers:
+
+- Podkop/Forkop section checks;
+- configured transport proxies;
+- manual proxies;
+- WARP route checks;
+- batch `Проверить все маршруты`;
+- Overview full Outbound test.
+
+A lost XHR/browser tab no longer terminates the actual heavy probe. The router continues the worker and LuCI can resume polling/read the result.
+
+The Podkop/Forkop update path was also hardened in r16: network preflight/download/install startup is launched detached, with LuCI polling logs/status instead of holding one long update XHR.
+
+Remaining synchronous calls are intended to stay bounded: one-shot transport probe, token/version checks, and `ensure_mixed_proxy`.
 
 ## Telegram transport model
 
@@ -58,6 +83,29 @@ Normal transport order remains conceptually:
 The last working route is sticky and is tried first. Degraded Direct/Emergency paths periodically re-probe higher-priority SOCKS routes and recover upward when available.
 
 WARP Rescue is **not yet** wired as an automatic final POLL/FAST failover stage. Current WARP work is qualification, Rescue control, Revolver and diagnostics.
+
+## Bot state-machine regression fixed in r17
+
+Observed on router/Telegram: while the bot was waiting for a pending text value such as `wait_admin_id`, pressing the persistent keyboard button `📊 Статус` produced “Некорректный ID” because the reply-button command was consumed by `STATE_INPUT` and validated as the pending ID.
+
+Fix:
+
+- `cmd_status` now has priority over pending text input;
+- pending `STATE_FILE` is cleared;
+- the normal Status handler runs instead of the pending-value validator.
+
+Standalone source of truth for this fix:
+
+- Repository: `Medvedolog/podkop_bot`
+- Branch: `dev/0.19.17-security-hardening`
+- Commit: `f623692915ea6c134155df727551225228282625`
+- Commit message: `fix(bot): let Status escape pending input state`
+
+LuCI vendored copy was synchronized afterwards. Current vendored checksum:
+
+`0926d9797dcb951e286080c2ede09548cf2781b860e1df8a570e578f41182a8b  podkop_bot`
+
+Keep the standalone and vendored bot synchronized when modifying bot logic.
 
 ## Completed in the current development line
 
@@ -92,8 +140,15 @@ WARP Rescue is **not yet** wired as an automatic final POLL/FAST failover stage.
 - Russian wording pass completed across major WARPSCOUT/Revolver/Runtime/Transport/Overview/Help/Update surfaces.
 - Protocol/API/product names remain English where appropriate: WARP, SOCKS, HTTP, Telegram Bot API, AWG, MASQUE.
 - Machine-status badges remain `VALID`, `FAIL`, `POLL`, `FAST`, `ON-AIR`.
-- WARPSCOUT settings now have explanatory tooltips for main fields/actions.
+- WARPSCOUT settings have explanatory tooltips for main fields/actions.
 - All-routes check warns that many routes may take up to about 90 seconds and load the router.
+
+### Reliability / long operations
+
+- Long route/service probes detached from browser XHR.
+- Runtime, Overview, manual proxy, Podkop/Forkop section and WARP checks use one shared async worker model.
+- WARP probe worker requests server-side cleanup/Rescue restore on exit.
+- Podkop/Forkop update preflight/download path detached from the LuCI XHR.
 
 ## Important files
 
@@ -102,10 +157,21 @@ LuCI views:
 - `root/www/luci-static/resources/view/podkop-bot/warpscout.js`
 - `root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js`
 - `root/www/luci-static/resources/view/podkop-bot/runtime.js`
+- `root/www/luci-static/resources/view/podkop-bot/runtime-async.js`
 - `root/www/luci-static/resources/view/podkop-bot/transport.js`
 - `root/www/luci-static/resources/view/podkop-bot/overview.js`
+- `root/www/luci-static/resources/view/podkop-bot/overview-async.js`
 - `root/www/luci-static/resources/view/podkop-bot/help.js`
 - `root/www/luci-static/resources/view/podkop-bot/update.js`
+- `root/www/luci-static/resources/view/podkop-bot/update-async.js`
+
+Core / workers:
+
+- `root/usr/lib/podkop_bot/podkop_bot`
+- `root/usr/lib/podkop_bot/vendor.sha256`
+- `root/usr/libexec/rpcd/podkop_bot`
+- `root/usr/libexec/rpcd/podkop_bot_probe`
+- `root/usr/libexec/rpcd/podkop_bot_update_async`
 
 WARPSCOUT rpcd backends:
 
@@ -116,53 +182,71 @@ WARPSCOUT rpcd backends:
 
 Project docs:
 
-- `CHANGELOG.md` — historical release changelog
+- `CHANGELOG.md` — historical/release changelog
 - `CHANGELOG_DEV.md` — current 0.19.18 development changelog
 - `TODO.md` — prioritized remaining work
 - `HANDOFF.md` — this file
 
 ## Recent commits of interest
 
+WARPSCOUT / UI line:
+
 - `e5248156` — harden Telegram qualification result/plan parsing
 - `06b2c050` — Stop WARP empties magazine
 - `dca94cb2` — Runtime TG lifecycle / preserve valid results / already-running handling
 - `a3b631e2` — remove duplicate revolver button
-- `15630495` — r11
-- `b7370c91` — menu rename pass
-- `532a905a` — r12
 - `5907831a` — WARPSCOUT Russian wording
 - `a7effe43` — Runtime wording + all-routes warning
 - `9d497b7b` — Revolver wording
-- `216dd639` — r13
 - `749e3eec` — WARPSCOUT tooltips
 - `cf65f5ee` — Proxy chain wording cleanup
 - `1d9762be` — Overview wording cleanup
 - `88fc8ab3` — Help wording/navigation cleanup
 - `d9ef4913` — Update-page wording cleanup
-- `abf6ab5a` — r14
+- `abf6ab5a` — r14 baseline
 
-## Latest known build
+Long-operation hardening:
+
+- `9bd913a2` — detached active-probe worker
+- `165b6954` — async Runtime route/proxy/WARP probes
+- `b31cf693` — async Overview Outbound probe
+- `20d78e94` / `dc6f729e` — detached Podkop/Forkop update launcher
+- `b75ab2cb` — async Update UI
+- `5f6b5744` — r16 package revision
+
+Bot state fix / r17:
+
+- standalone `f6236929` — Status escapes pending input state
+- LuCI `cd6ceac8` — synchronize vendored bot state fix
+- LuCI `df7d27b1` — bump package revision to r17
+- LuCI `f9bc5196` — refresh vendored bot checksum
+
+## Latest validated build
 
 GitHub Actions:
 
-- Run: `34790095744`
-- Run number: `#173`
+- Run: `34822264197`
+- Run number: `#196`
 - Result: success
+- Source checks: success
+- Native OpenWrt package build: success
+- OpenWrt 25.12 APKv3 install test: success
+- OpenWrt 24.10 IPK install test: success
 - Artifact: `owfeed-packages`
-- Artifact id: `10327676412`
-- Artifact digest: `sha256:62a3fb52f631075781b7e63d8fa066623e4c9603e06a6dd313ae78977d7e0bda`
+- Artifact id: `10338378001`
+- Artifact digest: `sha256:910eed092bf8f0c0af16728c5571eedca2e11df17154df0b6d083bee9826ec55`
 
-Expected package names inside the artifact:
+Package names:
 
-- `luci-app-podkop-bot_0.19.18-r14_all.ipk`
-- `luci-app-podkop-bot-0.19.18-r14.apk`
+- `luci-app-podkop-bot_0.19.18-r17_all.ipk`
+- `luci-app-podkop-bot-0.19.18-r17.apk`
 
 ## Known P0 risks
 
-See `TODO.md` for the full list. The release-blocking items are currently:
+See `TODO.md` for the full list. Release-blocking/high-risk items still include:
 
 - router validation of TG qualification parser/lifecycle fixes;
-- exact Rescue endpoint restoration around hidden/manual tests;
+- router validation that detached WARP/manual probe failure always restores the exact previous Rescue endpoint/state;
 - persistent per-endpoint TG status in WARPSCOUT shortlist;
 - resolving Overview metadata from the actual Rescue endpoint;
 - Stop/Reload/FIRE hardware verification;
@@ -181,5 +265,6 @@ See `TODO.md` for the full list. The release-blocking items are currently:
 - Keep machine/syslog messages from `podkop-bot` / `podkop-bot-rpcd` English and machine-readable; do not log localized route display names as authoritative state.
 - Keep vendored bot and standalone bot synchronized when bot code is intentionally updated.
 - Do not re-use `PKG_RELEASE` for a new router-testable change; bump revision for each new test slice.
+- Documentation-only commits do **not** require a package revision bump.
 - Do not create release/tag or merge to main without an explicit user command.
 - Prefer one clear operator action over multiple confirmation ceremonies; destructive actions should use one meaningful confirmation plus automatic preflight where applicable.

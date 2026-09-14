@@ -16,14 +16,27 @@ done
 
 for f in \
     root/usr/libexec/rpcd/podkop_bot \
+    root/usr/libexec/rpcd/podkop_bot_bearhole \
     root/usr/lib/podkop_bot/install.sh \
     root/usr/lib/podkop_bot/podkop_bot \
     root/usr/lib/podkop_bot/podkop_bot_init \
+    root/usr/lib/podkop_bot/bearhole.sh \
+    root/etc/init.d/podkop-bearhole \
     scripts/postinst scripts/postrm tools/*.sh
 do
     [ -f "$f" ] || continue
     if sh -n "$f" 2>/tmp/pb-sherr; then echo "ok    sh -n $f"; else echo "FAIL  sh -n $f"; cat /tmp/pb-sherr; fail=1; fi
 done
+
+# Bearhole's gateway is ucode rather than shell. Host CI does not ship the
+# OpenWrt ucode runtime, so assert the source-level contracts here; owl/owfeed
+# installation tests cover the declared ucode runtime dependencies.
+BEAR_PROXY="root/usr/bin/podkop-bearhole-proxy"
+[ -f "$BEAR_PROXY" ] || { echo "FAIL  Bearhole gateway missing"; fail=1; }
+grep -Fq '#!/usr/bin/env ucode' "$BEAR_PROXY" || { echo "FAIL  Bearhole gateway shebang"; fail=1; }
+grep -Fq 'const CONNECT_TIMEOUT = 5000;' "$BEAR_PROXY" || { echo "FAIL  Bearhole upstream connect timeout missing"; fail=1; }
+grep -Fq 'socket.connect(host, port, { socktype: socket.SOCK_STREAM }, CONNECT_TIMEOUT)' "$BEAR_PROXY" || { echo "FAIL  Bearhole bounded connect helper missing"; fail=1; }
+grep -Fq "object:'podkop_bot_bearhole'" root/www/luci-static/resources/view/podkop-bot/transport.js || { echo "FAIL  Bearhole transport integration missing"; fail=1; }
 
 # Vendored bot is an integrity contract, not merely documentation.
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
@@ -46,6 +59,7 @@ import pathlib, re, sys
 files = [
     pathlib.Path('root/usr/lib/podkop_bot/podkop_bot'),
     pathlib.Path('root/usr/libexec/rpcd/podkop_bot'),
+    pathlib.Path('root/usr/lib/podkop_bot/bearhole.sh'),
 ]
 forbidden_vars = (
     'ROUTE_NAME', 'LAST_ROUTE_NAME', 'LAST_ROUTE_FAST_NAME',

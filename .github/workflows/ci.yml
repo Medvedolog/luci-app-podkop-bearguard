@@ -68,14 +68,25 @@ jobs:
           assert: |
             package luci-app-podkop-bot
             file /usr/libexec/rpcd/podkop_bot
+            file /usr/libexec/rpcd/podkop_bot_bearhole
             file /usr/lib/podkop_bot/install.sh
+            file /usr/lib/podkop_bot/bearhole.sh
+            file /usr/bin/podkop-bearhole-proxy
+            file /etc/init.d/podkop-bearhole
+            file /etc/config/podkop_bearhole
             file /usr/lib/podkop_bot/vendor.sha256
             file /usr/share/luci/menu.d/luci-app-podkop-bot.json
             file /usr/share/rpcd/acl.d/luci-app-podkop-bot.json
             file /www/luci-static/resources/view/podkop-bot/overview.js
+            file /www/luci-static/resources/view/podkop-bot/transport.js
             exec test -x /usr/libexec/rpcd/podkop_bot
+            exec test -x /usr/libexec/rpcd/podkop_bot_bearhole
             exec test -x /usr/lib/podkop_bot/install.sh
+            exec test -x /usr/lib/podkop_bot/bearhole.sh
+            exec test -x /usr/bin/podkop-bearhole-proxy
+            exec test -x /etc/init.d/podkop-bearhole
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
 
       - name: OpenWrt 24.10 IPK
         uses: owfeed/owlab/action@v0.6.1
@@ -86,14 +97,25 @@ jobs:
           assert: |
             package luci-app-podkop-bot
             file /usr/libexec/rpcd/podkop_bot
+            file /usr/libexec/rpcd/podkop_bot_bearhole
             file /usr/lib/podkop_bot/install.sh
+            file /usr/lib/podkop_bot/bearhole.sh
+            file /usr/bin/podkop-bearhole-proxy
+            file /etc/init.d/podkop-bearhole
+            file /etc/config/podkop_bearhole
             file /usr/lib/podkop_bot/vendor.sha256
             file /usr/share/luci/menu.d/luci-app-podkop-bot.json
             file /usr/share/rpcd/acl.d/luci-app-podkop-bot.json
             file /www/luci-static/resources/view/podkop-bot/overview.js
+            file /www/luci-static/resources/view/podkop-bot/transport.js
             exec test -x /usr/libexec/rpcd/podkop_bot
+            exec test -x /usr/libexec/rpcd/podkop_bot_bearhole
             exec test -x /usr/lib/podkop_bot/install.sh
+            exec test -x /usr/lib/podkop_bot/bearhole.sh
+            exec test -x /usr/bin/podkop-bearhole-proxy
+            exec test -x /etc/init.d/podkop-bearhole
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
 
   release-preflight:
     name: Release signing preflight

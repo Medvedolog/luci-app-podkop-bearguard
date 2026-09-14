@@ -17,6 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sh tools/check-sources.sh
+      - run: sh tools/check-async-wrappers.sh
 
   build:
     name: Build native OpenWrt packages

@@ -292,7 +292,7 @@ case "$1" in
     call)
         case "$2" in
             status)
-                read -r _in 2>/dev/null || true
+                cat >/dev/null 2>&1 || true
                 _base=$("$CTL" status 2>/dev/null || printf '{"ok":false}')
                 _reason=$(engine_reason)
                 if [ -z "$_reason" ]; then _ready=true; else _ready=false; fi
@@ -301,11 +301,11 @@ case "$1" in
                     printf '{"ok":false,"engine_ready":%s,"engine_reason":%s}\n' "$_ready" "$(printf '%s' "$_reason" | jq -Rs .)"
                 ;;
             results)
-                read -r _in 2>/dev/null || true
+                cat >/dev/null 2>&1 || true
                 "$CTL" results
                 ;;
             start)
-                read -r _in 2>/dev/null || true
+                cat >/dev/null 2>&1 || true
                 if start_async; then
                     printf '{"ok":true,"started":true}\n'
                 else
@@ -314,7 +314,9 @@ case "$1" in
                 fi
                 ;;
             set_enabled)
-                read -r _in 2>/dev/null || _in='{}'
+                # rpcd may provide compact JSON without a trailing newline; `read` then
+                # returns non-zero despite assigning data. Consume stdin fully instead.
+                _in=$(cat 2>/dev/null); [ -n "$_in" ] || _in='{}'
                 _v=$(printf '%s' "$_in" | jq -r '.enabled // false' 2>/dev/null)
                 case "$_v" in
                     true|1)
@@ -330,7 +332,9 @@ case "$1" in
                 esac
                 ;;
             set_port)
-                read -r _in 2>/dev/null || _in='{}'
+                # rpcd may provide compact JSON without a trailing newline; `read` then
+                # returns non-zero despite assigning data. Consume stdin fully instead.
+                _in=$(cat 2>/dev/null); [ -n "$_in" ] || _in='{}'
                 _port=$(printf '%s' "$_in" | jq -r '.port // empty' 2>/dev/null)
                 if set_port "$_port"; then
                     _restarting=false; [ -d "$START_LOCK" ] && _restarting=true
@@ -340,7 +344,9 @@ case "$1" in
                 fi
                 ;;
             set_proxy)
-                read -r _in 2>/dev/null || _in='{}'
+                # rpcd may provide compact JSON without a trailing newline; `read` then
+                # returns non-zero despite assigning data. Consume stdin fully instead.
+                _in=$(cat 2>/dev/null); [ -n "$_in" ] || _in='{}'
                 if set_proxy "$_in"; then
                     _restarting=false; [ -d "$START_LOCK" ] && _restarting=true
                     printf '{"ok":true,"port":%s,"restarting":%s}\n' "$(hwelp_port)" "$_restarting"
@@ -350,7 +356,7 @@ case "$1" in
                 fi
                 ;;
             qualify_start)
-                read -r _in 2>/dev/null || true
+                cat >/dev/null 2>&1 || true
                 if ! engine_ready; then
                     printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
                 elif "$CTL" qualify-start; then printf '{"ok":true,"started":true}\n'; else
@@ -358,14 +364,16 @@ case "$1" in
                 fi
                 ;;
             refresh_routes)
-                read -r _in 2>/dev/null || true
+                cat >/dev/null 2>&1 || true
                 if "$CTL" bootstrap; then
                     /etc/init.d/podkop-bearhole reload >/dev/null 2>&1 || true
                     printf '{"ok":true}\n'
                 else printf '{"ok":false,"reason":"no_routes"}\n'; fi
                 ;;
             log)
-                read -r _in 2>/dev/null || _in='{}'
+                # rpcd may provide compact JSON without a trailing newline; `read` then
+                # returns non-zero despite assigning data. Consume stdin fully instead.
+                _in=$(cat 2>/dev/null); [ -n "$_in" ] || _in='{}'
                 _off=$(printf '%s' "$_in" | jq -r '.offset // 0' 2>/dev/null); case "$_off" in ''|*[!0-9]*) _off=0;; esac
                 if [ ! -f "$LOG" ]; then printf '{"ok":true,"offset":0,"chunk":""}\n'; exit 0; fi
                 _size=$(wc -c < "$LOG" 2>/dev/null | tr -d ' '); [ -n "$_size" ] || _size=0

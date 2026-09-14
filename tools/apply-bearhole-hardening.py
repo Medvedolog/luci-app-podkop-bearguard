@@ -1,0 +1,498 @@
+from pathlib import Path
+import re
+
+
+def sub_once(path, pattern, repl, flags=0):
+    p = Path(path)
+    s = p.read_text()
+    out, n = re.subn(pattern, lambda m: repl, s, count=1, flags=flags)
+    if n != 1:
+        raise SystemExit(f"{path}: expected one replacement, got {n} for {pattern[:80]!r}")
+    p.write_text(out)
+
+
+def rep_once(path, old, new):
+    p = Path(path)
+    s = p.read_text()
+    if s.count(old) != 1:
+        raise SystemExit(f"{path}: expected one exact anchor, got {s.count(old)}")
+    p.write_text(s.replace(old, new, 1))
+
+
+# Native proxy: bear kaomoji requested by operator.
+p = Path("hwelp-proxy/src/hwelp-proxy.c")
+s = p.read_text()
+s = s.replace("(^..^) hwelp proxy starting", "ʕ•ᴥ•ʔ hwelp proxy starting")
+s = s.replace("(^..^) hwelp proxy ready to help", "ʕ•ᴥ•ʔ hwelp proxy ready to help")
+p.write_text(s)
+
+# procd: named HWELP instance, unlimited respawn, one-shot safe activation,
+# and a guardian that removes the global proxy if HWELP stays down.
+init = "root/etc/init.d/podkop-bearhole"
+rep_once(
+    init,
+    '''    if ! "$BH_CTL" bootstrap >/dev/null 2>&1; then
+        logger -t podkop-bearhole 'event=no_routes action=start_skipped' 2>/dev/null || true
+        return 0
+    fi
+''',
+    '''    if ! "$BH_CTL" bootstrap >/dev/null 2>&1; then
+        logger -t podkop-bearhole 'event=no_routes action=activation_will_fail_closed' 2>/dev/null || true
+        mkdir -p "${BH_ROUTES%/*}" 2>/dev/null
+        : > "$BH_ROUTES"
+        chmod 600 "$BH_ROUTES" 2>/dev/null || true
+    fi
+''',
+)
+rep_once(
+    init,
+    '''    procd_open_instance
+    if [ -f "$BH_AUTH" ]; then
+        procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES" -a "$BH_AUTH" -L "$BH_LOG"
+    else
+        procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES" -L "$BH_LOG"
+    fi
+    procd_set_param respawn 3600 5 5
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+''',
+    '''    procd_open_instance hwelp
+    if [ -f "$BH_AUTH" ]; then
+        procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES" -a "$BH_AUTH" -L "$BH_LOG"
+    else
+        procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES" -L "$BH_LOG"
+    fi
+    # Never permanently give up on the rescue gateway. The guardian below
+    # removes the system proxy if HWELP remains unavailable.
+    procd_set_param respawn 3600 5 0
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+
+    # Reboot/restart activation is deliberately separate from process
+    # ownership: qualify with the global proxy OFF, then enable it only
+    # after a VALID route and a real localhost gateway check.
+    procd_open_instance activation
+    procd_set_param command "$BH_CTL" activate
+    procd_close_instance
+
+    procd_open_instance guardian
+    procd_set_param command "$BH_CTL" guard
+    procd_set_param respawn 3600 5 0
+    procd_close_instance
+''',
+)
+
+bh = "root/usr/lib/podkop_bot/bearhole.sh"
+rep_once(
+    bh,
+    'BH_AUTH="$BH_DIR/hwelp.auth"\nBH_BEGIN=',
+    'BH_AUTH="$BH_DIR/hwelp.auth"\nBH_PKG_CALL=/usr/libexec/package-manager-call\nBH_BEGIN=',
+)
+rep_once(
+    bh,
+    '''bh_hwelp_ready(){ [ -x "$HWELP" ]&&"$HWELP" --check >/dev/null 2>&1; }
+bh_hwelp_version(){ [ -x "$HWELP" ]||return 0; "$HWELP" --version 2>/dev/null|awk '{print $2;exit}'; }
+''',
+    '''bh_hwelp_ready(){ [ -x "$HWELP" ]&&"$HWELP" --check >/dev/null 2>&1; }
+bh_hwelp_version(){ [ -x "$HWELP" ]||return 0; "$HWELP" --version 2>/dev/null|awk '{print $2;exit}'; }
+bh_hwelp_pid(){
+    _p=$(ubus call service list '{"name":"podkop-bearhole"}' 2>/dev/null | jq -r '.["podkop-bearhole"].instances.hwelp.pid // 0' 2>/dev/null | head -n1)
+    case "$_p" in ''|*[!0-9]*) _p=0;; esac
+    printf '%s' "$_p"
+}
+bh_hwelp_running(){ _p=$(bh_hwelp_pid); [ "$_p" -gt 0 ] 2>/dev/null && kill -0 "$_p" 2>/dev/null; }
+bh_system_applied(){ [ -f /etc/profile.d/99-podkop-bearhole.sh ]; }
+bh_hwelp_endpoint_supported(){ case "$1" in direct://|http://*|socks5://*|socks5h://*) return 0;; *) return 1;; esac; }
+''',
+)
+
+rep_once(
+    bh,
+    '''bh_curl(){ _ep=$1; shift; if [ "$_ep" = direct:// ]; then curl -q -4 -L -fsS --proxy '' --connect-timeout 5 --max-time 18 "$@"; else curl -q -4 -L -fsS --proxy "$_ep" --connect-timeout 5 --max-time 20 "$@"; fi; }
+bh_probe_small(){ rm -f "$3" 2>/dev/null; bh_curl "$1" --range 0-2047 -o "$3" "$2" >/dev/null 2>&1; }
+''',
+    '''bh_curl(){ _ep=$1; shift; if [ "$_ep" = direct:// ]; then curl -q -4 -L -fsS --proxy '' --connect-timeout 5 --max-time 18 "$@"; else curl -q -4 -L -fsS --proxy "$_ep" --connect-timeout 5 --max-time 20 "$@"; fi; }
+bh_probe_small(){ rm -f "$3" 2>/dev/null; bh_curl "$1" --range 0-2047 -o "$3" "$2" >/dev/null 2>&1; }
+# API JSON must be complete: range-truncating releases/latest can turn a
+# perfectly reachable API into a false "no assets" result.
+bh_probe_json(){ rm -f "$3" 2>/dev/null; bh_curl "$1" -H 'Accept: application/vnd.github+json' -o "$3" "$2" >/dev/null 2>&1; }
+''',
+)
+
+sub_once(
+    bh,
+    r"bh_probe_route\(\)\{\n.*?\n\}\n\nbh_select_valid_routes",
+    '''bh_probe_route(){
+    _id=$1; _label=$2; _ep=$3; _tmp="$BH_DIR/probe.$$.tmp"; _api="$BH_DIR/api.$$.json"
+    _core=fail; _raw=fail; _ghapi=fail; _codeload=fail; _asset=skip; _feeds=ok; _asset_host=''
+
+    # HWELP intentionally has no TLS client stack. Do not let curl's
+    # broader proxy support certify an upstream that HWELP cannot use.
+    if ! bh_hwelp_endpoint_supported "$_ep"; then
+        printf '%s|%s|%s|skip|skip|skip|skip|skip|skip|UNSUPPORTED|%s|\n' \
+            "$_id" "$_label" "$_ep" "$(date +%s 2>/dev/null||echo 0)"
+        return 0
+    fi
+
+    bh_probe_small "$_ep" 'https://github.com/' "$_tmp"&&_core=ok
+    bh_probe_small "$_ep" 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt' "$_tmp"&&_raw=ok
+    if bh_probe_json "$_ep" 'https://api.github.com/repos/Medvedolog/luci-app-podkop-bot/releases/latest' "$_api"; then
+        _ghapi=ok
+        _asset_url=$(jq -r '.assets[0].browser_download_url // empty' "$_api" 2>/dev/null)
+        if [ -n "$_asset_url" ]; then
+            _asset=fail
+            _asset_final=$(bh_curl "$_ep" --range 0-2047 -o "$_tmp" -w '%{url_effective}' "$_asset_url" 2>/dev/null) && {
+                _asset=ok
+                _asset_host=$(printf '%s' "$_asset_final" | sed -n 's#^[A-Za-z][A-Za-z0-9+.-]*://\([^/:]*\).*#\1#p')
+            }
+        fi
+    fi
+    bh_probe_small "$_ep" 'https://codeload.github.com/Medvedolog/luci-app-podkop-bot/tar.gz/refs/heads/main' "$_tmp"&&_codeload=ok
+    for _feed in $(bh_feed_targets); do bh_probe_small "$_ep" "$_feed" "$_tmp"||{ _feeds=fail; break; }; done
+    rm -f "$_tmp" "$_api" 2>/dev/null; _status=FAIL
+    if [ "$_core" = ok ]&&[ "$_raw" = ok ]&&[ "$_ghapi" = ok ]&&[ "$_codeload" = ok ]&&[ "$_feeds" = ok ]&&{ [ "$_asset" = ok ]||[ "$_asset" = skip ]; }; then
+        _status=VALID
+    elif [ "$_core" = ok ]||[ "$_raw" = ok ]||[ "$_feeds" = ok ]; then
+        _status=DEGRADED
+    fi
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$_id" "$_label" "$_ep" "$_core" "$_raw" "$_ghapi" "$_codeload" "$_asset" "$_feeds" "$_status" \
+        "$(date +%s 2>/dev/null||echo 0)" "$_asset_host"
+}
+
+bh_select_valid_routes''',
+    flags=re.S,
+)
+
+sub_once(
+    bh,
+    r"bh_qualify\(\)\{\n.*?\n\}\nbh_qualify_start\(\)\{[^\n]*\}\n",
+    '''bh_probe_registry(){
+    _tmp="$BH_RESULTS.$$"; : >"$_tmp"
+    while IFS='|' read -r _id _label _ep _type _prio; do
+        [ -n "$_id" ]||continue
+        bh_log "event=bearhole_probe_start route=$_id"
+        _line=$(bh_probe_route "$_id" "$_label" "$_ep")
+        printf '%s\n' "$_line" >>"$_tmp"
+        _res=$(printf '%s' "$_line"|awk -F'|' '{print $10}')
+        bh_log "event=bearhole_probe route=$_id profile=system result=$(printf '%s' "$_res"|tr '[:upper:]' '[:lower:]')"
+    done <"$BH_REGISTRY"
+    mv "$_tmp" "$BH_RESULTS"
+    chmod 600 "$BH_RESULTS" 2>/dev/null
+}
+
+bh_warp_cold_escalate(){
+    grep -q '^warp_rescue|' "$BH_REGISTRY" 2>/dev/null && return 1
+    _resp=$(ubus call podkop_bot_warpscout_rescue trigger '{}' 2>/dev/null || true)
+    printf '%s' "$_resp" | jq -e '.ok == true' >/dev/null 2>&1 || return 1
+    bh_log 'event=bearhole_warp stage=cold_trigger result=accepted'
+    _i=0
+    while [ "$_i" -lt 600 ]; do
+        _wr=$(ubus call podkop_bot_warpscout_rescue status '{}' 2>/dev/null || true)
+        [ "$(printf '%s' "$_wr"|jq -r '.running // false' 2>/dev/null)" = true ] && {
+            bh_log 'event=bearhole_warp stage=cold_trigger result=running'
+            return 0
+        }
+        _busy=$(printf '%s' "$_wr"|jq -r '.busy // false' 2>/dev/null)
+        [ "$_i" -gt 3 ] 2>/dev/null && [ "$_busy" != true ] && return 1
+        sleep 1; _i=$((_i+1))
+    done
+    return 1
+}
+
+bh_qualify(){
+    mkdir "$BH_LOCK" 2>/dev/null||return 1
+    printf '%s\n' "$$" >"$BH_PID"
+    trap 'rm -rf "$BH_LOCK" "$BH_PID" 2>/dev/null' EXIT INT TERM HUP
+    bh_state_write probing system_qualification
+    bh_registry||{ bh_state_write degraded no_routes; return 1; }
+    bh_probe_registry || return 1
+
+    # Only when every ordinary SYSTEM route failed do we cold-start the
+    # existing WARP Revolver, rebuild the registry and qualify again.
+    if ! awk -F'|' '$10=="VALID"{ok=1}END{exit(ok?0:1)}' "$BH_RESULTS" 2>/dev/null; then
+        if bh_warp_cold_escalate; then
+            bh_registry && bh_probe_registry
+        else
+            bh_log 'event=bearhole_warp stage=cold_trigger result=unavailable'
+        fi
+    fi
+
+    if bh_select_valid_routes; then
+        return 0
+    fi
+    # A manual recheck that loses every route must not leave global
+    # curl/wget/apk/opkg pointed at an empty/dead HWELP route set.
+    bh_system_applied && bh_system_off
+    return 1
+}
+bh_qualify_start(){ [ -d "$BH_LOCK" ]&&return 2; ( "$0" qualify >/dev/null 2>&1 ) & }
+
+bh_gateway_check(){
+    _gw=$(bh_gateway_auth) || return 1
+    curl -q -4 -L -fsS --proxy "$_gw" --connect-timeout 4 --max-time 12 \
+        -o /dev/null 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt' >/dev/null 2>&1
+}
+
+# Boot/restart activation: the service process may start early, but the
+# system-wide proxy remains OFF until SYSTEM qualification has succeeded.
+bh_activate(){
+    [ "$(bh_cfg_get enabled 0)" = 1 ] || return 0
+    bh_system_off
+    bh_state_write starting activation
+    bh_log 'event=bearhole_activation stage=bootstrap'
+    bh_write_bootstrap_routes || { bh_state_write failed no_routes; return 1; }
+
+    _i=0
+    while ! bh_hwelp_running && [ "$_i" -lt 30 ]; do sleep 1; _i=$((_i+1)); done
+    bh_hwelp_running || { bh_state_write failed gateway_start_failed; bh_log 'event=bearhole_activation result=fail reason=gateway_start_failed'; return 1; }
+
+    bh_log 'event=bearhole_activation stage=qualify'
+    if ! bh_qualify; then
+        bh_system_off
+        bh_state_write degraded no_usable_route
+        bh_log 'event=bearhole_activation result=fail reason=no_usable_route'
+        return 1
+    fi
+
+    bh_state_write starting system_proxy
+    if ! bh_system_on; then
+        bh_system_off
+        bh_state_write failed system_proxy_apply_failed
+        return 1
+    fi
+
+    bh_state_write verifying gateway_check
+    if ! bh_gateway_check; then
+        bh_system_off
+        bh_state_write failed gateway_check_failed
+        bh_log 'event=bearhole_activation result=fail reason=gateway_check_failed'
+        return 1
+    fi
+
+    bh_state_write ready gateway_verified
+    bh_log "event=bearhole_ready gateway=127.0.0.1:$(bh_port)"
+    return 0
+}
+
+# HWELP is respawned forever, but system tools must never be left on a
+# dead localhost proxy while it is crashing. Two consecutive misses
+# remove managed proxy settings; recovery re-runs full qualification.
+bh_guard(){
+    _miss=0
+    while [ "$(bh_cfg_get enabled 0)" = 1 ]; do
+        if bh_hwelp_running; then
+            _miss=0
+            bh_system_applied && bh_pkg_hook_ensure
+            _r=$(bh_state_get reason)
+            case "$_r" in
+                hwelp_not_running|gateway_start_failed)
+                    bh_log 'event=hwelp_guard action=recover'
+                    "$0" activate >/dev/null 2>&1 || true
+                    ;;
+            esac
+        else
+            if bh_system_applied; then
+                _miss=$((_miss+1))
+                if [ "$_miss" -ge 2 ]; then
+                    bh_system_off
+                    bh_state_write failed hwelp_not_running
+                    bh_log 'event=hwelp_guard action=system_off reason=hwelp_not_running'
+                    _miss=0
+                fi
+            fi
+        fi
+        sleep 5
+    done
+    return 0
+}
+''',
+    flags=re.S,
+)
+
+anchor = '''bh_append_block(){ _file=$1; shift; mkdir -p "$(dirname "$_file")" 2>/dev/null; [ -f "$_file" ]||: >"$_file"; bh_strip_block "$_file"; { printf '%s\\n' "$BH_BEGIN"; for _line in "$@"; do printf '%s\\n' "$_line"; done; printf '%s\\n' "$BH_END"; } >>"$_file"; }
+
+bh_system_on(){'''
+insert = '''bh_append_block(){ _file=$1; shift; mkdir -p "$(dirname "$_file")" 2>/dev/null; [ -f "$_file" ]||: >"$_file"; bh_strip_block "$_file"; { printf '%s\\n' "$BH_BEGIN"; for _line in "$@"; do printf '%s\\n' "$_line"; done; printf '%s\\n' "$BH_END"; } >>"$_file"; }
+
+bh_pkg_hook_on(){
+    [ -f "$BH_PKG_CALL" ] || return 0
+    _first=$(sed -n '1p' "$BH_PKG_CALL" 2>/dev/null)
+    case "$_first" in '#!'*sh*) :;; *) bh_log 'event=package_manager_hook result=unsupported'; return 1;; esac
+    grep -Fqx "$BH_BEGIN" "$BH_PKG_CALL" 2>/dev/null && return 0
+    _tmp="$BH_PKG_CALL.bearhole.$$"
+    awk -v b="$BH_BEGIN" -v e="$BH_END" 'NR==1{print;print b;print "if [ -r /etc/profile.d/99-podkop-bearhole.sh ]; then";print "    . /etc/profile.d/99-podkop-bearhole.sh";print "fi";print e;next}{print}' "$BH_PKG_CALL" >"$_tmp" || return 1
+    chmod 0755 "$_tmp" 2>/dev/null || true
+    mv "$_tmp" "$BH_PKG_CALL" || return 1
+    bh_log 'event=package_manager_hook result=installed'
+}
+bh_pkg_hook_off(){
+    [ -f "$BH_PKG_CALL" ] || return 0
+    grep -Fqx "$BH_BEGIN" "$BH_PKG_CALL" 2>/dev/null || return 0
+    bh_strip_block "$BH_PKG_CALL"
+    chmod 0755 "$BH_PKG_CALL" 2>/dev/null || true
+}
+bh_pkg_hook_ensure(){
+    [ -f "$BH_PKG_CALL" ] || return 0
+    grep -Fqx "$BH_BEGIN" "$BH_PKG_CALL" 2>/dev/null && return 0
+    bh_pkg_hook_on
+}
+
+bh_system_on(){'''
+rep_once(bh, anchor, insert)
+
+rep_once(
+    bh,
+    '''    [ -d /etc/opkg ]&&cat >/etc/opkg/99-podkop-bearhole.conf <<EOF2
+option http_proxy $_gw
+option https_proxy $_gw
+option no_proxy 127.0.0.1,localhost,::1
+EOF2
+    bh_log "event=bearhole_enable gateway=127.0.0.1:$(bh_port) auth=$([ "$(bh_cfg_get auth_enabled 0)" = 1 ] && echo on || echo off)"
+}
+
+bh_system_off(){ rm -f /etc/profile.d/99-podkop-bearhole.sh /etc/opkg/99-podkop-bearhole.conf /etc/opkg/99-hwelp-bootstrap.conf 2>/dev/null; bh_strip_block /etc/environment; bh_strip_block /root/.curlrc; bh_strip_block /root/.wgetrc; bh_log 'event=bearhole_disable'; }
+''',
+    '''    [ -d /etc/opkg ]&&cat >/etc/opkg/99-podkop-bearhole.conf <<EOF2
+option http_proxy $_gw
+option https_proxy $_gw
+option no_proxy 127.0.0.1,localhost,::1
+EOF2
+    bh_pkg_hook_on || { bh_log 'event=package_manager_hook result=failed'; return 1; }
+    bh_log "event=bearhole_enable gateway=127.0.0.1:$(bh_port) auth=$([ "$(bh_cfg_get auth_enabled 0)" = 1 ] && echo on || echo off)"
+}
+
+bh_system_off(){ bh_pkg_hook_off; rm -f /etc/profile.d/99-podkop-bearhole.sh /etc/opkg/99-podkop-bearhole.conf /etc/opkg/99-hwelp-bootstrap.conf 2>/dev/null; bh_strip_block /etc/environment; bh_strip_block /root/.curlrc; bh_strip_block /root/.wgetrc; bh_log 'event=bearhole_disable'; }
+''',
+)
+
+# Status must report the HWELP instance, not guardian/activation.
+sub_once(
+    bh,
+    r'_pid=\$\(ubus call service list .*?_running=true',
+    '_pid=$(bh_hwelp_pid); _running=false; [ "$_pid" -gt 0 ] 2>/dev/null&&kill -0 "$_pid" 2>/dev/null&&_running=true',
+)
+
+sub_once(
+    bh,
+    r"bh_results_json\(\)\{.*?\n\}",
+    '''bh_results_json(){ printf '{"ok":true,"items":['; _first=1; while IFS='|' read -r _id _label _ep _core _raw _api _codeload _asset _feeds _status _checked _asset_host; do [ -n "$_id" ]||continue; [ "$_first" = 1 ]&&_first=0||printf ','; printf '{"id":%s,"label":%s,"endpoint":%s,"github_core":"%s","github_raw":"%s","github_api":"%s","github_codeload":"%s","github_assets":"%s","github_asset_host":%s,"openwrt_feeds":"%s","status":"%s","checked_at":%s}' "$(bh_json_str "$_id")" "$(bh_json_str "$_label")" "$(bh_json_str "$(bh_mask_proxy "$_ep")")" "$_core" "$_raw" "$_api" "$_codeload" "$_asset" "$(bh_json_str "$_asset_host")" "$_feeds" "$_status" "${_checked:-0}"; done <"$BH_RESULTS" 2>/dev/null; printf ']}\n'; }''',
+    flags=re.S,
+)
+
+rep_once(
+    bh,
+    '''case "${1:-}" in
+ registry) bh_registry;; bootstrap) bh_write_bootstrap_routes;; qualify) bh_qualify;; qualify-start) bh_qualify_start;; select) bh_select_valid_routes;; install-hwelp) bh_install_hwelp;; system-on) bh_system_on;; system-off) bh_system_off;; proxy-url) bh_gateway_auth;; status) bh_status;; results) bh_results_json;; disable) bh_disable;;
+ *) echo "usage: $0 {registry|bootstrap|qualify|qualify-start|select|install-hwelp|system-on|system-off|proxy-url|status|results|disable}" >&2; exit 2;;
+esac
+''',
+    '''case "${1:-}" in
+ registry) bh_registry;; bootstrap) bh_write_bootstrap_routes;; qualify) bh_qualify;; qualify-start) bh_qualify_start;; activate) bh_activate;; guard) bh_guard;; select) bh_select_valid_routes;; install-hwelp) bh_install_hwelp;; system-on) bh_system_on;; system-off) bh_system_off;; proxy-url) bh_gateway_auth;; status) bh_status;; results) bh_results_json;; disable) bh_disable;;
+ *) echo "usage: $0 {registry|bootstrap|qualify|qualify-start|activate|guard|select|install-hwelp|system-on|system-off|proxy-url|status|results|disable}" >&2; exit 2;;
+esac
+''',
+)
+
+# RPC manual start delegates activation to the service, avoiding a second
+# qualification state machine racing reboot/restart activation.
+rpc = "root/usr/libexec/rpcd/podkop_bot_bearhole"
+sub_once(
+    rpc,
+    r"start_worker\(\) \{\n.*?\n\}\n\nstart_async\(\)",
+    '''start_worker() {
+    trap 'rm -rf "$START_LOCK" "$START_PID" 2>/dev/null' EXIT INT TERM HUP
+    cleanup_stale_qualify_lock
+    "$CTL" system-off >/dev/null 2>&1 || true
+
+    if ! engine_ready; then
+        write_state starting installing_hwelp
+        log_event 'event=bearhole_start stage=install_hwelp'
+        if ! "$CTL" install-hwelp >/dev/null 2>&1 || ! engine_ready; then
+            fail_closed hwelp_install_failed
+            return
+        fi
+    fi
+
+    _port=$(hwelp_port)
+    if [ "$(uci -q get podkop_bearhole.main.auth_enabled 2>/dev/null)" = 1 ]; then
+        _au=$(uci -q get podkop_bearhole.main.auth_user 2>/dev/null)
+        _ap=$(uci -q get podkop_bearhole.main.auth_pass 2>/dev/null)
+        if [ -z "$_au" ] || [ -z "$_ap" ]; then fail_closed auth_invalid; return; fi
+    fi
+    if ! "$PROXY" -l 127.0.0.1 -p "$_port" --check-bind >/dev/null 2>&1; then
+        fail_closed port_in_use
+        return
+    fi
+
+    rm -f "$RESULTS" "$BH_DIR/current" 2>/dev/null || true
+    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
+    uci -q set podkop_bearhole.main.enabled=1 || { fail_closed uci_enable_failed; return; }
+    uci -q commit podkop_bearhole || { fail_closed uci_commit_failed; return; }
+
+    write_state starting service_start
+    log_event "event=bearhole_start stage=service_start port=$_port"
+    /etc/init.d/podkop-bearhole enable >/dev/null 2>&1 || true
+    /etc/init.d/podkop-bearhole restart >/dev/null 2>&1 || true
+
+    _i=0
+    while [ "$_i" -lt 900 ]; do
+        _st=$("$CTL" status 2>/dev/null || printf '{}')
+        _state=$(printf '%s' "$_st" | jq -r '.state // ""' 2>/dev/null)
+        _reason=$(printf '%s' "$_st" | jq -r '.reason // ""' 2>/dev/null)
+        _running=$(printf '%s' "$_st" | jq -r '.running // false' 2>/dev/null)
+        _system=$(printf '%s' "$_st" | jq -r '.system_applied // false' 2>/dev/null)
+        if [ "$_state" = ready ] && [ "$_reason" = gateway_verified ] && [ "$_running" = true ] && [ "$_system" = true ]; then
+            return
+        fi
+        case "$_state" in
+            failed|degraded)
+                fail_closed "${_reason:-activation_failed}"
+                return
+                ;;
+        esac
+        sleep 1; _i=$((_i+1))
+    done
+    fail_closed activation_timeout
+}
+
+start_async()''',
+    flags=re.S,
+)
+
+# LuCI diagnostics: grey unsupported state and expose final release host.
+js = "root/www/luci-static/resources/view/podkop-bot/bearhole.js"
+rep_once(
+    js,
+    '''function q(v){if(v==='ok')return lamp('green',_('доступен'));if(v==='skip')return lamp('grey',_('не применимо'));return lamp('red',_('нет доступа'));}
+function routeStatus(v){if(v==='VALID')return lamp('green',_('пригоден'));if(v==='DEGRADED')return lamp('yellow',_('частично пригоден'));return lamp('red',_('не пригоден'));}
+''',
+    '''function q(v,title){if(v==='ok')return lamp('green',title||_('доступен'));if(v==='skip'||v==='unsupported')return lamp('grey',title||_('не применимо'));return lamp('red',title||_('нет доступа'));}
+function routeStatus(v){if(v==='VALID')return lamp('green',_('пригоден'));if(v==='DEGRADED')return lamp('yellow',_('частично пригоден'));if(v==='UNSUPPORTED')return lamp('grey',_('тип upstream не поддерживается hwelp proxy'));return lamp('red',_('не пригоден'));}
+''',
+)
+rep_once(
+    js,
+    "E('td',{'style':'text-align:center;'},[q(x.github_assets)]),",
+    "E('td',{'style':'text-align:center;'},[q(x.github_assets,x.github_asset_host?(_('Финальный хост: ')+x.github_asset_host):'')]),",
+)
+rep_once(
+    js,
+    "route_check_timeout:_('Проверка маршрутов превысила допустимое время.'),",
+    "route_check_timeout:_('Проверка маршрутов превысила допустимое время.'),activation_timeout:_('Безопасный запуск Bearhole превысил допустимое время.'),hwelp_not_running:_('hwelp proxy остановился; системный прокси автоматически снят.'),",
+)
+
+# Reproducible new test set.
+mf = Path("Makefile")
+s = mf.read_text()
+if "PKG_RELEASE:=32" not in s:
+    raise SystemExit("Makefile release anchor missing")
+mf.write_text(s.replace("PKG_RELEASE:=32", "PKG_RELEASE:=33", 1))
+
+hm = Path("hwelp-proxy/Makefile")
+s = hm.read_text()
+if "PKG_VERSION:=0.1.1\nPKG_RELEASE:=2" not in s:
+    raise SystemExit("hwelp version anchor missing")
+hm.write_text(s.replace("PKG_VERSION:=0.1.1\nPKG_RELEASE:=2", "PKG_VERSION:=0.1.2\nPKG_RELEASE:=1", 1))

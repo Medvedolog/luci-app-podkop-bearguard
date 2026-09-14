@@ -6,7 +6,7 @@
 	},
 	"admin/services/podkop-bot/overview": {
 		"title": "Обзор", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/overview" }
+		"action": { "type": "view", "path": "podkop-bot/overview-async" }
 	},
 	"admin/services/podkop-bot/settings": {
 		"title": "Настройки", "order": 15,
@@ -48,7 +48,7 @@
 	},
 	"admin/services/podkop-bot/runtime/services": {
 		"title": "Тест сервисов", "order": 5,
-		"action": { "type": "view", "path": "podkop-bot/runtime" }
+		"action": { "type": "view", "path": "podkop-bot/runtime-async" }
 	},
 	"admin/services/podkop-bot/runtime/tg-api-routes": {
 		"action": { "type": "alias", "path": "admin/services/podkop-bot/runtime/services" }

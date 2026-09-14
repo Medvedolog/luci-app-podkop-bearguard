@@ -9,6 +9,7 @@ BH_CTL=/usr/lib/podkop_bot/bearhole.sh
 BH_PROXY=/usr/bin/hwelp-proxy
 BH_ROUTES=/tmp/podkop_bot/bearhole/routes.conf
 BH_AUTH=/tmp/podkop_bot/bearhole/hwelp.auth
+BH_LOG=/tmp/podkop_bot/bearhole/bearhole.log
 
 engine_ready() {
     [ -x "$BH_PROXY" ] || return 1
@@ -65,11 +66,14 @@ start_service() {
     fi
 
     port="$(hwelp_port)"
+    mkdir -p "${BH_LOG%/*}" 2>/dev/null
+    touch "$BH_LOG" 2>/dev/null || true
+    chmod 600 "$BH_LOG" 2>/dev/null || true
     procd_open_instance
     if [ -f "$BH_AUTH" ]; then
-        procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES" -a "$BH_AUTH"
+        procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES" -a "$BH_AUTH" -L "$BH_LOG"
     else
-        procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES"
+        procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES" -L "$BH_LOG"
     fi
     procd_set_param respawn 3600 5 5
     procd_set_param stdout 1

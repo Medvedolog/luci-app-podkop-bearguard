@@ -2,7 +2,7 @@
 # rpcd object: podkop_bot_bearhole
 
 CTL=/usr/lib/podkop_bot/bearhole.sh
-PROXY=/usr/bin/podkop-bearhole-proxy
+PROXY=/usr/bin/hwelp-proxy
 BH_DIR=/tmp/podkop_bot/bearhole
 REGISTRY="$BH_DIR/routes.registry"
 RESULTS="$BH_DIR/system.results"
@@ -12,18 +12,23 @@ START_LOCK="$BH_DIR/start.lock"
 START_PID="$BH_DIR/start.pid"
 QUAL_LOCK="$BH_DIR/qualify.lock"
 QUAL_PID="$BH_DIR/qualify.pid"
-GATEWAY="http://127.0.0.1:1066"
+
+hwelp_port() {
+    _p=$(uci -q get podkop_bearhole.main.port 2>/dev/null)
+    case "$_p" in ''|*[!0-9]*) _p=1066;; esac
+    [ "$_p" -ge 1024 ] 2>/dev/null && [ "$_p" -le 65535 ] 2>/dev/null || _p=1066
+    printf '%s' "$_p"
+}
+
+gateway() { printf 'http://127.0.0.1:%s' "$(hwelp_port)"; }
 
 engine_reason() {
-    [ -x /usr/bin/ucode ] || { printf 'ucode_missing'; return; }
-    [ -x "$PROXY" ] || { printf 'proxy_missing'; return; }
-    /usr/bin/ucode "$PROXY" --check >/dev/null 2>&1 || { printf 'ucode_modules_missing'; return; }
+    [ -x "$PROXY" ] || { printf 'hwelp_missing'; return; }
+    "$PROXY" --check >/dev/null 2>&1 || { printf 'hwelp_broken'; return; }
     printf ''
 }
 
-engine_ready() {
-    [ -z "$(engine_reason)" ]
-}
+engine_ready() { [ -z "$(engine_reason)" ]; }
 
 write_state() {
     _state="$1"; _reason="$2"; _now=$(date +%s 2>/dev/null || echo 0)
@@ -46,6 +51,14 @@ cleanup_stale_qualify_lock() {
     case "$_pid" in ''|*[!0-9]*) _pid=0;; esac
     [ "$_pid" -gt 0 ] 2>/dev/null && kill -0 "$_pid" 2>/dev/null && return 0
     rm -rf "$QUAL_LOCK" "$QUAL_PID" 2>/dev/null || true
+}
+
+cleanup_stale_start_lock() {
+    [ -d "$START_LOCK" ] || return 0
+    _pid=$(cat "$START_PID" 2>/dev/null || echo 0)
+    case "$_pid" in ''|*[!0-9]*) _pid=0;; esac
+    [ "$_pid" -gt 0 ] 2>/dev/null && kill -0 "$_pid" 2>/dev/null && return 0
+    rm -rf "$START_LOCK" "$START_PID" 2>/dev/null || true
 }
 
 stop_start_worker() {
@@ -90,27 +103,38 @@ start_worker() {
     cleanup_stale_qualify_lock
     "$CTL" system-off >/dev/null 2>&1 || true
 
-    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
-    uci -q set podkop_bearhole.main.enabled=1 || { fail_closed uci_enable_failed; return; }
-    uci -q commit podkop_bearhole || { fail_closed uci_commit_failed; return; }
+    if ! engine_ready; then
+        write_state starting installing_hwelp
+        log_event 'event=bearhole_start stage=install_hwelp'
+        if ! "$CTL" install-hwelp >/dev/null 2>&1 || ! engine_ready; then
+            fail_closed hwelp_install_failed
+            return
+        fi
+    fi
 
     rm -f "$RESULTS" "$BH_DIR/current" 2>/dev/null || true
     write_state starting collecting_routes
     log_event 'event=bearhole_start stage=collect_routes'
-
     if ! "$CTL" bootstrap >/dev/null 2>&1; then
         fail_closed no_routes
         return
     fi
 
+    _port=$(hwelp_port)
+    if ! "$PROXY" -l 127.0.0.1 -p "$_port" --check-bind >/dev/null 2>&1; then
+        fail_closed port_in_use
+        return
+    fi
+
+    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
+    uci -q set podkop_bearhole.main.enabled=1 || { fail_closed uci_enable_failed; return; }
+    uci -q commit podkop_bearhole || { fail_closed uci_commit_failed; return; }
+
     write_state starting hwelp_start
-    log_event 'event=bearhole_start stage=hwelp_start'
+    log_event "event=bearhole_start stage=hwelp_start port=$_port"
     /etc/init.d/podkop-bearhole enable >/dev/null 2>&1 || true
     /etc/init.d/podkop-bearhole restart >/dev/null 2>&1 || true
 
-    # procd may publish the instance a few seconds after rc.common returns.
-    # Wait for the helper only; init.d deliberately does not own any later
-    # Bearhole sequencing.
     _i=0
     while [ "$_i" -lt 20 ]; do
         _st=$("$CTL" status 2>/dev/null || printf '{}')
@@ -164,33 +188,57 @@ start_worker() {
         return
     fi
 
+    _gateway=$(gateway)
     write_state verifying gateway_check
-    log_event 'event=bearhole_start stage=gateway_check'
-    if ! curl -q -4 -L -fsS --proxy "$GATEWAY" --connect-timeout 4 --max-time 12 \
+    log_event "event=bearhole_start stage=gateway_check gateway=$_gateway"
+    if ! curl -q -4 -L -fsS --proxy "$_gateway" --connect-timeout 4 --max-time 12 \
         -o /dev/null 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt' >/dev/null 2>&1; then
         fail_closed gateway_check_failed
         return
     fi
 
     write_state ready gateway_verified
-    log_event 'event=bearhole_ready gateway=127.0.0.1:1066'
+    log_event "event=bearhole_ready gateway=$_gateway"
 }
 
 start_async() {
+    cleanup_stale_start_lock
     [ -d "$START_LOCK" ] && return 2
     mkdir "$START_LOCK" 2>/dev/null || return 2
     write_state starting requested
-    (
-        start_worker
-    ) </dev/null >/dev/null 2>&1 &
+    ( start_worker ) </dev/null >/dev/null 2>&1 &
     _pid=$!
     printf '%s\n' "$_pid" > "$START_PID"
     return 0
 }
 
+set_port() {
+    _port="$1"
+    case "$_port" in ''|*[!0-9]*) return 2;; esac
+    [ "$_port" -ge 1024 ] 2>/dev/null && [ "$_port" -le 65535 ] 2>/dev/null || return 2
+
+    _old=$(hwelp_port)
+    [ "$_port" = "$_old" ] && return 0
+
+    _was_active=0
+    [ "$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)" = 1 ] && _was_active=1
+    stop_start_worker
+    if [ "$_was_active" = 1 ]; then
+        "$CTL" disable >/dev/null 2>&1 || true
+    fi
+
+    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
+    uci -q set "podkop_bearhole.main.port=$_port" || return 1
+    uci -q commit podkop_bearhole || return 1
+    log_event "event=hwelp_port_changed old=$_old new=$_port"
+
+    [ "$_was_active" = 1 ] && start_async
+    return 0
+}
+
 case "$1" in
     list)
-        echo '{"status":{},"results":{},"start":{},"set_enabled":{"enabled":true},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
+        echo '{"status":{},"results":{},"start":{},"set_enabled":{"enabled":true},"set_port":{"port":0},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
         ;;
     call)
         case "$2" in
@@ -209,10 +257,7 @@ case "$1" in
                 ;;
             start)
                 read -r _in 2>/dev/null || true
-                if ! engine_ready; then
-                    "$CTL" system-off >/dev/null 2>&1 || true
-                    printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
-                elif start_async; then
+                if start_async; then
                     printf '{"ok":true,"started":true}\n'
                 else
                     _rc=$?
@@ -224,12 +269,7 @@ case "$1" in
                 _v=$(printf '%s' "$_in" | jq -r '.enabled // false' 2>/dev/null)
                 case "$_v" in
                     true|1)
-                        if ! engine_ready; then
-                            "$CTL" system-off >/dev/null 2>&1 || true
-                            printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
-                        elif start_async; then
-                            printf '{"ok":true,"enabled":true,"starting":true}\n'
-                        else
+                        if start_async; then printf '{"ok":true,"enabled":true,"starting":true}\n'; else
                             _rc=$?; [ "$_rc" = 2 ] && printf '{"ok":true,"enabled":true,"starting":true,"reason":"already_running"}\n' || printf '{"ok":false,"reason":"start_failed"}\n'
                         fi
                         ;;
@@ -239,6 +279,16 @@ case "$1" in
                         ;;
                     *) printf '{"ok":false,"reason":"bad_value"}\n' ;;
                 esac
+                ;;
+            set_port)
+                read -r _in 2>/dev/null || _in='{}'
+                _port=$(printf '%s' "$_in" | jq -r '.port // empty' 2>/dev/null)
+                if set_port "$_port"; then
+                    _restarting=false; [ -d "$START_LOCK" ] && _restarting=true
+                    printf '{"ok":true,"port":%s,"restarting":%s}\n' "$(hwelp_port)" "$_restarting"
+                else
+                    _rc=$?; [ "$_rc" = 2 ] && printf '{"ok":false,"reason":"bad_port"}\n' || printf '{"ok":false,"reason":"port_save_failed"}\n'
+                fi
                 ;;
             qualify_start)
                 read -r _in 2>/dev/null || true

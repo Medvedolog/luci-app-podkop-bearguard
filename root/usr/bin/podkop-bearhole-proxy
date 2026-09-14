@@ -230,6 +230,20 @@ function parse_request(header) {
 	return { connect: false, host: hp.host, port: hp.port, rewritten: header };
 }
 
+function self_check() {
+	let hp = parse_hostport('[::1]:443', 80);
+	if (!hp || hp.host != '::1' || hp.port != 443) return false;
+	hp = parse_hostport('example.com', 80);
+	if (!hp || hp.host != 'example.com' || hp.port != 80) return false;
+	let up = parse_upstream('socks5h://user:pass@127.0.0.1:1080');
+	if (!up || up.scheme != 'socks5h' || up.host != '127.0.0.1' || up.port != 1080 || up.user != 'user' || up.pass != 'pass') return false;
+	let req = parse_request('CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n');
+	if (!req || !req.connect || req.host != 'example.com' || req.port != 443) return false;
+	req = parse_request('GET http://example.com/test HTTP/1.1\r\nHost: example.com\r\n\r\n');
+	if (!req || req.connect || req.host != 'example.com' || req.port != 80) return false;
+	return true;
+}
+
 function handle_client(client) {
 	let state = { buf: '', handle: null };
 	state.handle = uloop.handle(client.fileno(), () => {
@@ -262,6 +276,10 @@ function handle_client(client) {
 }
 
 if (check_only) {
+	if (!self_check()) {
+		warn('hwelp proxy: self-check failed\n');
+		exit(1);
+	}
 	printf('hwelp proxy: check ok\n');
 	exit(0);
 }

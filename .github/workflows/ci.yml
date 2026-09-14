@@ -86,6 +86,7 @@ jobs:
             file /www/luci-static/resources/view/podkop-bot/runtime-async.js
             file /www/luci-static/resources/view/podkop-bot/transport.js
             file /www/luci-static/resources/view/podkop-bot/transport-ux.js
+            file /www/luci-static/resources/view/podkop-bot/bearhole.js
             exec test -x /usr/libexec/rpcd/podkop_bot
             exec test -x /usr/libexec/rpcd/podkop_bot_bearhole
             exec test -x /usr/lib/podkop_bot/install.sh
@@ -95,6 +96,7 @@ jobs:
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
             http 200 /cgi-bin/luci/admin/services/podkop-bot/settings/wizard
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/bearhole
             http 200 /cgi-bin/luci/admin/services/podkop-bot/runtime/services
             http 200 /cgi-bin/luci/admin/services/podkop-bot/update
 
@@ -120,6 +122,7 @@ jobs:
             file /www/luci-static/resources/view/podkop-bot/runtime-async.js
             file /www/luci-static/resources/view/podkop-bot/transport.js
             file /www/luci-static/resources/view/podkop-bot/transport-ux.js
+            file /www/luci-static/resources/view/podkop-bot/bearhole.js
             exec test -x /usr/libexec/rpcd/podkop_bot
             exec test -x /usr/libexec/rpcd/podkop_bot_bearhole
             exec test -x /usr/lib/podkop_bot/install.sh
@@ -129,8 +132,26 @@ jobs:
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
             http 200 /cgi-bin/luci/admin/services/podkop-bot/settings/wizard
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/bearhole
             http 200 /cgi-bin/luci/admin/services/podkop-bot/runtime/services
             http 200 /cgi-bin/luci/admin/services/podkop-bot/update
+
+      - name: OpenWrt 24.10 HWELP proxy runtime smoke
+        uses: owfeed/owlab/action@v0.6.1
+        with:
+          version: v0.6.1
+          releases: "24.10.8"
+          install: dist/all/luci-app-podkop-bot_*.ipk
+          assert: |
+            exec opkg update >/dev/null
+            exec opkg install ucode-mod-socket ucode-mod-struct ucode-mod-uloop >/dev/null
+            exec /usr/bin/ucode /usr/bin/podkop-bearhole-proxy --check
+            exec /etc/init.d/rpcd restart; sleep 2
+            exec ubus call podkop_bot_bearhole start '{}' | grep -q '"ok"'
+            exec i=0; while [ "$i" -lt 120 ]; do s="$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null || true)"; echo "$s" | grep -q '"state":"ready"' && echo "$s" | grep -q '"running":true' && break; echo "$s" | grep -q '"state":"failed"' && exit 1; sleep 1; i=$((i+1)); done; [ "$i" -lt 120 ]
+            exec curl -q -4 -fsS --proxy http://127.0.0.1:1066 --connect-timeout 5 --max-time 15 https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt >/dev/null
+            exec ubus call podkop_bot_bearhole set_enabled '{"enabled":false}' | grep -q '"ok"'
+            exec test ! -e /etc/profile.d/99-podkop-bearhole.sh
 
   release-preflight:
     name: Release signing preflight

@@ -4,7 +4,25 @@ Branch: `dev/0.19.18-warpscout-luci`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.18 is promoted.
 
-## 0.19.18-r14 — current test build
+## 0.19.18-r15 — async diagnostics hardening
+
+### Long route/service probes
+
+- Long `active_probe` diagnostics no longer depend on one 15–60 second LuCI XHR. A dedicated `podkop_bot_probe` rpcd worker starts the heavy check in the background and exposes short `start / status / result / cancel` calls.
+- The async path is used for Podkop/Forkop section checks, configured transport proxies, manual proxies, WARP checks, batch “all routes” checks and the Overview full Outbound test.
+- A lost browser poll/XHR no longer kills the actual probe; LuCI retries status polling and reads the finished result from the router.
+- Credentialed manual proxies remain ephemeral: proxy credentials are not persisted in async state/result metadata.
+- WARP manual probes now request server-side cleanup. The worker calls the WARPSCOUT runtime stop/restore path when the probe exits, so Rescue restoration is no longer dependent solely on the browser reaching frontend `finally` logic.
+- Runtime and Overview menu entries route through compatibility wrapper views (`runtime-async.js`, `overview-async.js`) so the existing rendering/state logic remains shared instead of being forked.
+
+### XHR audit
+
+- The principal problematic synchronous path was `active_probe`; all user-facing callers are now routed through the detached worker.
+- Existing installer/LuCI/WARPSCOUT long operations already use background workers plus log/status polling.
+- `podkop_update_run` still performs network/disk preflight and install-script fetch synchronously before its updater worker starts; this can become long when direct GitHub access fails and the proxy chain is tried. It is now tracked separately for hardening.
+- `test_telegram`, `ensure_mixed_proxy`, update checks and one-shot transport probes remain bounded synchronous calls (generally single-digit to low-teens seconds), not the 60+ second class addressed here.
+
+## 0.19.18-r14 — previous test build
 
 ### WARP Rescue / WARPSCOUT
 
@@ -56,16 +74,16 @@ This file tracks the current development branch. The large historical `CHANGELOG
 
 ### Packaging / CI
 
-- Package revision advanced through development slices to **0.19.18-r14**.
+- Package revision advanced through development slices to **0.19.18-r15**.
 - r14 commit: `abf6ab5a8b085806bf87a5aef709da4cb52e677f`.
-- GitHub Actions CI run **#173** completed successfully.
+- r14 GitHub Actions CI run **#173** completed successfully.
 - Native OpenWrt package artifact contains both IPK and APK builds.
 
 ## Known limitations / not yet claimed complete
 
 - Continuous automatic WARP Rescue process-death watchdog/rotation is not implemented yet.
 - WARP is not yet wired as an automatic final POLL/FAST failover stage; current integration is qualification + Rescue + manual/runtime control.
-- Exact restoration of the previously active Rescue endpoint after every hidden manual test still needs router-level verification/hardening.
+- Async WARP restore logic is implemented in r15 but still needs router-level validation against browser/XHR loss and process failure.
 - WARPSCOUT shortlist manual TG result persistence across page refresh still needs completion.
 - Overview metadata can still be incomplete when the active Rescue endpoint is not matched to a current WARPSCOUT snapshot.
 - Batch route-test summary is still intentionally compact and needs a richer final result view.

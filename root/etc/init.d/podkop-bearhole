@@ -28,9 +28,9 @@ start_service() {
 }
 
 stop_service() {
-    local enabled
-    enabled="$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)"
-    [ "$enabled" = 1 ] || "$BH_CTL" system-off >/dev/null 2>&1 || true
+    # Never leave curl/wget/opkg/environment pointing at a stopped 1066
+    # listener. restart_service() will re-apply the proxy immediately in start.
+    "$BH_CTL" system-off >/dev/null 2>&1 || true
 }
 
 reload_service() {

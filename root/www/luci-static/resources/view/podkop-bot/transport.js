@@ -15,6 +15,11 @@ var callSetTier1Port = rpc.declare({ object:'podkop_bot', method:'set_tier1_port
 var callRuntimeSections = rpc.declare({ object:'podkop_bot', method:'runtime_sections' });
 var callWarpStatus = rpc.declare({ object:'podkop_bot_warpscout', method:'status', params:['force'] });
 var callRescueStatus = rpc.declare({ object:'podkop_bot_warpscout_rescue', method:'status' });
+var callBearStatus = rpc.declare({ object:'podkop_bot_bearhole', method:'status' });
+var callBearResults = rpc.declare({ object:'podkop_bot_bearhole', method:'results' });
+var callBearSetEnabled = rpc.declare({ object:'podkop_bot_bearhole', method:'set_enabled', params:['enabled'] });
+var callBearQualify = rpc.declare({ object:'podkop_bot_bearhole', method:'qualify_start' });
+var callBearRefresh = rpc.declare({ object:'podkop_bot_bearhole', method:'refresh_routes' });
 
 var _CHAIN_STORE_KEY = 'podkop-bot.transport-chain-cache.v1';
 var _chainTestedThisSession = false;
@@ -74,6 +79,8 @@ var COLOURS={green:'#33a02c',yellow:'#e8a33d',grey:'#888888',red:'#cc2b2b'};
 function dot(c,label){return E('span',{'style':'display:inline-flex;align-items:flex-start;gap:.4em;'},[E('span',{'style':'width:.7em;height:.7em;border-radius:50%;display:inline-block;flex:none;margin-top:.28em;background:'+(COLOURS[c]||COLOURS.grey)+';'}),E('span',{},label)]);}
 function pbInjectCss(){if(document.getElementById('pb-css'))return;document.querySelector('head').appendChild(E('link',{'id':'pb-css','rel':'stylesheet','type':'text/css','href':L.resource('css/podkop-bot/podkop-bot.css')}));}
 function pbFooter(){var callAppInfo=rpc.declare({object:'podkop_bot',method:'app_info'}),span=E('span',{},''),box=E('div',{'style':'max-width:820px;margin-top:1.2em;padding-top:.6em;border-top:1px solid rgba(127,127,127,.15);color:#888;font-size:85%;text-align:right;'},[span]);callAppInfo().then(function(a){if(a&&a.ok)dom.content(span,[E('span',{},'luci-app-podkop-bot v'+(a.luci_app_version||'?')+' · '),E('a',{'href':a.repo||'https://github.com/Medvedolog/luci-app-podkop-bot','target':'_blank','rel':'noopener'},_('репозиторий'))]);}).catch(function(){});return box;}
+function bearStateNode(st){if(st&&st.running&&st.state==='ready')return dot('green',_('Готов'));if(st&&st.probing)return dot('yellow',_('Проверка SYSTEM'));if(st&&st.enabled&&!st.running)return dot('red',_('Включён, но шлюз не запущен'));if(st&&st.state==='degraded')return dot('yellow',_('Нет SYSTEM VALID маршрута'));return dot(st&&st.enabled?'yellow':'grey',st&&st.enabled?_('Ожидание'):_('Выключен'));}
+function bearRouteBadge(item){if(!item)return E('span',{});var c=item.status==='VALID'?'green':(item.status==='DEGRADED'?'yellow':'red');return E('span',{'style':'margin-left:.35em;font-size:82%;'},[dot(c,'SYSTEM '+(item.status||'?'))]);}
 
 return view.extend({
 	load:function(){
@@ -82,16 +89,20 @@ return view.extend({
 			callState().catch(function(e){return {ok:false,detail:String(e)};}),
 			callRuntimeSections().catch(function(){return null;}),
 			callWarpStatus('').catch(function(){return null;}),
-			callRescueStatus().catch(function(){return null;})
+			callRescueStatus().catch(function(){return null;}),
+			callBearStatus().catch(function(){return {ok:false,enabled:false};}),
+			callBearResults().catch(function(){return {items:[]};})
 		]);
 	},
 	render:function(data){
 		var self=this;
 		this.state=data[0]; this.sectionsData=data[1]; this.warpStatus=data[2]; this.rescueStatus=data[3];
+		this.bearStatus=data[4]||{ok:false,enabled:false}; this.bearResults=data[5]||{items:[]};
 		var d=this.state;
 		if(!d||d.ok===false||d.available===false)return E('div',{},[E('h2',{},_('Цепочка прокси')),E('div',{'class':'cbi-section'},dot('grey',_('Состояние транспорта недоступно')))]);
 		this.tiers=this.buildTiers(d);
 		this.chainBox=E('div',{'id':'podkop-tiers'},this.renderTiers(this.tiers,d));
+		this.bearholeBox=E('div',{},[this.bearholeCard()]);
 		var addBtn=E('button',{'class':'cbi-button cbi-button-add','click':ui.createHandlerFn(this,function(){return self.fbForm(-1,'');})},_('Добавить резервный прокси'));
 		var testAllBtn=E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(this,'testFullChain')},_('Проверить всю цепочку')); this._testAllBtn=testAllBtn;
 		var reloadBtn=E('button',{'class':'cbi-button','click':ui.createHandlerFn(this,function(){return self.refreshState();})},_('Перечитать состояние'));
@@ -103,14 +114,60 @@ return view.extend({
 		this._chainMeta=E('div',{'style':'margin:.4em 0 .6em;color:#888;font-size:85%;'});
 		var ttl=600, stale=!_chainCheckedAt||(Math.floor(Date.now()/1000)-_chainCheckedAt)>ttl;
 		if(!_chainTestedThisSession||stale)window.setTimeout(function(){self.testFullChain();},60);else window.setTimeout(function(){self.applyChainCache();},60);
+		if(this.bearStatus&&this.bearStatus.probing)window.setTimeout(function(){self.refreshBearhole(true);},500);
 		return E('div',{},[
 			E('h2',{},_('Цепочка прокси')),
 			E('p',{'class':'pb-muted'},_('Здесь показано, как бот подключается к api.telegram.org, если прямой доступ заблокирован.')),
 			E('p',{'class':'pb-muted','style':'margin-top:-.5em;'},_('Автоопределённые секции Podkop/Forkop и настроенный WARP Rescue входят в эту же цепочку. Активный путь подсвечен.')),
 			this.botTransportCard(d),
+			this.bearholeBox,
 			E('div',{'class':'cbi-section pb-card'},[E('h3',{'style':'margin-top:0;'},_('Цепочка маршрутов')),actionRow,actionHint,this._chainMeta,this.chainBox,this.addFbRow()]),
 			pbFooter()
 		]);
+	},
+
+	bearResultFor:function(id){
+		var rid=id==='tier4'?'direct':id,items=(this.bearResults&&this.bearResults.items)||[];
+		for(var i=0;i<items.length;i++)if(items[i]&&items[i].id===rid)return items[i];
+		return null;
+	},
+
+	bearholeCard:function(){
+		var self=this,st=this.bearStatus||{},enabled=!!st.enabled;
+		var toggle=E('input',{'type':'checkbox','checked':enabled?'checked':null,'change':ui.createHandlerFn(this,function(ev){
+			var on=!!ev.target.checked;ev.target.disabled=true;
+			return callBearSetEnabled(on).then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'failed');return self.refreshBearhole(true);}).catch(function(e){ui.addNotification(null,E('p',{},_('Не удалось изменить OpenWrt Bearhole: ')+(e&&e.message||'?')),'error');}).finally(function(){ev.target.disabled=false;});
+		})});
+		var test=E('button',{'class':'cbi-button cbi-button-action','disabled':st.probing?'disabled':null,'click':ui.createHandlerFn(this,function(){test.disabled=true;return callBearQualify().then(function(){return self.refreshBearhole(true);}).finally(function(){test.disabled=false;});})},st.probing?_('SYSTEM проверяется…'):_('Проверить SYSTEM'));
+		var reread=E('button',{'class':'cbi-button','click':ui.createHandlerFn(this,function(){return callBearRefresh().then(function(){return self.refreshBearhole(true);});})},_('Перечитать маршруты'));
+		var details=E('a',{'class':'cbi-button','href':L.url('admin/services/podkop-bot/transport/bearhole')},_('Подробная диагностика'));
+		var cur=st.route_label||st.route_id||'—';
+		return E('div',{'class':'cbi-section pb-card','style':'max-width:820px;'},[
+			E('h3',{'style':'margin-top:0;'},_('OpenWrt Bearhole')),
+			E('p',{'class':'pb-muted'},_('Аварийный системный прокси OpenWrt. Использует эту же цепочку маршрутов, но допускает в системные загрузки только маршруты с профилем SYSTEM VALID. LAN и правила Podkop/Forkop не изменяются.')),
+			this.row(_('Системный прокси'),toggle),
+			this.row(_('Состояние'),bearStateNode(st)),
+			this.row(_('Шлюз'),E('code',{},st.gateway||'http://127.0.0.1:1066')),
+			this.row(_('Текущий SYSTEM-маршрут'),E('span',{},cur)),
+			this.row(_('Квалификация'),E('span',{},String(st.valid_routes||0)+' VALID · '+String(st.degraded_routes||0)+' DEGRADED')),
+			E('div',{'style':'display:flex;gap:.5em;flex-wrap:wrap;margin-top:.7em;'},[test,reread,details])
+		]);
+	},
+
+	refreshBearhole:function(poll){
+		var self=this;
+		return Promise.all([callBearStatus().catch(function(){return self.bearStatus||{};}),callBearResults().catch(function(){return self.bearResults||{items:[]};})]).then(function(res){
+			self.bearStatus=res[0]||{};self.bearResults=res[1]||{items:[]};
+			if(self.bearholeBox)dom.content(self.bearholeBox,[self.bearholeCard()]);
+			if(self.chainBox&&self.state){self.tiers=self.buildTiers(self.state);dom.content(self.chainBox,self.renderTiers(self.tiers,self.state));window.setTimeout(function(){self.applyChainCache();},20);}
+			if(poll&&self.bearStatus.probing)self.scheduleBearholePoll();
+			return self.bearStatus;
+		});
+	},
+
+	scheduleBearholePoll:function(){
+		var self=this;if(this._bearTimer)window.clearTimeout(this._bearTimer);
+		this._bearTimer=window.setTimeout(function(){self.refreshBearhole(true);},1400);
 	},
 
 	botTransportCard:function(d){
@@ -161,6 +218,7 @@ return view.extend({
 		var self=this,active=(d.poll_route&&d.poll_route!=='unknown')?d.poll_route:((d.route&&d.route!=='unknown')?d.route:null);
 		return E('div',{},tiers.map(function(t){
 			var isActive=t.id===active;t._active=isActive;var cfgColour=isActive?'green':'grey',dotNode=dot(cfgColour,t.name+(isActive?'  ✓ '+_('активен'):''));t._dotNode=dotNode;
+			var sysItem=self.bearResultFor(t.id),sysBadge=bearRouteBadge(sysItem);
 			var probeBtn=(t.endpoint&&t.endpoint!==''&&!t._noProbe)?E('button',{'class':'cbi-button','style':'padding:.1em .6em;font-size:90%;','click':ui.createHandlerFn(self,'probeOne',t)},_('Тест')):E('span',{});
 			var probeResult=E('span',{'id':'probe-'+t.id,'style':'margin-left:.6em;color:#888;font-size:90%;'});t._resultNode=probeResult;
 			var extraBtn=E('span',{});
@@ -177,7 +235,7 @@ return view.extend({
 			]);
 			var dotWrap=E('span',{},[dotNode]);t._dotWrap=dotWrap;
 			return E('div',{'style':'padding:.5em .2em;border-bottom:1px solid rgba(127,127,127,.12);'+(isActive?'background:rgba(51,160,44,.06);':'')},[
-				E('div',{'style':'display:flex;align-items:center;flex-wrap:wrap;gap:.3em;'},[dotWrap,probeBtn,extraBtn,crudBtns]),probeResult,
+				E('div',{'style':'display:flex;align-items:center;flex-wrap:wrap;gap:.3em;'},[dotWrap,sysBadge,probeBtn,extraBtn,crudBtns]),probeResult,
 				(t.endpoint&&t.endpoint!=='direct')?E('div',{'style':'color:#888;font-size:85%;margin-left:1.1em;font-family:monospace;word-break:break-all;'},fbDisplay(t.endpoint)):(t.note?E('div',{'style':'color:#888;font-size:85%;margin-left:1.1em;'},t.note):E('span',{})),
 				(t.endpoint&&t.endpoint!=='direct'&&t.note)?E('div',{'style':'color:#888;font-size:82%;margin-left:1.1em;'},t.note):E('span',{}),
 				(t.id==='tier1'&&!t.configured)?E('button',{'class':'cbi-button cbi-button-action','style':'margin:.4em 0 .2em 1.1em;padding:.1em .6em;font-size:90%;','click':ui.createHandlerFn(self,'enableMixedProxy')},_('Включить Mixed Proxy')):E('span',{})
@@ -187,8 +245,17 @@ return view.extend({
 
 	refreshState:function(mutated){
 		var self=this;if(mutated)clearChainProbeCache();
-		return Promise.all([callState(),callRuntimeSections().catch(function(){return self.sectionsData;}),callWarpStatus('').catch(function(){return self.warpStatus;}),callRescueStatus().catch(function(){return self.rescueStatus;})]).then(function(res){
-			self.state=res[0];self.sectionsData=res[1];self.warpStatus=res[2];self.rescueStatus=res[3];self.tiers=self.buildTiers(self.state);dom.content(self.chainBox,self.renderTiers(self.tiers,self.state));
+		return Promise.all([
+			callState(),
+			callRuntimeSections().catch(function(){return self.sectionsData;}),
+			callWarpStatus('').catch(function(){return self.warpStatus;}),
+			callRescueStatus().catch(function(){return self.rescueStatus;}),
+			callBearStatus().catch(function(){return self.bearStatus;}),
+			callBearResults().catch(function(){return self.bearResults;})
+		]).then(function(res){
+			self.state=res[0];self.sectionsData=res[1];self.warpStatus=res[2];self.rescueStatus=res[3];self.bearStatus=res[4]||self.bearStatus;self.bearResults=res[5]||self.bearResults;
+			self.tiers=self.buildTiers(self.state);dom.content(self.chainBox,self.renderTiers(self.tiers,self.state));
+			if(self.bearholeBox)dom.content(self.bearholeBox,[self.bearholeCard()]);
 			if(mutated)window.setTimeout(function(){self.testFullChain();},60);else window.setTimeout(function(){self.applyChainCache();},60);
 		});
 	},

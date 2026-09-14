@@ -150,5 +150,25 @@ grep -Fq "form.ListValue, 'log_level'" root/www/luci-static/resources/view/podko
     echo "logging: LuCI verbosity selector missing" >&2; exit 1;
 }
 
+# Runtime/LuCI regression guards (0.19.18-r20+).
+OVERVIEW_ASYNC="root/www/luci-static/resources/view/podkop-bot/overview-async.js"
+grep -Fq 'return base.constructor.extend({' "$OVERVIEW_ASYNC" || {
+    echo "LuCI: overview async wrapper must return a constructor" >&2; fail=1
+}
+if grep -Fq 'return base;' "$OVERVIEW_ASYNC"; then
+    echo "LuCI: overview async wrapper returns an injected instance" >&2; fail=1
+fi
+WARPSCOUT_JS="root/www/luci-static/resources/view/podkop-bot/warpscout.js"
+if grep -Fq 'self.refreshView();},1800' "$WARPSCOUT_JS"; then
+    echo "WARPSCOUT: manual TG result-erasing delayed refresh returned" >&2; fail=1
+fi
+RESCUE_RPC="root/usr/libexec/rpcd/podkop_bot_warpscout_rescue"
+grep -Fq 'wait_pid_gone(){' "$RESCUE_RPC" || {
+    echo "WARP Rescue: worker completion race guard missing" >&2; fail=1
+}
+grep -Fq "jq -e '.ok == true'" "$RESCUE_RPC" || {
+    echo "WARP Rescue: ubus JSON acknowledgement guard missing" >&2; fail=1
+}
+
 [ "$fail" -eq 0 ] || { echo "source checks failed"; exit 1; }
 echo "source checks passed"

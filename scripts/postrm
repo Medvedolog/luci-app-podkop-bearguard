@@ -14,6 +14,18 @@ strip_bearhole_block() {
 	awk -v b="$BH_BEGIN" -v e="$BH_END" '$0==b{skip=1;next}$0==e{skip=0;next}!skip{print}' "$_file" > "$_tmp" 2>/dev/null && mv "$_tmp" "$_file"
 }
 
+ubus call service delete '{"name":"podkop-warp-rescue"}' >/dev/null 2>&1 || true
+rm -f /etc/rc.d/*podkop-warp-rescue 2>/dev/null || true
+for _c in /proc/[0-9]*/cmdline; do
+	_cmd=$(tr '\0' ' ' < "$_c" 2>/dev/null) || continue
+	case "$_cmd" in
+		*"/usr/lib/podkop_bot/warpscout-rescue-watchdog"*)
+			_pid=${_c#/proc/}; _pid=${_pid%/cmdline}
+			case "$_pid" in ''|*[!0-9]*) :;; *) kill "$_pid" 2>/dev/null || true;; esac
+			;;
+	esac
+done
+
 ubus call service delete '{"name":"podkop-bearhole"}' >/dev/null 2>&1 || true
 rm -f /etc/rc.d/*podkop-bearhole 2>/dev/null || true
 

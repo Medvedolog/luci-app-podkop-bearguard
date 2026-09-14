@@ -20,13 +20,19 @@ cat "$work/control/control"
 
 for f in \
     ./usr/libexec/rpcd/podkop_bot \
+    ./usr/libexec/rpcd/podkop_bot_bearhole \
     ./usr/lib/podkop_bot/install.sh \
     ./usr/lib/podkop_bot/podkop_bot \
     ./usr/lib/podkop_bot/podkop_bot_init \
+    ./usr/lib/podkop_bot/bearhole.sh \
     ./usr/lib/podkop_bot/vendor.sha256 \
+    ./usr/bin/podkop-bearhole-proxy \
+    ./etc/init.d/podkop-bearhole \
+    ./etc/config/podkop_bearhole \
     ./usr/share/luci/menu.d/luci-app-podkop-bot.json \
     ./usr/share/rpcd/acl.d/luci-app-podkop-bot.json \
     ./www/luci-static/resources/view/podkop-bot/overview.js \
+    ./www/luci-static/resources/view/podkop-bot/bearhole.js \
     ./www/luci-static/resources/css/podkop-bot/podkop-bot.css
 do
     [ -f "$work/data/$f" ] || { echo "missing from package: $f" >&2; exit 1; }
@@ -34,9 +40,13 @@ done
 
 for f in \
     ./usr/libexec/rpcd/podkop_bot \
+    ./usr/libexec/rpcd/podkop_bot_bearhole \
     ./usr/lib/podkop_bot/install.sh \
     ./usr/lib/podkop_bot/podkop_bot \
-    ./usr/lib/podkop_bot/podkop_bot_init
+    ./usr/lib/podkop_bot/podkop_bot_init \
+    ./usr/lib/podkop_bot/bearhole.sh \
+    ./usr/bin/podkop-bearhole-proxy \
+    ./etc/init.d/podkop-bearhole
 do
     [ -x "$work/data/$f" ] || { echo "payload is not executable: $f" >&2; exit 1; }
 done
@@ -46,10 +56,18 @@ done
     echo "unexpected conffile: /etc/config/podkop_bot" >&2; exit 1;
 }
 
+# Bearhole has its own package-owned UCI config and it must survive sysupgrade.
+grep -qx '/etc/config/podkop_bearhole' "$work/control/conffiles" || {
+    echo "Bearhole conffile is not declared" >&2; exit 1;
+}
+
 # Dependency set must not drift silently. Ignore package-manager decoration and
-# compare the four names rather than relying on field ordering.
+# compare names rather than relying on field ordering.
 deps=$(sed -n 's/^Depends:[[:space:]]*//p' "$work/control/control" | tr ',' '\n' | sed 's/[[:space:]]//g;s/[[:space:](].*$//' | sed '/^$/d' | sort -u)
-expected=$(printf '%s\n' libc luci-base jq curl | sort -u)
+expected=$(printf '%s\n' \
+    libc luci-base jq curl \
+    ucode ucode-mod-fs ucode-mod-socket ucode-mod-struct ucode-mod-uloop \
+    | sort -u)
 [ "$deps" = "$expected" ] || {
     echo "dependency mismatch" >&2
     echo "expected:" >&2; printf '%s\n' "$expected" >&2

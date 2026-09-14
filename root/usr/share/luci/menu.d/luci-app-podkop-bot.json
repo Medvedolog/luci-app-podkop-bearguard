@@ -55,7 +55,7 @@
 	},
 	"admin/services/podkop-bot/update": {
 		"title": "Обновление", "order": 35,
-		"action": { "type": "view", "path": "podkop-bot/update" }
+		"action": { "type": "view", "path": "podkop-bot/update-async" }
 	},
 	"admin/services/podkop-bot/logs": {
 		"title": "Логи", "order": 40,

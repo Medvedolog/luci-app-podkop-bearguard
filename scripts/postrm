@@ -1,5 +1,41 @@
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] && exit 0
+
+# Bearhole is an emergency system-wide proxy. Removing the package must never
+# leave system tools pointing at a dead 127.0.0.1:1066 listener.
+BH_BEGIN="# BEGIN PODKOP BEARHOLE"
+BH_END="# END PODKOP BEARHOLE"
+
+strip_bearhole_block() {
+	_file="$1"
+	[ -f "$_file" ] || return 0
+	_tmp="$_file.podkop-bearhole.$$"
+	awk -v b="$BH_BEGIN" -v e="$BH_END" '$0==b{skip=1;next}$0==e{skip=0;next}!skip{print}' "$_file" > "$_tmp" 2>/dev/null && mv "$_tmp" "$_file"
+}
+
+# Ask procd to drop the service if it is still registered. The init script may
+# already have been removed by the package manager at postrm time.
+ubus call service delete '{"name":"podkop-bearhole"}' >/dev/null 2>&1 || true
+rm -f /etc/rc.d/*podkop-bearhole 2>/dev/null || true
+
+# Defensive fallback: terminate only processes whose cmdline contains the exact
+# Bearhole helper path.
+for _c in /proc/[0-9]*/cmdline; do
+	_cmd=$(tr '\0' ' ' < "$_c" 2>/dev/null) || continue
+	case "$_cmd" in
+		*"/usr/bin/podkop-bearhole-proxy"*)
+			_pid=${_c#/proc/}; _pid=${_pid%/cmdline}
+			case "$_pid" in ''|*[!0-9]*) :;; *) kill "$_pid" 2>/dev/null || true;; esac
+			;;
+	esac
+done
+
+rm -f /etc/profile.d/99-podkop-bearhole.sh /etc/opkg/99-podkop-bearhole.conf 2>/dev/null || true
+strip_bearhole_block /etc/environment
+strip_bearhole_block /root/.curlrc
+strip_bearhole_block /root/.wgetrc
+rm -rf /tmp/podkop_bot/bearhole 2>/dev/null || true
+
 /etc/init.d/rpcd reload 2>/dev/null
 rm -f /tmp/luci-indexcache* 2>/dev/null
 rm -rf /tmp/luci-modulecache 2>/dev/null

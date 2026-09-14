@@ -65,7 +65,21 @@ case "$1" in
                             "$CTL" system-off >/dev/null 2>&1 || true
                             printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
                         elif "$CTL" enable; then
-                            printf '{"ok":true,"enabled":true}\n'
+                            _i=0; _started=false
+                            while [ "$_i" -lt 6 ]; do
+                                _st=$("$CTL" status 2>/dev/null || printf '{}')
+                                if [ "$(printf '%s' "$_st" | jq -r '.running // false' 2>/dev/null)" = true ] && \
+                                   [ "$(printf '%s' "$_st" | jq -r '.system_applied // false' 2>/dev/null)" = true ]; then
+                                    _started=true; break
+                                fi
+                                sleep 1; _i=$((_i+1))
+                            done
+                            if [ "$_started" = true ]; then
+                                printf '{"ok":true,"enabled":true}\n'
+                            else
+                                "$CTL" disable >/dev/null 2>&1 || "$CTL" system-off >/dev/null 2>&1 || true
+                                printf '{"ok":false,"reason":"gateway_start_failed"}\n'
+                            fi
                         else
                             "$CTL" system-off >/dev/null 2>&1 || true
                             printf '{"ok":false,"reason":"enable_failed"}\n'

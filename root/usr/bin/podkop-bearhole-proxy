@@ -54,8 +54,12 @@ function recv_header(sock, limit) {
 }
 
 function parse_hostport(value, default_port) {
-	let m = match(value, /^\[([^\]]+)\](?::([0-9]+))?$/);
-	if (m) return { host: m[1], port: +(m[2] || default_port) };
+	/* ucode 24.10 regexp does not support non-capturing groups. Keep IPv6
+	 * bracket parsing deliberately simple and ES5/ERE-compatible. */
+	let m = match(value, /^\[([^\]]+)\]:([0-9]+)$/);
+	if (m) return { host: m[1], port: +m[2] };
+	m = match(value, /^\[([^\]]+)\]$/);
+	if (m) return { host: m[1], port: +default_port };
 	m = match(value, /^(.+):([0-9]+)$/);
 	if (m) return { host: m[1], port: +m[2] };
 	return { host: value, port: +default_port };
@@ -68,8 +72,13 @@ function parse_upstream(ep) {
 	let scheme = lc(m[1]);
 	if (scheme != 'socks5' && scheme != 'socks5h' && scheme != 'http') return null;
 	let rest = m[2], user = null, pass = null;
-	let a = match(rest, /^([^:@]+)(?::([^@]*))?@(.+)$/);
-	if (a) { user = a[1]; pass = a[2] || ''; rest = a[3]; }
+	let a = match(rest, /^([^:@]+):([^@]*)@(.+)$/);
+	if (a) {
+		user = a[1]; pass = a[2] || ''; rest = a[3];
+	} else {
+		a = match(rest, /^([^:@]+)@(.+)$/);
+		if (a) { user = a[1]; pass = ''; rest = a[2]; }
+	}
 	let hp = parse_hostport(rest, scheme == 'http' ? 8080 : 1080);
 	return { scheme, host: hp.host, port: hp.port, user, pass };
 }
@@ -244,7 +253,7 @@ function handle_client(client) {
 		}
 		if (!upstream) { send_all(client, 'HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'); client.close(); return; }
 		set_current(selected);
-		if (req.connect && !send_all(client, 'HTTP/1.1 200 Connection Established\r\nProxy-Agent: podkop-bearhole-proxy\r\n\r\n')) {
+		if (req.connect && !send_all(client, 'HTTP/1.1 200 Connection Established\r\nProxy-Agent: hwelp-proxy\r\n\r\n')) {
 			upstream.close(); client.close(); return;
 		}
 		if (length(extra) && !send_all(upstream, extra)) { upstream.close(); client.close(); return; }
@@ -253,14 +262,14 @@ function handle_client(client) {
 }
 
 if (check_only) {
-	printf('podkop-bearhole-proxy: check ok\n');
+	printf('hwelp proxy: check ok\n');
 	exit(0);
 }
 
 uloop.init();
 let server = socket.listen(listen_host, listen_port, { family: socket.AF_INET, socktype: socket.SOCK_STREAM }, null, true);
 if (!server) {
-	warn(`podkop-bearhole-proxy: listen ${listen_host}:${listen_port}: ${socket.error()}\n`);
+	warn(`hwelp proxy: listen ${listen_host}:${listen_port}: ${socket.error()}\n`);
 	exit(1);
 }
 let listener = uloop.handle(server.fileno(), () => {
@@ -268,7 +277,7 @@ let listener = uloop.handle(server.fileno(), () => {
 	let client = server.accept(addr);
 	if (client) handle_client(client);
 }, uloop.ULOOP_READ);
-warn(`podkop-bearhole-proxy: listening on ${listen_host}:${listen_port}\n`);
+warn(`hwelp proxy: listening on ${listen_host}:${listen_port}\n`);
 uloop.run();
 listener.delete();
 server.close();

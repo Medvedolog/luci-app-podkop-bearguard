@@ -37,6 +37,33 @@ progress_json() {
         "$_done" "$_total" "$(printf '%s' "$_current" | jq -Rs .)" "$(printf '%s' "$_label" | jq -Rs .)"
 }
 
+start_gateway() {
+    "$CTL" system-off >/dev/null 2>&1 || true
+    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
+    uci -q set podkop_bearhole.main.enabled=1 || return 1
+    uci -q commit podkop_bearhole || return 1
+    "$CTL" bootstrap >/dev/null 2>&1 || return 1
+    /etc/init.d/podkop-bearhole enable >/dev/null 2>&1 || true
+    /etc/init.d/podkop-bearhole restart >/dev/null 2>&1 || true
+
+    _i=0
+    while [ "$_i" -lt 7 ]; do
+        _st=$("$CTL" status 2>/dev/null || printf '{}')
+        if [ "$(printf '%s' "$_st" | jq -r '.running // false' 2>/dev/null)" = true ] && \
+           [ "$(printf '%s' "$_st" | jq -r '.system_applied // false' 2>/dev/null)" = true ]; then
+            return 0
+        fi
+        sleep 1; _i=$((_i+1))
+    done
+
+    uci -q set podkop_bearhole.main.enabled=0 >/dev/null 2>&1 || true
+    uci -q commit podkop_bearhole >/dev/null 2>&1 || true
+    /etc/init.d/podkop-bearhole stop >/dev/null 2>&1 || true
+    /etc/init.d/podkop-bearhole disable >/dev/null 2>&1 || true
+    "$CTL" system-off >/dev/null 2>&1 || true
+    return 1
+}
+
 case "$1" in
     list)
         echo '{"status":{},"results":{},"set_enabled":{"enabled":true},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
@@ -64,25 +91,10 @@ case "$1" in
                         if ! engine_ready; then
                             "$CTL" system-off >/dev/null 2>&1 || true
                             printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
-                        elif "$CTL" enable; then
-                            _i=0; _started=false
-                            while [ "$_i" -lt 6 ]; do
-                                _st=$("$CTL" status 2>/dev/null || printf '{}')
-                                if [ "$(printf '%s' "$_st" | jq -r '.running // false' 2>/dev/null)" = true ] && \
-                                   [ "$(printf '%s' "$_st" | jq -r '.system_applied // false' 2>/dev/null)" = true ]; then
-                                    _started=true; break
-                                fi
-                                sleep 1; _i=$((_i+1))
-                            done
-                            if [ "$_started" = true ]; then
-                                printf '{"ok":true,"enabled":true}\n'
-                            else
-                                "$CTL" disable >/dev/null 2>&1 || "$CTL" system-off >/dev/null 2>&1 || true
-                                printf '{"ok":false,"reason":"gateway_start_failed"}\n'
-                            fi
+                        elif start_gateway; then
+                            printf '{"ok":true,"enabled":true}\n'
                         else
-                            "$CTL" system-off >/dev/null 2>&1 || true
-                            printf '{"ok":false,"reason":"enable_failed"}\n'
+                            printf '{"ok":false,"reason":"gateway_start_failed"}\n'
                         fi
                         ;;
                     false|0) "$CTL" disable && printf '{"ok":true,"enabled":false}\n' || printf '{"ok":false,"reason":"disable_failed"}\n' ;;

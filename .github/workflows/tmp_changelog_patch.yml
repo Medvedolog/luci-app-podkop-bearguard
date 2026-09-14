@@ -1,0 +1,49 @@
+name: tmp-changelog-patch
+on:
+  push:
+    branches:
+      - dev/0.19.18-warpscout-luci
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev/0.19.18-warpscout-luci
+          fetch-depth: 0
+      - name: Patch changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('CHANGELOG.md')
+          text = p.read_text()
+          title = '### 0.19.18 — WARPSCOUT, async diagnostics and r17 bot-state fix'
+          if title not in text:
+              marker = '## luci-app-podkop-bot\n\n'
+              section = """### 0.19.18 — WARPSCOUT, async diagnostics and r17 bot-state fix
+
+- **[Функция/WARP]** Добавлены WARPSCOUT, WARP Rescue, Telegram Bot API qualification и «Револьвер WARP» с магазином VALID-кандидатов, FIRE/Next/Reload.
+- **[Интерфейс]** Runtime переименован в «Проверка маршрутов», «Пул прокси» — в «Цепочка прокси»; проведена редактура русских текстов и добавлены подсказки WARPSCOUT.
+- **[Диагностика/P0]** Долгие проверки секций, прокси, WARP, массовой проверки и полного Outbound-теста переведены на detached worker: start → status polling → result. Потеря XHR/вкладки не убивает проверку на роутере.
+- **[WARP/P0]** WARP-probe выполняет server-side cleanup/restore тестового runtime при выходе; точное восстановление прежнего Rescue endpoint ещё требует проверки на железе при обрыве браузера/сети.
+- **[Обновление]** Длинный preflight/скачивание установщика Podkop/Forkop вынесены из одного XHR в detached launcher с polling журнала.
+- **[Баг/r17]** Исправлена регрессия бота: при pending text state кнопка «Статус» могла трактоваться как ввод Telegram ID и давать «Некорректный ID». Теперь cmd_status имеет приоритет, очищает pending state и открывает Status. Standalone commit: f6236929; затем фикс синхронизирован во vendored bot LuCI.
+- **[Синхронизация]** vendor.sha256 r17: `0926d9797dcb951e286080c2ede09548cf2781b860e1df8a570e578f41182a8b`.
+- **[Сборка/CI]** Текущий тестовый пакет: **0.19.18-r17**. GitHub Actions #196 (`34822264197`) успешно прошёл source checks, native build и установку на OpenWrt 25.12 APKv3 и 24.10 IPK. Artifact id `10338378001`, digest `sha256:910eed092bf8f0c0af16728c5571eedca2e11df17154df0b6d083bee9826ec55`.
+- **[Долг]** Не заявлять готовыми: постоянный WARP process-death watchdog/авторотацию, автоматический POLL/FAST failover через WARP, persistent TG-статус shortlist, полные Overview metadata по фактическому Rescue endpoint, богатую batch-сводку и Bearhole routing semantics.
+
+"""
+              if marker not in text:
+                  raise SystemExit('marker not found')
+              p.write_text(text.replace(marker, marker + section, 1))
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/tmp_changelog_patch.yml
+          git add CHANGELOG.md
+          git commit -m 'docs: add 0.19.18 summary to changelog'
+          git push origin HEAD:dev/0.19.18-warpscout-luci

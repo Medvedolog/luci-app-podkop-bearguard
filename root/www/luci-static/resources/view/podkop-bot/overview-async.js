@@ -7,16 +7,30 @@ var callProbeStart = rpc.declare({ object:'podkop_bot_probe', method:'active_pro
 var callProbeStatus = rpc.declare({ object:'podkop_bot_probe', method:'active_probe_status' });
 var callProbeResult = rpc.declare({ object:'podkop_bot_probe', method:'active_probe_result' });
 var COLOURS={green:'#33a02c',yellow:'#e8a33d',grey:'#888888',red:'#cc2b2b'};
+var ONBOARDING_KEY='podkop-bot.setup-wizard-shown.v1';
 function dot(c,label){return E('span',{'style':'display:inline-flex;align-items:flex-start;gap:.4em;'},[E('span',{'style':'width:.7em;height:.7em;border-radius:50%;display:inline-block;flex:none;margin-top:.28em;background:'+(COLOURS[c]||COLOURS.grey)+';'}),E('span',{},label)]);}
 function runProbe(){
 	return callProbeStart('','','Обзор','false').then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'probe_start_failed');return new Promise(function(resolve,reject){var fail=0;function tick(){callProbeStatus().then(function(st){fail=0;if(st&&st.running){window.setTimeout(tick,1400);return;}callProbeResult().then(resolve).catch(reject);}).catch(function(e){fail++;if(fail<20){window.setTimeout(tick,1800);return;}reject(e);});}tick();});});
 }
+function shouldOpenWizard(data){return !!(data&&data.available===false&&(data.reason==='bot_not_installed'||data.reason==='installer_missing'));}
 
 /* LuCI require() injects dependency *instances*, not constructors. The old
  * wrapper returned the imported overview instance directly, so the loader
- * rejected it with "factory yields invalid constructor". Subclass the
- * dependency instance's constructor instead and override only this handler. */
+ * rejected it with "factory yields invalid constructor". */
 return base.constructor.extend({
+	render:function(data){
+		if(shouldOpenWizard(data)){
+			var shown=false;
+			try{shown=window.sessionStorage&&sessionStorage.getItem(ONBOARDING_KEY)==='1';}catch(e){}
+			if(!shown){
+				try{if(window.sessionStorage)sessionStorage.setItem(ONBOARDING_KEY,'1');}catch(e){}
+				window.setTimeout(function(){window.location=L.url('admin/services/podkop-bot/settings/wizard');},0);
+				return E('div',{'class':'cbi-section'},[E('p',{'class':'spinning'},_('Podkop Bot ещё не настроен. Открываю мастер настройки…'))]);
+			}
+		}
+		return base.render.call(this,data);
+	},
+
 	handleOutboundProbe:function(){
 		ui.showModal(_('Полный тест Outbound'),[E('p',{'class':'spinning'},_('Проверка запущена на роутере. Страницу можно кратковременно потерять — тест продолжится в фоне.'))]);
 		return runProbe().then(function(d){

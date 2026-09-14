@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=hwelp-proxy
-PKG_VERSION:=0.1.0
+PKG_VERSION:=0.1.1
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_MAINTAINER:=Medvedolog
@@ -19,8 +19,9 @@ endef
 define Package/hwelp-proxy/description
  HWELP proxy is the tiny native localhost gateway used by OpenWrt Bearhole.
  It accepts HTTP and CONNECT requests and forwards them through an ordered
- chain of SOCKS5/SOCKS5h, HTTP proxy or direct routes. No TLS library or
- external proxy daemon is required.
+ chain of SOCKS5/SOCKS5h, HTTP proxy or direct routes. Optional local Basic
+ authentication and low-noise session accounting are built in. No TLS library
+ or external proxy daemon is required.
 endef
 
 define Build/Prepare

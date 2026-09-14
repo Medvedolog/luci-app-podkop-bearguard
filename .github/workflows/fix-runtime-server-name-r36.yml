@@ -21,8 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL 'https://raw.githubusercontent.com/Medvedolog/podkop_bot/dev/0.19.18-poll-warp-rescue/podkop_bot.sh' \
-            -o root/usr/lib/podkop_bot/podkop_bot
+          curl -fsSL 'https://raw.githubusercontent.com/Medvedolog/podkop_bot/dev/0.19.18-poll-warp-rescue/podkop_bot.sh' -o root/usr/lib/podkop_bot/podkop_bot
           chmod +x root/usr/lib/podkop_bot/podkop_bot
           (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
 
@@ -34,39 +33,40 @@ jobs:
 
           old_prefix = 'curl -s --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H "$_clash_hdr"}'
           new_prefix = "curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H \"$_clash_hdr\"}"
-          n = s.count(old_prefix)
-          if n != 2:
-              if new_prefix not in s:
-                  raise SystemExit(f'unexpected local Clash curl count: {n}')
-          else:
+          count = s.count(old_prefix)
+          if count:
+              if count != 2:
+                  raise SystemExit(f'unexpected local Clash curl count: {count}')
               s = s.replace(old_prefix, new_prefix)
+          elif new_prefix not in s:
+              raise SystemExit('local Clash curl anchor missing')
 
-          probe_line = '\t_proxies=$(curl -q -s --noproxy \'*\' --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H "$_clash_hdr"} "http://${_clash_addr}/proxies" 2>/dev/null)\n'
-          retry_block = probe_line + '''\t# Bearhole installs a global curl config for system recovery. Clash API is a
-\t# local control-plane endpoint and must never traverse hwelp; retry once as
-\t# sing-box may still be settling immediately after a reload.
-\tif [ -z "$_proxies" ] || [ "$_proxies" = "null" ] || ! printf '%s' "$_proxies" | jq -e '.proxies | type == "object"' >/dev/null 2>&1; then
-\t\tsleep 1
-\t\t_proxies=$(curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H "$_clash_hdr"} "http://${_clash_addr}/proxies" 2>/dev/null)
-\tfi
-'''
-          if 'local control-plane endpoint and must never traverse hwelp' not in s:
+          probe_line = "\t_proxies=$(curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H \"$_clash_hdr\"} \"http://${_clash_addr}/proxies\" 2>/dev/null)\n"
+          retry_block = (
+              probe_line
+              + "\t# Bearhole installs a global curl config for system recovery. Clash API is a local\n"
+              + "\t# control-plane endpoint and must never traverse hwelp. Retry once because sing-box\n"
+              + "\t# may still be settling immediately after a reload.\n"
+              + "\tif [ -z \"$_proxies\" ] || [ \"$_proxies\" = \"null\" ] || ! printf '%s' \"$_proxies\" | jq -e '.proxies | type == \"object\"' >/dev/null 2>&1; then\n"
+              + "\t\tsleep 1\n"
+              + "\t\t_proxies=$(curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H \"$_clash_hdr\"} \"http://${_clash_addr}/proxies\" 2>/dev/null)\n"
+              + "\tfi\n"
+          )
+          if 'control-plane endpoint and must never traverse hwelp' not in s:
               if probe_line not in s:
                   raise SystemExit('active_probe Clash /proxies call not found')
               s = s.replace(probe_line, retry_block, 1)
 
-          # Keep rpcd semantics aligned with the bot: these group types all expose
-          # a current member through .now and can be recursively resolved to a leaf.
-          s = s.replace(
-              'if ($p[$s] and (($p[$s].type == "Selector") or ($p[$s].type == "URLTest"))) then $s',
-              'if ($p[$s] and (($p[$s].type == "Selector") or ($p[$s].type == "URLTest") or ($p[$s].type == "Fallback") or ($p[$s].type == "LoadBalance"))) then $s',
-              1,
-          )
-          s = s.replace(
-              '| map(select((.key | startswith($s)) and ((.value.type == "Selector") or (.value.type == "URLTest"))))',
-              '| map(select((.key | startswith($s)) and ((.value.type == "Selector") or (.value.type == "URLTest") or (.value.type == "Fallback") or (.value.type == "LoadBalance"))))',
-              1,
-          )
+          exact_old = 'if ($p[$s] and (($p[$s].type == "Selector") or ($p[$s].type == "URLTest"))) then $s'
+          exact_new = 'if ($p[$s] and (($p[$s].type == "Selector") or ($p[$s].type == "URLTest") or ($p[$s].type == "Fallback") or ($p[$s].type == "LoadBalance"))) then $s'
+          if exact_old in s:
+              s = s.replace(exact_old, exact_new, 1)
+
+          map_old = '| map(select((.key | startswith($s)) and ((.value.type == "Selector") or (.value.type == "URLTest"))))'
+          map_new = '| map(select((.key | startswith($s)) and ((.value.type == "Selector") or (.value.type == "URLTest") or (.value.type == "Fallback") or (.value.type == "LoadBalance"))))'
+          if map_old in s:
+              s = s.replace(map_old, map_new, 1)
+
           active = s.find('method_active_probe() {')
           tail = s.find('\ncase "$1" in', active)
           if active < 0 or tail < 0:
@@ -77,6 +77,7 @@ jobs:
                   raise SystemExit('active_probe selector case not found')
               body = body.replace('Selector|URLTest)', 'Selector|URLTest|Fallback|LoadBalance)', 1)
               s = s[:active] + body + s[tail:]
+
           p.write_text(s)
 
           m = Path('Makefile')
@@ -90,18 +91,19 @@ jobs:
           checks = Path('tools/check-sources.sh')
           cs = checks.read_text()
           anchor = 'RESCUE_RPC="root/usr/libexec/rpcd/podkop_bot_warpscout_rescue"\n'
-          guard = '''RUNTIME_RPC="root/usr/libexec/rpcd/podkop_bot"
-BOT_SRC="root/usr/lib/podkop_bot/podkop_bot"
-grep -Fq "curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8" "$RUNTIME_RPC" || {
-    echo "Runtime: local Clash API must bypass Bearhole/curlrc" >&2; fail=1
-}
-grep -Fq 'Selector|URLTest|Fallback|LoadBalance)' "$RUNTIME_RPC" || {
-    echo "Runtime: selector-like Clash group coverage regressed" >&2; fail=1
-}
-grep -Fq "curl -q --noproxy '*' -s" "$BOT_SRC" || {
-    echo "Bot: local Clash API must bypass Bearhole/curlrc" >&2; fail=1
-}
-'''
+          guard = (
+              'RUNTIME_RPC="root/usr/libexec/rpcd/podkop_bot"\n'
+              'BOT_SRC="root/usr/lib/podkop_bot/podkop_bot"\n'
+              'grep -Fq "curl -q -s --noproxy \'*\' --connect-timeout 3 --max-time 8" "$RUNTIME_RPC" || {\n'
+              '    echo "Runtime: local Clash API must bypass Bearhole/curlrc" >&2; fail=1\n'
+              '}\n'
+              'grep -Fq \'Selector|URLTest|Fallback|LoadBalance)\' "$RUNTIME_RPC" || {\n'
+              '    echo "Runtime: selector-like Clash group coverage regressed" >&2; fail=1\n'
+              '}\n'
+              'grep -Fq "curl -q --noproxy \'*\' -s" "$BOT_SRC" || {\n'
+              '    echo "Bot: local Clash API must bypass Bearhole/curlrc" >&2; fail=1\n'
+              '}\n'
+          )
           if 'Runtime: local Clash API must bypass Bearhole/curlrc' not in cs:
               if anchor not in cs:
                   raise SystemExit('check-sources runtime guard anchor missing')

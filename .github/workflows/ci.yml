@@ -178,10 +178,10 @@ jobs:
             exec i=0; while [ "$i" -lt 120 ]; do s="$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null || true)"; printf '%s' "$s" | jq -e '.state == "ready" and .running == true and .hwelp_installed == true' >/dev/null 2>&1 && break; printf '%s' "$s" | jq -e '.state == "failed"' >/dev/null 2>&1 && { printf '%s\n' "$s"; exit 1; }; sleep 1; i=$((i+1)); done; [ "$i" -lt 120 ]
             exec curl -q -4 -fsS --proxy http://127.0.0.1:1066 --connect-timeout 5 --max-time 15 https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt >/dev/null
             exec ubus call podkop_bot_bearhole set_port '{"port":1067}' | jq -e '.ok == true' >/dev/null
-            exec i=0; while [ "$i" -lt 120 ]; do s="$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null || true)"; printf '%s' "$s" | jq -e '.state == "ready" and .running == true and .port == 1067' >/dev/null 2>&1 && break; printf '%s' "$s" | jq -e '.state == "failed"' >/dev/null 2>&1 && { printf '%s\n' "$s"; exit 1; }; sleep 1; i=$((i+1)); done; [ "$i" -lt 120 ]
+            exec i=0; while [ "$i" -lt 120 ]; do s="$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null || true)"; printf '%s' "$s" | jq -e '.state == "ready" and .running == true and .port == 1067' >/dev/null 2>&1 && break; sleep 1; i=$((i+1)); done; [ "$i" -lt 120 ]
             exec curl -q -4 -fsS --proxy http://127.0.0.1:1067 --connect-timeout 5 --max-time 15 https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt >/dev/null
             exec ubus call podkop_bot_bearhole set_enabled '{"enabled":false}' | jq -e '.ok == true' >/dev/null
-            exec test ! -e /etc/profile.d/99-podkop-bearhole.sh
+            exec i=0; while [ "$i" -lt 20 ]; do [ ! -e /etc/profile.d/99-podkop-bearhole.sh ] && break; sleep 1; i=$((i+1)); done; [ "$i" -lt 20 ]
 
   release-preflight:
     name: Release signing preflight

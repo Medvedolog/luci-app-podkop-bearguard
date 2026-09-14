@@ -60,9 +60,13 @@ for f in \
     usr/libexec/rpcd/podkop_bot_warpscout_runtime \
     usr/libexec/rpcd/podkop_bot_warpscout_tgscan \
     usr/libexec/rpcd/podkop_bot_warpscout_rescue \
+    usr/libexec/rpcd/podkop_bot_bearhole \
     usr/lib/podkop_bot/install.sh \
     usr/lib/podkop_bot/podkop_bot \
-    usr/lib/podkop_bot/podkop_bot_init
+    usr/lib/podkop_bot/podkop_bot_init \
+    usr/lib/podkop_bot/bearhole.sh \
+    usr/bin/podkop-bearhole-proxy \
+    etc/init.d/podkop-bearhole
 do
     [ -f "$OUT/root/$f" ] || { echo "required payload missing: /$f" >&2; exit 1; }
     chmod 0755 "$OUT/root/$f"

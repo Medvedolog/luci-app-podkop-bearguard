@@ -9,6 +9,7 @@ BH_STATE="$BH_DIR/state"
 BH_PID="$BH_DIR/qualify.pid"
 BH_LOCK="$BH_DIR/qualify.lock"
 BH_LOG="$BH_DIR/bearhole.log"
+BH_AUTH="$BH_DIR/hwelp.auth"
 BH_BEGIN="# BEGIN PODKOP BEARHOLE"
 BH_END="# END PODKOP BEARHOLE"
 HWELP=/usr/bin/hwelp-proxy
@@ -25,7 +26,28 @@ bh_section_id(){ _s=$(printf '%s' "$1"|tr '[:upper:]' '[:lower:]'|sed -E 's/[^a-
 bh_cfg_get(){ _k=$1; _d=$2; _v=$(uci -q get "podkop_bearhole.main.$_k" 2>/dev/null); [ -n "$_v" ]&&printf '%s' "$_v"||printf '%s' "$_d"; }
 bh_cfg_set(){ _k=$1; _v=$2; uci -q get podkop_bearhole.main >/dev/null 2>&1||uci -q set podkop_bearhole.main=bearhole; uci -q set "podkop_bearhole.main.$_k=$_v"&&uci -q commit podkop_bearhole; }
 bh_port(){ _p=$(bh_cfg_get port 1066); case "$_p" in ''|*[!0-9]*) _p=1066;; esac; [ "$_p" -ge 1024 ] 2>/dev/null&&[ "$_p" -le 65535 ] 2>/dev/null||_p=1066; printf '%s' "$_p"; }
+bh_auth_enabled(){ [ "$(bh_cfg_get auth_enabled 0)" = 1 ]; }
+bh_auth_user(){ bh_cfg_get auth_user ''; }
+bh_auth_pass(){ bh_cfg_get auth_pass ''; }
+bh_urlencode(){ printf '%s' "$1" | jq -sRr @uri 2>/dev/null; }
 bh_gateway(){ printf 'http://127.0.0.1:%s' "$(bh_port)"; }
+bh_gateway_auth(){
+    if bh_auth_enabled; then
+        _u=$(bh_auth_user); _p=$(bh_auth_pass)
+        [ -n "$_u" ] && [ -n "$_p" ] || return 1
+        printf 'http://%s:%s@127.0.0.1:%s' "$(bh_urlencode "$_u")" "$(bh_urlencode "$_p")" "$(bh_port)"
+    else
+        bh_gateway
+    fi
+}
+bh_write_authfile(){
+    rm -f "$BH_AUTH" 2>/dev/null || true
+    bh_auth_enabled || return 0
+    _u=$(bh_auth_user); _p=$(bh_auth_pass)
+    [ -n "$_u" ] && [ -n "$_p" ] || return 1
+    ( umask 077; printf 'user=%s\npass=%s\n' "$_u" "$_p" > "$BH_AUTH" ) || return 1
+    chmod 600 "$BH_AUTH" 2>/dev/null
+}
 bh_hwelp_ready(){ [ -x "$HWELP" ]&&"$HWELP" --check >/dev/null 2>&1; }
 bh_hwelp_version(){ [ -x "$HWELP" ]||return 0; "$HWELP" --version 2>/dev/null|awk '{print $2;exit}'; }
 
@@ -141,7 +163,8 @@ bh_strip_block(){ _file=$1; [ -f "$_file" ]||return 0; _tmp="$_file.bearhole.$$"
 bh_append_block(){ _file=$1; shift; mkdir -p "$(dirname "$_file")" 2>/dev/null; [ -f "$_file" ]||: >"$_file"; bh_strip_block "$_file"; { printf '%s\n' "$BH_BEGIN"; for _line in "$@"; do printf '%s\n' "$_line"; done; printf '%s\n' "$BH_END"; } >>"$_file"; }
 
 bh_system_on(){
-    _gw=$(bh_gateway); mkdir -p /etc/profile.d /root 2>/dev/null
+    _gw=$(bh_gateway_auth) || return 1
+    mkdir -p /etc/profile.d /root 2>/dev/null
     cat >/etc/profile.d/99-podkop-bearhole.sh <<EOF2
 # Managed by luci-app-podkop-bot OpenWrt Bearhole.
 export http_proxy=$_gw
@@ -160,7 +183,7 @@ option http_proxy $_gw
 option https_proxy $_gw
 option no_proxy 127.0.0.1,localhost,::1
 EOF2
-    bh_log "event=bearhole_enable gateway=127.0.0.1:$(bh_port)"
+    bh_log "event=bearhole_enable gateway=127.0.0.1:$(bh_port) auth=$([ "$(bh_cfg_get auth_enabled 0)" = 1 ] && echo on || echo off)"
 }
 
 bh_system_off(){ rm -f /etc/profile.d/99-podkop-bearhole.sh /etc/opkg/99-podkop-bearhole.conf /etc/opkg/99-hwelp-bootstrap.conf 2>/dev/null; bh_strip_block /etc/environment; bh_strip_block /root/.curlrc; bh_strip_block /root/.wgetrc; bh_log 'event=bearhole_disable'; }
@@ -170,14 +193,15 @@ bh_status(){
     _pid=$(ubus call service list '{"name":"podkop-bearhole"}' 2>/dev/null|jq -r '.["podkop-bearhole"].instances[]?.pid // 0' 2>/dev/null|head -n1); case "$_pid" in ''|*[!0-9]*) _pid=0;; esac; _running=false; [ "$_pid" -gt 0 ] 2>/dev/null&&kill -0 "$_pid" 2>/dev/null&&_running=true
     _cur_id=$(cut -d'|' -f1 "$BH_DIR/current" 2>/dev/null); _cur_label=$(cut -d'|' -f2- "$BH_DIR/current" 2>/dev/null); _valid=$(awk -F'|' '$10=="VALID"{n++}END{print n+0}' "$BH_RESULTS" 2>/dev/null); _degraded=$(awk -F'|' '$10=="DEGRADED"{n++}END{print n+0}' "$BH_RESULTS" 2>/dev/null)
     _system=false; [ -f /etc/profile.d/99-podkop-bearhole.sh ]&&_system=true; _installed=false; [ -x "$HWELP" ]&&_installed=true; _ver=$(bh_hwelp_version); _port=$(bh_port); _gw=$(bh_gateway)
-    printf '{"ok":true,"enabled":%s,"running":%s,"state":%s,"reason":%s,"updated_at":%s,"gateway":%s,"port":%s,"route_id":%s,"route_label":%s,"system_applied":%s,"valid_routes":%s,"degraded_routes":%s,"probing":%s,"pid":%s,"hwelp_installed":%s,"hwelp_version":%s}\n' "$_enj" "$_running" "$(bh_json_str "$_state")" "$(bh_json_str "$_reason")" "$_upd" "$(bh_json_str "$_gw")" "$_port" "$(bh_json_str "$_cur_id")" "$(bh_json_str "$_cur_label")" "$_system" "${_valid:-0}" "${_degraded:-0}" "$([ -d "$BH_LOCK" ]&&echo true||echo false)" "$_pid" "$_installed" "$(bh_json_str "$_ver")"
+    _auth=false; [ "$(bh_cfg_get auth_enabled 0)" = 1 ]&&_auth=true; _auth_user=$(bh_auth_user); _auth_configured=false; [ -n "$_auth_user" ]&&[ -n "$(bh_auth_pass)" ]&&_auth_configured=true
+    printf '{"ok":true,"enabled":%s,"running":%s,"state":%s,"reason":%s,"updated_at":%s,"gateway":%s,"port":%s,"route_id":%s,"route_label":%s,"system_applied":%s,"valid_routes":%s,"degraded_routes":%s,"probing":%s,"pid":%s,"hwelp_installed":%s,"hwelp_version":%s,"auth_enabled":%s,"auth_user":%s,"auth_configured":%s}\n' "$_enj" "$_running" "$(bh_json_str "$_state")" "$(bh_json_str "$_reason")" "$_upd" "$(bh_json_str "$_gw")" "$_port" "$(bh_json_str "$_cur_id")" "$(bh_json_str "$_cur_label")" "$_system" "${_valid:-0}" "${_degraded:-0}" "$([ -d "$BH_LOCK" ]&&echo true||echo false)" "$_pid" "$_installed" "$(bh_json_str "$_ver")" "$_auth" "$(bh_json_str "$_auth_user")" "$_auth_configured"
 }
 
 bh_results_json(){ printf '{"ok":true,"items":['; _first=1; while IFS='|' read -r _id _label _ep _core _raw _api _codeload _asset _feeds _status _checked; do [ -n "$_id" ]||continue; [ "$_first" = 1 ]&&_first=0||printf ','; printf '{"id":%s,"label":%s,"endpoint":%s,"github_core":"%s","github_raw":"%s","github_api":"%s","github_codeload":"%s","github_assets":"%s","openwrt_feeds":"%s","status":"%s","checked_at":%s}' "$(bh_json_str "$_id")" "$(bh_json_str "$_label")" "$(bh_json_str "$(bh_mask_proxy "$_ep")")" "$_core" "$_raw" "$_api" "$_codeload" "$_asset" "$_feeds" "$_status" "${_checked:-0}"; done <"$BH_RESULTS" 2>/dev/null; printf ']}\n'; }
 
-bh_disable(){ bh_cfg_set enabled 0||return 1; /etc/init.d/podkop-bearhole stop >/dev/null 2>&1||true; /etc/init.d/podkop-bearhole disable >/dev/null 2>&1||true; bh_system_off; bh_state_write disabled user; }
+bh_disable(){ bh_cfg_set enabled 0||return 1; /etc/init.d/podkop-bearhole stop >/dev/null 2>&1||true; /etc/init.d/podkop-bearhole disable >/dev/null 2>&1||true; bh_system_off; rm -f "$BH_AUTH" 2>/dev/null || true; bh_state_write disabled user; }
 
 case "${1:-}" in
- registry) bh_registry;; bootstrap) bh_write_bootstrap_routes;; qualify) bh_qualify;; qualify-start) bh_qualify_start;; select) bh_select_valid_routes;; install-hwelp) bh_install_hwelp;; system-on) bh_system_on;; system-off) bh_system_off;; status) bh_status;; results) bh_results_json;; disable) bh_disable;;
- *) echo "usage: $0 {registry|bootstrap|qualify|qualify-start|select|install-hwelp|system-on|system-off|status|results|disable}" >&2; exit 2;;
+ registry) bh_registry;; bootstrap) bh_write_bootstrap_routes;; qualify) bh_qualify;; qualify-start) bh_qualify_start;; select) bh_select_valid_routes;; install-hwelp) bh_install_hwelp;; system-on) bh_system_on;; system-off) bh_system_off;; proxy-url) bh_gateway_auth;; status) bh_status;; results) bh_results_json;; disable) bh_disable;;
+ *) echo "usage: $0 {registry|bootstrap|qualify|qualify-start|select|install-hwelp|system-on|system-off|proxy-url|status|results|disable}" >&2; exit 2;;
 esac

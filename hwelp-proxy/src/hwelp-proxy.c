@@ -860,7 +860,7 @@ int main(int argc, char **argv)
     signal(SIGCHLD, SIG_IGN);
     openlog("hwelp-proxy", LOG_PID, LOG_DAEMON);
 
-    hlog(LOG_NOTICE, "(^..^) hwelp proxy starting on %s:%d; auth=%s",
+    hlog(LOG_NOTICE, "ʕ•ᴥ•ʔ hwelp proxy starting on %s:%d; auth=%s",
          listen_host, listen_port, local_auth ? "on" : "off");
 
     int listener = make_listener(false);
@@ -872,7 +872,7 @@ int main(int argc, char **argv)
 
     struct route startup_routes[MAX_ROUTES];
     int startup_count = load_routes(startup_routes);
-    hlog(LOG_NOTICE, "(^..^) hwelp proxy ready to help; %d route%s available",
+    hlog(LOG_NOTICE, "ʕ•ᴥ•ʔ hwelp proxy ready to help; %d route%s available",
          startup_count, startup_count == 1 ? "" : "s");
 
     for (;;) {

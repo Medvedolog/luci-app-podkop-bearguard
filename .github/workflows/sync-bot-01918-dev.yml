@@ -1,0 +1,41 @@
+name: Sync 0.19.18 bot into dev package
+
+on:
+  push:
+    branches:
+      - dev/0.19.18-bearhole-mvp
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev/0.19.18-bearhole-mvp
+          fetch-depth: 0
+      - name: Fetch standalone dev bot
+        run: |
+          set -eu
+          curl -fsSL \
+            https://raw.githubusercontent.com/Medvedolog/podkop_bot/dev/0.19.18-poll-warp-rescue/podkop_bot.sh \
+            -o root/usr/lib/podkop_bot/podkop_bot
+          chmod 0755 root/usr/lib/podkop_bot/podkop_bot
+          sh -n root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'BOT_VERSION="0.19.18"' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'PODKOP_TRANSPORT_PATCH_V2' root/usr/lib/podkop_bot/podkop_bot
+          (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
+      - name: Commit synchronized vendor
+        run: |
+          set -eu
+          if git diff --quiet -- root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/vendor.sha256; then
+            echo 'vendor already synchronized'
+            exit 0
+          fi
+          git config user.name 'medvedolog-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/vendor.sha256
+          git commit -m 'sync(bot): vendor 0.19.18 POLL/WARP transport fix'
+          git push origin HEAD:dev/0.19.18-bearhole-mvp

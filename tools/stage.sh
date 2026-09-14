@@ -62,6 +62,17 @@ if count != 2:
 p.write_text(s.replace(old, new))
 PY
 
+# 0.19.18 transport hotfix.  Keep the committed vendor blob byte-identical to
+# standalone until that repository's dev branch is synchronized, but never ship
+# the known POLL->Direct regression in an installable package.
+BOT="$OUT/root/usr/lib/podkop_bot/podkop_bot"
+[ -f "$BOT" ] || { echo "required payload missing: /usr/lib/podkop_bot/podkop_bot" >&2; exit 1; }
+python3 "$ROOT/tools/patch-bot-transport.py" "$BOT"
+sh -n "$BOT"
+grep -Fq 'PODKOP_TRANSPORT_PATCH_V2' "$BOT" || { echo "transport patch missing from staged bot" >&2; exit 1; }
+grep -Fq 'action=hold_direct' "$BOT" || { echo "POLL direct-demotion guard missing from staged bot" >&2; exit 1; }
+grep -Fq 'ROUTE_KEY="warp_rescue"' "$BOT" || { echo "WARP Rescue runtime tier missing from staged bot" >&2; exit 1; }
+
 for f in \
     usr/libexec/rpcd/podkop_bot \
     usr/libexec/rpcd/podkop_bot_warpscout \

@@ -15,3 +15,8 @@ for f in root/www/luci-static/resources/view/podkop-bot/*-async.js; do
 done
 
 echo "LuCI async wrapper constructor contract OK"
+
+# This script is already a dedicated source-regression CI step. Keep the bot
+# transport hardware regression in the same early gate so it fails before any
+# package/SDK build starts.
+sh tools/check-bot-transport.sh

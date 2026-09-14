@@ -32,7 +32,10 @@ packages:
     files: ./dist/root
 
     description: "LuCI web interface for installing, configuring and diagnosing the podkop_bot Telegram management service on OpenWrt."
-    depends: [libc, luci-base, jq, curl, ucode, ucode-mod-fs, ucode-mod-socket, ucode-mod-struct, ucode-mod-uloop]
+    # Bearhole engine modules are intentionally not hard dependencies. A broken
+    # feed must never block installation/repair of luci-app-podkop-bot itself;
+    # RPC/LuCI gate the Bearhole switch until the optional engine is available.
+    depends: [libc, luci-base, jq, curl]
     conffiles:
       - /etc/config/podkop_bearhole
     license: GPL-2.0-or-later

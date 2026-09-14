@@ -82,7 +82,9 @@ for f in \
     usr/lib/podkop_bot/podkop_bot \
     usr/lib/podkop_bot/podkop_bot_init \
     usr/lib/podkop_bot/bearhole.sh \
-    etc/init.d/podkop-bearhole
+    usr/lib/podkop_bot/warpscout-rescue-watchdog \
+    etc/init.d/podkop-bearhole \
+    etc/init.d/podkop-warp-rescue
 do
     [ -f "$OUT/root/$f" ] || { echo "required payload missing: /$f" >&2; exit 1; }
     chmod 0755 "$OUT/root/$f"

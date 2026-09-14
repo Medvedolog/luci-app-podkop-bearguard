@@ -28,15 +28,28 @@ do
     if sh -n "$f" 2>/tmp/pb-sherr; then echo "ok    sh -n $f"; else echo "FAIL  sh -n $f"; cat /tmp/pb-sherr; fail=1; fi
 done
 
-# Bearhole's gateway is ucode rather than shell. Host CI does not ship the
-# OpenWrt ucode runtime, so assert the source-level contracts here; owl/owfeed
-# installation tests cover the declared ucode runtime dependencies.
-BEAR_PROXY="root/usr/bin/podkop-bearhole-proxy"
-[ -f "$BEAR_PROXY" ] || { echo "FAIL  Bearhole gateway missing"; fail=1; }
-grep -Fq '#!/usr/bin/env ucode' "$BEAR_PROXY" || { echo "FAIL  Bearhole gateway shebang"; fail=1; }
-grep -Fq 'const CONNECT_TIMEOUT = 5000;' "$BEAR_PROXY" || { echo "FAIL  Bearhole upstream connect timeout missing"; fail=1; }
-grep -Fq 'socket.connect(host, port, { socktype: socket.SOCK_STREAM }, CONNECT_TIMEOUT)' "$BEAR_PROXY" || { echo "FAIL  Bearhole bounded connect helper missing"; fail=1; }
-grep -Fq "object:'podkop_bot_bearhole'" root/www/luci-static/resources/view/podkop-bot/transport.js || { echo "FAIL  Bearhole transport integration missing"; fail=1; }
+# HWELP is a tiny native package, deliberately separate from the noarch LuCI
+# package. Compile it on the CI host as an early C/parser self-test; OpenWrt SDK
+# builds later prove target ABI/package compatibility.
+HWELP_SRC="hwelp-proxy/src/hwelp-proxy.c"
+HWELP_MAKE="hwelp-proxy/Makefile"
+[ -f "$HWELP_SRC" ] || { echo "FAIL  native HWELP source missing"; fail=1; }
+[ -f "$HWELP_MAKE" ] || { echo "FAIL  native HWELP package Makefile missing"; fail=1; }
+if [ -f "$HWELP_SRC" ]; then
+    _hwelp_tmp="/tmp/hwelp-proxy-check.$$"
+    if cc -std=c99 -Wall -Wextra -DHWELP_VERSION='"ci"' -o "$_hwelp_tmp" "$HWELP_SRC"; then
+        if "$_hwelp_tmp" --check >/dev/null; then echo "ok    c     hwelp-proxy --check"; else echo "FAIL  hwelp-proxy self-test"; fail=1; fi
+    else
+        echo "FAIL  native HWELP host compile"; fail=1
+    fi
+    rm -f "$_hwelp_tmp"
+fi
+grep -Fq 'DEPENDS:=+libc' "$HWELP_MAKE" || { echo "FAIL  hwelp-proxy must depend only on libc"; fail=1; }
+grep -Fq 'PROXY=/usr/bin/hwelp-proxy' root/usr/libexec/rpcd/podkop_bot_bearhole || { echo "FAIL  Bearhole RPC not using native HWELP"; fail=1; }
+grep -Fq 'BH_PROXY=/usr/bin/hwelp-proxy' root/etc/init.d/podkop-bearhole || { echo "FAIL  Bearhole init not using native HWELP"; fail=1; }
+[ ! -e root/usr/bin/podkop-bearhole-proxy ] || { echo "FAIL  retired ucode Bearhole helper returned"; fail=1; }
+grep -Fq 'install-hwelp' root/usr/lib/podkop_bot/bearhole.sh || { echo "FAIL  on-demand HWELP bootstrap missing"; fail=1; }
+grep -Fq 'set_port' root/usr/libexec/rpcd/podkop_bot_bearhole || { echo "FAIL  HWELP configurable port RPC missing"; fail=1; }
 
 # Vendored bot is an integrity contract, not merely documentation.
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
@@ -45,15 +58,12 @@ else
     echo "FAIL  vendor.sha256"; fail=1
 fi
 
-# The stale historical installer must never re-enter the payload.
 if [ -f root/usr/share/luci-app-podkop-bot/install.sh ]; then
     echo "FAIL  stale duplicate installer is present"; fail=1
 fi
 
 # System journal is operator/machine-facing: built-in event templates stay
 # English/ASCII. Localized labels belong in Telegram/LuCI, not logread.
-# Also reject the known human-facing variables that can contain localized route
-# names even when the logger source line itself is ASCII.
 python3 - <<'PY' || fail=1
 import pathlib, re, sys
 files = [
@@ -64,8 +74,6 @@ files = [
 forbidden_vars = (
     'ROUTE_NAME', 'LAST_ROUTE_NAME', 'LAST_ROUTE_FAST_NAME',
     'LAST_ROUTE_POLL_NAME', 'active_px_display',
-    # UI/display fallbacks below may contain localized text; logger must use
-    # an ASCII/machine value (normally via _journal_value) instead.
     'PROBE_COUNTRY', 'PROBE_CF_COUNTRY', 'PROBE_GOOGLE_COUNTRY',
     'PROBE_ORG', 'px_type',
 )
@@ -87,8 +95,8 @@ if errors:
 print('journal language contract OK')
 PY
 
-# RPC contract: every advertised method has a definition/dispatch/ACL entry and
-# every frontend RPC call names an advertised method.
+# RPC contract: every advertised primary podkop method has definition/dispatch/ACL
+# coverage and every frontend primary RPC call names an advertised method.
 python3 - <<'PY' || fail=1
 import json, pathlib, re, sys
 root = pathlib.Path('.')
@@ -121,6 +129,25 @@ if errors:
 print(f'RPC contract OK: {len(listed)} methods')
 PY
 
+# Bearhole RPC contract including the new native-engine controls.
+python3 - <<'PY' || fail=1
+import json, pathlib, re, sys
+p = pathlib.Path('root/usr/libexec/rpcd/podkop_bot_bearhole')
+s = p.read_text()
+m = re.search(r"list\)\s*\n\s*echo '(\{.*?\})'", s, re.S)
+if not m:
+    raise SystemExit('Bearhole RPC list JSON not found')
+listed=set(json.loads(m.group(1)))
+acl=json.loads(pathlib.Path('root/usr/share/rpcd/acl.d/luci-app-podkop-bot.json').read_text())['luci-app-podkop-bot']
+allowed=set(acl['read']['ubus']['podkop_bot_bearhole'])|set(acl['write']['ubus']['podkop_bot_bearhole'])
+missing=listed-allowed
+if missing:
+    raise SystemExit(f'Bearhole methods missing from ACL: {sorted(missing)}')
+for need in ('start','set_enabled','set_port','qualify_start','status','results','log'):
+    if need not in listed: raise SystemExit(f'Bearhole RPC missing {need}')
+print('Bearhole RPC contract OK')
+PY
+
 # Telegram/root security invariants (0.19.17+).
 BOT_SRC="root/usr/lib/podkop_bot/podkop_bot"
 grep -Fq '[ -z "$ALLOW_ANON_ADMINS" ] && ALLOW_ANON_ADMINS="0"' "$BOT_SRC" || {
@@ -150,7 +177,7 @@ grep -Fq "form.ListValue, 'log_level'" root/www/luci-static/resources/view/podko
     echo "logging: LuCI verbosity selector missing" >&2; exit 1;
 }
 
-# Runtime/LuCI regression guards (0.19.18-r20+).
+# Runtime/LuCI regression guards.
 OVERVIEW_ASYNC="root/www/luci-static/resources/view/podkop-bot/overview-async.js"
 grep -Fq 'return base.constructor.extend({' "$OVERVIEW_ASYNC" || {
     echo "LuCI: overview async wrapper must return a constructor" >&2; fail=1

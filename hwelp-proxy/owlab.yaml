@@ -1,0 +1,18 @@
+version: 1
+
+project:
+  name: hwelp-proxy
+
+routers:
+  - id: owrt2410-x86
+    release: "24.10.8"
+    arch: x86_64
+  - id: owrt2512-x86
+    release: "25.12.5"
+    arch: x86_64
+  - id: owrt2410-a53
+    release: "24.10.8"
+    arch: aarch64_cortex-a53
+  - id: owrt2512-a53
+    release: "25.12.5"
+    arch: aarch64_cortex-a53

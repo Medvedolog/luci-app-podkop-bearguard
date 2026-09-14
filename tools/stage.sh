@@ -62,21 +62,13 @@ if count != 2:
 p.write_text(s.replace(old, new))
 PY
 
-# 0.19.18 transport hotfix.  Keep the committed vendor blob byte-identical to
-# standalone until that repository's dev branch is synchronized, but never ship
-# the known POLL->Direct regression in an installable package.
+# Vendored bot is already synchronized byte-for-byte with standalone dev.
 BOT="$OUT/root/usr/lib/podkop_bot/podkop_bot"
 [ -f "$BOT" ] || { echo "required payload missing: /usr/lib/podkop_bot/podkop_bot" >&2; exit 1; }
-python3 "$ROOT/tools/patch-bot-transport.py" "$BOT"
 sh -n "$BOT"
-grep -Fq 'PODKOP_TRANSPORT_PATCH_V2' "$BOT" || { echo "transport patch missing from staged bot" >&2; exit 1; }
-grep -Fq 'action=hold_direct' "$BOT" || { echo "POLL direct-demotion guard missing from staged bot" >&2; exit 1; }
-grep -Fq 'ROUTE_KEY="warp_rescue"' "$BOT" || { echo "WARP Rescue runtime tier missing from staged bot" >&2; exit 1; }
-# vendor.sha256 describes the payload that is actually installed.  The source
-# tree still verifies its pristine standalone blob in check-sources.sh.
 (
     cd "$OUT/root/usr/lib/podkop_bot"
-    sha256sum podkop_bot > vendor.sha256
+    sha256sum -c vendor.sha256
 )
 
 for f in \

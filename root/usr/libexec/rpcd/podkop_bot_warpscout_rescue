@@ -21,6 +21,7 @@ CONTROL_PID="$STATE_DIR/warpscout_rescue_control.pid"
 RESCUE_STATE="$STATE_DIR/warpscout_rescue.state"
 RESCUE_LOG="$STATE_DIR/warpscout_rescue.log"
 RESCUE_MAG="$STATE_DIR/warpscout_rescue.magazine"
+RESCUE_MAG_PERSIST="$PERSIST_DIR/warpscout-rescue.magazine"
 
 mkdir -p "$STATE_DIR" "$PERSIST_DIR" 2>/dev/null
 
@@ -53,16 +54,32 @@ handoff_runtime(){
 	return 0
 }
 
+restore_magazine(){
+	[ -s "$RESCUE_MAG" ] && return 0
+	[ -s "$RESCUE_MAG_PERSIST" ] || return 1
+	cp "$RESCUE_MAG_PERSIST" "$RESCUE_MAG" 2>/dev/null || return 1
+	return 0
+}
+persist_magazine(){
+	[ -s "$RESCUE_MAG" ] || return 1
+	cp "$RESCUE_MAG" "$RESCUE_MAG_PERSIST" 2>/dev/null || return 1
+	chmod 600 "$RESCUE_MAG_PERSIST" 2>/dev/null || true
+	return 0
+}
 build_magazine(){
-	[ -s "$TG_RESULTS" ] || { rm -f "$RESCUE_MAG" "$RESCUE_MAG.$$" 2>/dev/null; return 1; }
+	if [ ! -s "$TG_RESULTS" ]; then
+		restore_magazine
+		return $?
+	fi
 	awk -F'|' '$1=="warp" && $5=="VALID" && $4 ~ /^[0-9]+\./ {print $4"|"$8"|"$12"|"$11}' "$TG_RESULTS" \
 		| sort -t'|' -k3,3n -k2,2n > "$RESCUE_MAG.$$"
-	[ -s "$RESCUE_MAG.$$" ] || { rm -f "$RESCUE_MAG.$$" "$RESCUE_MAG" 2>/dev/null; return 1; }
+	[ -s "$RESCUE_MAG.$$" ] || { rm -f "$RESCUE_MAG.$$" "$RESCUE_MAG" "$RESCUE_MAG_PERSIST" 2>/dev/null; return 1; }
 	mv "$RESCUE_MAG.$$" "$RESCUE_MAG"
+	persist_magazine || true
 }
-magazine_count(){ _n=$(wc -l < "$RESCUE_MAG" 2>/dev/null | tr -d ' '); case "$_n" in ''|*[!0-9]*) _n=0;; esac; printf '%s' "$_n"; }
-magazine_index(){ _ep="$1"; awk -F'|' -v e="$_ep" '$1==e{print NR;exit}' "$RESCUE_MAG" 2>/dev/null; }
-magazine_has(){ _ep="$1"; awk -F'|' -v e="$_ep" '$1==e{f=1;exit}END{exit(f?0:1)}' "$RESCUE_MAG" 2>/dev/null; }
+magazine_count(){ restore_magazine >/dev/null 2>&1 || true; _n=$(wc -l < "$RESCUE_MAG" 2>/dev/null | tr -d ' '); case "$_n" in ''|*[!0-9]*) _n=0;; esac; printf '%s' "$_n"; }
+magazine_index(){ restore_magazine >/dev/null 2>&1 || true; _ep="$1"; awk -F'|' -v e="$_ep" '$1==e{print NR;exit}' "$RESCUE_MAG" 2>/dev/null; }
+magazine_has(){ restore_magazine >/dev/null 2>&1 || true; _ep="$1"; awk -F'|' -v e="$_ep" '$1==e{f=1;exit}END{exit(f?0:1)}' "$RESCUE_MAG" 2>/dev/null; }
 
 probe_tg(){
 	_port="$1"; _tok=$(uci -q get podkop_bot.settings.bot_token 2>/dev/null); [ -n "$_tok" ] || return 2
@@ -184,6 +201,14 @@ run_control(){
 				state_write reload_failed "" 0 "$(magazine_count)" reload_failed; _rc=1
 			fi
 			;;
+		resume)
+			if [ -n "$_target" ] && valid_endpoint "$_target" && magazine_has "$_target" && fire_selected_worker "$_target"; then
+				_rc=0
+			else
+				echo "[rescue] resume: previous WARP unavailable, falling through magazine"
+				fire_worker "$_auto"; _rc=$?
+			fi
+			;;
 		selected) fire_selected_worker "$_target"; _rc=$?;;
 		*) fire_worker "$_auto"; _rc=$?;;
 	esac
@@ -202,10 +227,15 @@ method_status(){
 	_busy=false; pid_alive "$CONTROL_PID" && _busy=true
 	_s=$(state_get state); [ -n "$_s" ] || _s=idle; _ep=$(state_get endpoint); _idx=$(state_get index); _reason=$(state_get reason); _upd=$(state_get updated_at)
 	_total=$(magazine_count); [ "$_run" = true ] || [ "$_busy" = true ] || _idx=0
-	_armed=$(cfg_get rescue_auto); [ "$_armed" = 1 ] || _armed=0; _bear=$(cfg_get bearhole_gate); [ "$_bear" = 1 ] || _bear=0; _port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac
-	if [ "$_armed" = 1 ]; then _armed_j=true; else _armed_j=false; fi; if [ "$_bear" = 1 ]; then _bear_j=true; else _bear_j=false; fi
+	_armed=$(cfg_get rescue_auto); [ "$_armed" = 1 ] || _armed=0
+	_autostart=$(cfg_get rescue_autostart); [ "$_autostart" = 0 ] || _autostart=1
+	_bear=$(cfg_get bearhole_gate); [ "$_bear" = 1 ] || _bear=0
+	_port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac
+	if [ "$_armed" = 1 ]; then _armed_j=true; else _armed_j=false; fi
+	if [ "$_autostart" = 1 ]; then _autostart_j=true; else _autostart_j=false; fi
+	if [ "$_bear" = 1 ]; then _bear_j=true; else _bear_j=false; fi
 	if [ "$_total" -gt 0 ] 2>/dev/null; then _mag_j=true; else _mag_j=false; fi
-	printf '{"ok":true,"running":%s,"busy":%s,"state":%s,"endpoint":%s,"index":%s,"total":%s,"magazine_ready":%s,"reason":%s,"updated_at":%s,"auto":%s,"bearhole_gate":%s,"proxy":%s,"pid":%s,"rss_mb":%s}\n' "$_run" "$_busy" "$(json_str "$_s")" "$(json_str "$_ep")" "${_idx:-0}" "$_total" "$_mag_j" "$(json_str "$_reason")" "${_upd:-0}" "$_armed_j" "$_bear_j" "$(json_str "socks5h://127.0.0.1:$_port")" "$_pid" "$_rss"
+	printf '{"ok":true,"running":%s,"busy":%s,"state":%s,"endpoint":%s,"index":%s,"total":%s,"magazine_ready":%s,"reason":%s,"updated_at":%s,"auto":%s,"autostart":%s,"bearhole_gate":%s,"proxy":%s,"pid":%s,"rss_mb":%s}\n' "$_run" "$_busy" "$(json_str "$_s")" "$(json_str "$_ep")" "${_idx:-0}" "$_total" "$_mag_j" "$(json_str "$_reason")" "${_upd:-0}" "$_armed_j" "$_autostart_j" "$_bear_j" "$(json_str "socks5h://127.0.0.1:$_port")" "$_pid" "$_rss"
 }
 
 method_magazine(){
@@ -229,7 +259,7 @@ EOF
 	printf ']}\n'
 }
 
-method_set(){ read -r _in 2>/dev/null; _k=$(printf '%s' "$_in"|jq -r '.key//""'); _v=$(printf '%s' "$_in"|jq -r '.value//""'); case "$_k" in rescue_auto|bearhole_gate) case "$_v" in 0|1) cfg_write "$_k" "$_v"; printf '{"ok":true}\n';; *) printf '{"ok":false,"reason":"bad_value"}\n';; esac;; *) printf '{"ok":false,"reason":"bad_key"}\n';; esac; }
+method_set(){ read -r _in 2>/dev/null; _k=$(printf '%s' "$_in"|jq -r '.key//""'); _v=$(printf '%s' "$_in"|jq -r '.value//""'); case "$_k" in rescue_auto|rescue_autostart|bearhole_gate) case "$_v" in 0|1) cfg_write "$_k" "$_v"; printf '{"ok":true}\n';; *) printf '{"ok":false,"reason":"bad_value"}\n';; esac;; *) printf '{"ok":false,"reason":"bad_key"}\n';; esac; }
 
 preflight_common(){
 	[ -x "$BIN" ] && [ -s "$ACCOUNT_FILE" ] || { printf '{"ok":false,"reason":"not_ready"}\n'; return 1; }
@@ -249,7 +279,7 @@ method_trigger(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_common ||
 method_next(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_fire || return; stop_rescue; start_control fire 0 ""; printf '{"ok":true}\n'; }
 method_fire(){ read -r _in 2>/dev/null; _ep=$(printf '%s' "$_in" | jq -r '.endpoint // ""' 2>/dev/null); valid_endpoint "$_ep" || { printf '{"ok":false,"reason":"bad_endpoint"}\n'; return; }; magazine_has "$_ep" || { printf '{"ok":false,"reason":"not_in_magazine"}\n'; return; }; preflight_fire || return; : >"$RESCUE_LOG"; if pid_alive "$RESCUE_PID" && [ "$(state_get endpoint)" = "$_ep" ]; then printf '{"ok":true,"already_active":true}\n'; return; fi; stop_rescue; start_control selected 0 "$_ep"; printf '{"ok":true}\n'; }
 method_reload(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_reload || return; stop_rescue; start_control reload 0 ""; printf '{"ok":true}\n'; }
-method_stop(){ read -r _in 2>/dev/null; stop_control; stop_rescue; rm -f "$RESCUE_MAG" "$RESCUE_MAG.$$" 2>/dev/null; cfg_write enabled 0; state_write stopped "" 0 0 manual; printf '{"ok":true}\n'; }
+method_stop(){ read -r _in 2>/dev/null; stop_control; stop_rescue; rm -f "$RESCUE_MAG" "$RESCUE_MAG.$$" "$RESCUE_MAG_PERSIST" 2>/dev/null; cfg_write enabled 0; state_write stopped "" 0 0 manual; printf '{"ok":true}\n'; }
 method_pause(){ read -r _in 2>/dev/null; _resume_ep=$(state_get endpoint); stop_control; stop_rescue; state_write paused "$_resume_ep" 0 "$(magazine_count)" runtime_test; printf '{"ok":true}\n'; }
 method_resume(){
 	read -r _in 2>/dev/null
@@ -257,12 +287,12 @@ method_resume(){
 	pid_alive "$RESCUE_PID" && { printf '{"ok":true,"already_active":true}\n'; return; }
 	_resume_ep=$(state_get endpoint)
 	preflight_common || return
+	_auto=$(cfg_get rescue_auto); [ "$_auto" = 1 ] || _auto=0
 	if [ -n "$_resume_ep" ] && valid_endpoint "$_resume_ep" && magazine_has "$_resume_ep"; then
-		start_control selected 0 "$_resume_ep"
+		start_control resume "$_auto" "$_resume_ep"
 		printf '{"ok":true,"restoring":%s}\n' "$(json_str "$_resume_ep")"
 		return
 	fi
-	_auto=$(cfg_get rescue_auto); [ "$_auto" = 1 ] || _auto=0
 	start_control fire "$_auto" ""
 	printf '{"ok":true,"fallback":true}\n'
 }

@@ -5,8 +5,14 @@ CTL=/usr/lib/podkop_bot/bearhole.sh
 PROXY=/usr/bin/podkop-bearhole-proxy
 BH_DIR=/tmp/podkop_bot/bearhole
 REGISTRY="$BH_DIR/routes.registry"
+RESULTS="$BH_DIR/system.results"
 STATE="$BH_DIR/state"
 LOG="$BH_DIR/bearhole.log"
+START_LOCK="$BH_DIR/start.lock"
+START_PID="$BH_DIR/start.pid"
+QUAL_LOCK="$BH_DIR/qualify.lock"
+QUAL_PID="$BH_DIR/qualify.pid"
+GATEWAY="http://127.0.0.1:1066"
 
 engine_reason() {
     [ -x /usr/bin/ucode ] || { printf 'ucode_missing'; return; }
@@ -17,6 +23,47 @@ engine_reason() {
 
 engine_ready() {
     [ -z "$(engine_reason)" ]
+}
+
+write_state() {
+    _state="$1"; _reason="$2"; _now=$(date +%s 2>/dev/null || echo 0)
+    _tmp="$STATE.$$"
+    {
+        printf 'state=%s\n' "$_state"
+        printf 'reason=%s\n' "$_reason"
+        printf 'updated_at=%s\n' "$_now"
+    } > "$_tmp" && mv "$_tmp" "$STATE"
+}
+
+log_event() {
+    logger -t podkop-bearhole "$*" 2>/dev/null || true
+    printf '%s %s\n' "$(date +%s 2>/dev/null || echo 0)" "$*" >> "$LOG" 2>/dev/null || true
+}
+
+cleanup_stale_qualify_lock() {
+    [ -d "$QUAL_LOCK" ] || return 0
+    _pid=$(cat "$QUAL_PID" 2>/dev/null || echo 0)
+    case "$_pid" in ''|*[!0-9]*) _pid=0;; esac
+    [ "$_pid" -gt 0 ] 2>/dev/null && kill -0 "$_pid" 2>/dev/null && return 0
+    rm -rf "$QUAL_LOCK" "$QUAL_PID" 2>/dev/null || true
+}
+
+stop_start_worker() {
+    _pid=$(cat "$START_PID" 2>/dev/null || echo 0)
+    case "$_pid" in ''|*[!0-9]*) _pid=0;; esac
+    [ "$_pid" -gt 0 ] 2>/dev/null && kill "$_pid" 2>/dev/null || true
+    rm -rf "$START_LOCK" "$START_PID" 2>/dev/null || true
+}
+
+fail_closed() {
+    _reason="$1"
+    uci -q set podkop_bearhole.main.enabled=0 >/dev/null 2>&1 || true
+    uci -q commit podkop_bearhole >/dev/null 2>&1 || true
+    /etc/init.d/podkop-bearhole stop >/dev/null 2>&1 || true
+    /etc/init.d/podkop-bearhole disable >/dev/null 2>&1 || true
+    "$CTL" system-off >/dev/null 2>&1 || true
+    write_state failed "$_reason"
+    log_event "event=bearhole_start_failed reason=$_reason"
 }
 
 progress_json() {
@@ -33,40 +80,98 @@ progress_json() {
         [ -n "$_current" ] && _label=$(awk -F'|' -v id="$_current" '$1==id{print $2;exit}' "$REGISTRY" 2>/dev/null)
     fi
     case "$_done" in ''|*[!0-9]*) _done=0;; esac
-    printf '{"progress_done":%s,"progress_total":%s,"progress_route":%s,"progress_label":%s}' \
-        "$_done" "$_total" "$(printf '%s' "$_current" | jq -Rs .)" "$(printf '%s' "$_label" | jq -Rs .)"
+    _starting=false; [ -d "$START_LOCK" ] && _starting=true
+    printf '{"starting":%s,"progress_done":%s,"progress_total":%s,"progress_route":%s,"progress_label":%s}' \
+        "$_starting" "$_done" "$_total" "$(printf '%s' "$_current" | jq -Rs .)" "$(printf '%s' "$_label" | jq -Rs .)"
 }
 
-start_gateway() {
+start_worker() {
+    trap 'rm -rf "$START_LOCK" "$START_PID" 2>/dev/null' EXIT INT TERM HUP
+    cleanup_stale_qualify_lock
     "$CTL" system-off >/dev/null 2>&1 || true
+
     uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
-    uci -q set podkop_bearhole.main.enabled=1 || return 1
-    uci -q commit podkop_bearhole || return 1
-    "$CTL" bootstrap >/dev/null 2>&1 || return 1
+    uci -q set podkop_bearhole.main.enabled=1 || { fail_closed uci_enable_failed; return; }
+    uci -q commit podkop_bearhole || { fail_closed uci_commit_failed; return; }
+
+    rm -f "$RESULTS" "$BH_DIR/current" 2>/dev/null || true
+    write_state starting collecting_routes
+    log_event 'event=bearhole_start stage=collect_routes'
+
+    if ! "$CTL" bootstrap >/dev/null 2>&1; then
+        fail_closed no_routes
+        return
+    fi
+
     /etc/init.d/podkop-bearhole enable >/dev/null 2>&1 || true
     /etc/init.d/podkop-bearhole restart >/dev/null 2>&1 || true
 
     _i=0
-    while [ "$_i" -lt 7 ]; do
+    while [ "$_i" -lt 10 ]; do
         _st=$("$CTL" status 2>/dev/null || printf '{}')
         if [ "$(printf '%s' "$_st" | jq -r '.running // false' 2>/dev/null)" = true ] && \
            [ "$(printf '%s' "$_st" | jq -r '.system_applied // false' 2>/dev/null)" = true ]; then
-            return 0
+            break
         fi
         sleep 1; _i=$((_i+1))
     done
+    if [ "$_i" -ge 10 ]; then
+        fail_closed gateway_start_failed
+        return
+    fi
 
-    uci -q set podkop_bearhole.main.enabled=0 >/dev/null 2>&1 || true
-    uci -q commit podkop_bearhole >/dev/null 2>&1 || true
-    /etc/init.d/podkop-bearhole stop >/dev/null 2>&1 || true
-    /etc/init.d/podkop-bearhole disable >/dev/null 2>&1 || true
-    "$CTL" system-off >/dev/null 2>&1 || true
-    return 1
+    log_event 'event=bearhole_start stage=qualify_routes'
+    "$CTL" qualify-start >/dev/null 2>&1 || true
+
+    _i=0
+    while [ "$_i" -lt 600 ]; do
+        _st=$("$CTL" status 2>/dev/null || printf '{}')
+        _probing=$(printf '%s' "$_st" | jq -r '.probing // false' 2>/dev/null)
+        _valid=$(printf '%s' "$_st" | jq -r '.valid_routes // 0' 2>/dev/null)
+        _state=$(printf '%s' "$_st" | jq -r '.state // ""' 2>/dev/null)
+        if [ "$_probing" != true ]; then
+            if [ "$_valid" -gt 0 ] 2>/dev/null; then
+                break
+            fi
+            if [ "$_state" = degraded ] || [ "$_state" = failed ]; then
+                fail_closed no_usable_route
+                return
+            fi
+        fi
+        sleep 1; _i=$((_i+1))
+    done
+    if [ "$_i" -ge 600 ]; then
+        fail_closed route_check_timeout
+        return
+    fi
+
+    write_state verifying gateway_check
+    log_event 'event=bearhole_start stage=gateway_check'
+    if ! curl -q -4 -L -fsS --proxy "$GATEWAY" --connect-timeout 4 --max-time 12 \
+        -o /dev/null 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt' >/dev/null 2>&1; then
+        fail_closed gateway_check_failed
+        return
+    fi
+
+    write_state ready gateway_verified
+    log_event 'event=bearhole_ready gateway=127.0.0.1:1066'
+}
+
+start_async() {
+    [ -d "$START_LOCK" ] && return 2
+    mkdir "$START_LOCK" 2>/dev/null || return 2
+    write_state starting requested
+    (
+        start_worker
+    ) </dev/null >/dev/null 2>&1 &
+    _pid=$!
+    printf '%s\n' "$_pid" > "$START_PID"
+    return 0
 }
 
 case "$1" in
     list)
-        echo '{"status":{},"results":{},"set_enabled":{"enabled":true},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
+        echo '{"status":{},"results":{},"start":{},"set_enabled":{"enabled":true},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
         ;;
     call)
         case "$2" in
@@ -83,6 +188,18 @@ case "$1" in
                 read -r _in 2>/dev/null || true
                 "$CTL" results
                 ;;
+            start)
+                read -r _in 2>/dev/null || true
+                if ! engine_ready; then
+                    "$CTL" system-off >/dev/null 2>&1 || true
+                    printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
+                elif start_async; then
+                    printf '{"ok":true,"started":true}\n'
+                else
+                    _rc=$?
+                    [ "$_rc" = 2 ] && printf '{"ok":true,"started":false,"reason":"already_running"}\n' || printf '{"ok":false,"reason":"start_failed"}\n'
+                fi
+                ;;
             set_enabled)
                 read -r _in 2>/dev/null || _in='{}'
                 _v=$(printf '%s' "$_in" | jq -r '.enabled // false' 2>/dev/null)
@@ -91,13 +208,16 @@ case "$1" in
                         if ! engine_ready; then
                             "$CTL" system-off >/dev/null 2>&1 || true
                             printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
-                        elif start_gateway; then
-                            printf '{"ok":true,"enabled":true}\n'
+                        elif start_async; then
+                            printf '{"ok":true,"enabled":true,"starting":true}\n'
                         else
-                            printf '{"ok":false,"reason":"gateway_start_failed"}\n'
+                            _rc=$?; [ "$_rc" = 2 ] && printf '{"ok":true,"enabled":true,"starting":true,"reason":"already_running"}\n' || printf '{"ok":false,"reason":"start_failed"}\n'
                         fi
                         ;;
-                    false|0) "$CTL" disable && printf '{"ok":true,"enabled":false}\n' || printf '{"ok":false,"reason":"disable_failed"}\n' ;;
+                    false|0)
+                        stop_start_worker
+                        "$CTL" disable && printf '{"ok":true,"enabled":false}\n' || printf '{"ok":false,"reason":"disable_failed"}\n'
+                        ;;
                     *) printf '{"ok":false,"reason":"bad_value"}\n' ;;
                 esac
                 ;;

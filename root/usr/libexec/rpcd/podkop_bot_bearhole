@@ -103,25 +103,44 @@ start_worker() {
         return
     fi
 
+    write_state starting hwelp_start
+    log_event 'event=bearhole_start stage=hwelp_start'
     /etc/init.d/podkop-bearhole enable >/dev/null 2>&1 || true
     /etc/init.d/podkop-bearhole restart >/dev/null 2>&1 || true
 
+    # procd may publish the instance a few seconds after rc.common returns.
+    # Wait for the helper only; init.d deliberately does not own any later
+    # Bearhole sequencing.
     _i=0
-    while [ "$_i" -lt 10 ]; do
+    while [ "$_i" -lt 20 ]; do
         _st=$("$CTL" status 2>/dev/null || printf '{}')
-        if [ "$(printf '%s' "$_st" | jq -r '.running // false' 2>/dev/null)" = true ] && \
-           [ "$(printf '%s' "$_st" | jq -r '.system_applied // false' 2>/dev/null)" = true ]; then
-            break
-        fi
+        [ "$(printf '%s' "$_st" | jq -r '.running // false' 2>/dev/null)" = true ] && break
         sleep 1; _i=$((_i+1))
     done
-    if [ "$_i" -ge 10 ]; then
+    if [ "$_i" -ge 20 ]; then
         fail_closed gateway_start_failed
         return
     fi
 
+    write_state starting system_proxy
+    log_event 'event=bearhole_start stage=system_proxy'
+    if ! "$CTL" system-on >/dev/null 2>&1; then
+        fail_closed system_proxy_apply_failed
+        return
+    fi
+    _st=$("$CTL" status 2>/dev/null || printf '{}')
+    if [ "$(printf '%s' "$_st" | jq -r '.system_applied // false' 2>/dev/null)" != true ]; then
+        fail_closed system_proxy_apply_failed
+        return
+    fi
+
     log_event 'event=bearhole_start stage=qualify_routes'
-    "$CTL" qualify-start >/dev/null 2>&1 || true
+    "$CTL" qualify-start >/dev/null 2>&1
+    _qrc=$?
+    if [ "$_qrc" -ne 0 ] && [ "$_qrc" -ne 2 ]; then
+        fail_closed qualification_start_failed
+        return
+    fi
 
     _i=0
     while [ "$_i" -lt 600 ]; do

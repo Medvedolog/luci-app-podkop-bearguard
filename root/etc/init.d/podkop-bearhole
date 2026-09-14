@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# OpenWrt Bearhole system proxy service.
+# OpenWrt Bearhole HWELP proxy service.
 
 START=97
 STOP=15
@@ -16,10 +16,12 @@ engine_ready() {
 }
 
 start_service() {
-    local enabled pid i
+    local enabled
 
-    # Fail closed after a crash/partial upgrade: never leave system tools
-    # pointing at 127.0.0.1:1066 until a live gateway has been confirmed.
+    # procd owns only the standalone HWELP process. The Bearhole control plane
+    # decides when it is safe to apply the global system proxy and when to run
+    # route qualification. Keeping that sequencing in one place avoids races
+    # between rc.common/procd startup and the rpcd worker.
     "$BH_CTL" system-off >/dev/null 2>&1 || true
 
     enabled="$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)"
@@ -41,39 +43,17 @@ start_service() {
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_close_instance
-
-    # procd_close_instance() normally starts the process immediately. Give it a
-    # bounded window and only then apply the global system proxy switch.
-    i=0
-    while [ "$i" -lt 5 ]; do
-        pid=$(ubus call service list '{"name":"podkop-bearhole"}' 2>/dev/null | jq -r '.["podkop-bearhole"].instances[]?.pid // 0' 2>/dev/null | head -n1)
-        case "$pid" in ''|*[!0-9]*) pid=0;; esac
-        if [ "$pid" -gt 0 ] 2>/dev/null && kill -0 "$pid" 2>/dev/null; then
-            "$BH_CTL" system-on >/dev/null 2>&1 || {
-                logger -t podkop-bearhole 'event=system_proxy_apply_failed' 2>/dev/null || true
-                return 0
-            }
-            "$BH_CTL" qualify-start >/dev/null 2>&1 || true
-            return 0
-        fi
-        sleep 1
-        i=$((i+1))
-    done
-
-    "$BH_CTL" system-off >/dev/null 2>&1 || true
-    logger -t podkop-bearhole 'event=gateway_start_failed system_proxy=off' 2>/dev/null || true
 }
 
 stop_service() {
-    # Never leave curl/wget/opkg/environment pointing at a stopped 1066
-    # listener. restart_service() will re-apply the proxy only after confirming
-    # that the standalone gateway is live.
+    # Never leave curl/wget/opkg/environment pointing at a stopped HWELP proxy.
     "$BH_CTL" system-off >/dev/null 2>&1 || true
 }
 
 reload_service() {
+    # Update the helper's route file. A full fresh qualification is owned by
+    # the Bearhole control plane, not by the init script.
     "$BH_CTL" bootstrap >/dev/null 2>&1 || true
-    "$BH_CTL" qualify-start >/dev/null 2>&1 || true
 }
 
 service_triggers() {

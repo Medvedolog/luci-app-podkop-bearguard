@@ -46,9 +46,23 @@ jobs:
       - run: owfeed build
       - run: sh tools/check-package.sh
 
-      - name: Build native hwelp-proxy with OpenWrt SDKs
+      - name: Build x86_64 hwelp-proxy for runtime smoke
         working-directory: hwelp-proxy
         run: owlab build
+
+      - name: Build Cortex-A53 HWELP IPK for OpenWrt 24.10.5 filogic
+        run: |
+          sh tools/build-hwelp-sdk.sh \
+            https://downloads.openwrt.org/releases/24.10.5/targets/mediatek/filogic/openwrt-sdk-24.10.5-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst \
+            0fa98c542ee07f1423ebcdce19aed464bc7f8008ef2cbe83cb723ec694ed8c56 \
+            aarch64_cortex-a53 dist
+
+      - name: Build Cortex-A53 HWELP APK for OpenWrt 25.12.5 filogic
+        run: |
+          sh tools/build-hwelp-sdk.sh \
+            https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/openwrt-sdk-25.12.5-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst \
+            ff4a38a397caa2cfe1c39e18f84ddede14878221b3593c3f2c4cfe24e3ec4c25 \
+            aarch64_cortex-a53 dist
 
       - name: Merge native artifacts into artifact contract
         run: |
@@ -60,7 +74,8 @@ jobs:
             cp -a "$d"/. "dist/$arch/"
           done
           find dist -maxdepth 2 -type f -print | sort
-          test -n "$(find dist/aarch64_cortex-a53 -maxdepth 1 -type f -name 'hwelp-proxy*' -print -quit)"
+          test -n "$(find dist/aarch64_cortex-a53 -maxdepth 1 -type f -name 'hwelp-proxy_*.ipk' -print -quit)"
+          test -n "$(find dist/aarch64_cortex-a53 -maxdepth 1 -type f -name 'hwelp-proxy-*.apk' -print -quit)"
           test -n "$(find dist/x86_64 -maxdepth 1 -type f -name 'hwelp-proxy*' -print -quit)"
 
       - uses: actions/upload-artifact@v7
@@ -80,7 +95,6 @@ jobs:
           name: owfeed-packages
           path: dist/
 
-      # The noarch management package must install without the native engine.
       - name: OpenWrt 25.12 APKv3
         uses: owfeed/owlab/action@v0.6.5
         with:

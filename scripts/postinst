@@ -6,8 +6,17 @@ chmod +x /usr/lib/podkop_bot/install.sh 2>/dev/null
 chmod +x /usr/lib/podkop_bot/podkop_bot 2>/dev/null
 chmod +x /usr/lib/podkop_bot/podkop_bot_init 2>/dev/null
 chmod +x /usr/lib/podkop_bot/bearhole.sh 2>/dev/null
+chmod +x /usr/lib/podkop_bot/warpscout-rescue-watchdog 2>/dev/null
 chmod +x /etc/init.d/podkop-bearhole 2>/dev/null
+chmod +x /etc/init.d/podkop-warp-rescue 2>/dev/null
 /etc/init.d/rpcd restart 2>/dev/null
+
+# The watchdog itself is cheap and always safe to run: it only restores Rescue
+# when warpscout.conf says enabled=1 and rescue_autostart is not disabled.
+if [ -x /etc/init.d/podkop-warp-rescue ]; then
+	/etc/init.d/podkop-warp-rescue enable 2>/dev/null
+	/etc/init.d/podkop-warp-rescue restart 2>/dev/null
+fi
 
 # Do not auto-install hwelp-proxy during package installation. Bearhole owns that
 # bootstrap on first explicit launch, so luci-app-podkop-bot remains installable

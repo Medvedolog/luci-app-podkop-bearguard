@@ -3,7 +3,10 @@
 
 CTL=/usr/lib/podkop_bot/bearhole.sh
 PROXY=/usr/bin/podkop-bearhole-proxy
-LOG=/tmp/podkop_bot/bearhole/bearhole.log
+BH_DIR=/tmp/podkop_bot/bearhole
+REGISTRY="$BH_DIR/routes.registry"
+STATE="$BH_DIR/state"
+LOG="$BH_DIR/bearhole.log"
 
 engine_reason() {
     [ -x /usr/bin/ucode ] || { printf 'ucode_missing'; return; }
@@ -14,6 +17,24 @@ engine_reason() {
 
 engine_ready() {
     [ -z "$(engine_reason)" ]
+}
+
+progress_json() {
+    _base="$1"
+    _probing=$(printf '%s' "$_base" | jq -r '.probing // false' 2>/dev/null)
+    _started=$(printf '%s' "$_base" | jq -r '.updated_at // 0' 2>/dev/null)
+    case "$_started" in ''|*[!0-9]*) _started=0;; esac
+    _total=$(wc -l < "$REGISTRY" 2>/dev/null | tr -d ' ')
+    case "$_total" in ''|*[!0-9]*) _total=0;; esac
+    _done=0; _current=''; _label=''
+    if [ "$_probing" = true ] && [ -f "$LOG" ]; then
+        _done=$(awk -v s="$_started" '$1+0>=s && /event=bearhole_probe route=/{n++}END{print n+0}' "$LOG" 2>/dev/null)
+        _current=$(awk -v s="$_started" '$1+0>=s && /event=bearhole_probe_start route=/{for(i=2;i<=NF;i++)if($i ~ /^route=/){sub(/^route=/,"",$i);r=$i}}END{print r}' "$LOG" 2>/dev/null)
+        [ -n "$_current" ] && _label=$(awk -F'|' -v id="$_current" '$1==id{print $2;exit}' "$REGISTRY" 2>/dev/null)
+    fi
+    case "$_done" in ''|*[!0-9]*) _done=0;; esac
+    printf '{"progress_done":%s,"progress_total":%s,"progress_route":%s,"progress_label":%s}' \
+        "$_done" "$_total" "$(printf '%s' "$_current" | jq -Rs .)" "$(printf '%s' "$_label" | jq -Rs .)"
 }
 
 case "$1" in
@@ -27,7 +48,8 @@ case "$1" in
                 _base=$("$CTL" status 2>/dev/null || printf '{"ok":false}')
                 _reason=$(engine_reason)
                 if [ -z "$_reason" ]; then _ready=true; else _ready=false; fi
-                printf '%s' "$_base" | jq -c --argjson ready "$_ready" --arg reason "$_reason" '. + {engine_ready:$ready,engine_reason:$reason}' 2>/dev/null || \
+                _prog=$(progress_json "$_base")
+                printf '%s' "$_base" | jq -c --argjson ready "$_ready" --arg reason "$_reason" --argjson prog "$_prog" '. + {engine_ready:$ready,engine_reason:$reason} + $prog' 2>/dev/null || \
                     printf '{"ok":false,"engine_ready":%s,"engine_reason":%s}\n' "$_ready" "$(printf '%s' "$_reason" | jq -Rs .)"
                 ;;
             results)
@@ -55,7 +77,9 @@ case "$1" in
                 ;;
             qualify_start)
                 read -r _in 2>/dev/null || true
-                if "$CTL" qualify-start; then printf '{"ok":true,"started":true}\n'; else
+                if ! engine_ready; then
+                    printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
+                elif "$CTL" qualify-start; then printf '{"ok":true,"started":true}\n'; else
                     _rc=$?; [ "$_rc" = 2 ] && printf '{"ok":true,"started":false,"reason":"already_running"}\n' || printf '{"ok":false,"reason":"start_failed"}\n'
                 fi
                 ;;

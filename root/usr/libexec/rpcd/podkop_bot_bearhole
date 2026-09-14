@@ -21,6 +21,7 @@ hwelp_port() {
 }
 
 gateway() { printf 'http://127.0.0.1:%s' "$(hwelp_port)"; }
+gateway_auth() { "$CTL" proxy-url 2>/dev/null; }
 
 engine_reason() {
     [ -x "$PROXY" ] || { printf 'hwelp_missing'; return; }
@@ -121,6 +122,14 @@ start_worker() {
     fi
 
     _port=$(hwelp_port)
+    if [ "$(uci -q get podkop_bearhole.main.auth_enabled 2>/dev/null)" = 1 ]; then
+        _au=$(uci -q get podkop_bearhole.main.auth_user 2>/dev/null)
+        _ap=$(uci -q get podkop_bearhole.main.auth_pass 2>/dev/null)
+        if [ -z "$_au" ] || [ -z "$_ap" ]; then
+            fail_closed auth_invalid
+            return
+        fi
+    fi
     if ! "$PROXY" -l 127.0.0.1 -p "$_port" --check-bind >/dev/null 2>&1; then
         fail_closed port_in_use
         return
@@ -188,9 +197,11 @@ start_worker() {
         return
     fi
 
-    _gateway=$(gateway)
+    _gateway=$(gateway_auth)
+    _display=$(gateway)
+    [ -n "$_gateway" ] || { fail_closed auth_invalid; return; }
     write_state verifying gateway_check
-    log_event "event=bearhole_start stage=gateway_check gateway=$_gateway"
+    log_event "event=bearhole_start stage=gateway_check gateway=$_display"
     if ! curl -q -4 -L -fsS --proxy "$_gateway" --connect-timeout 4 --max-time 12 \
         -o /dev/null 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt' >/dev/null 2>&1; then
         fail_closed gateway_check_failed
@@ -198,7 +209,7 @@ start_worker() {
     fi
 
     write_state ready gateway_verified
-    log_event "event=bearhole_ready gateway=$_gateway"
+    log_event "event=bearhole_ready gateway=$_display"
 }
 
 start_async() {
@@ -236,9 +247,47 @@ set_port() {
     return 0
 }
 
+set_proxy() {
+    _json="$1"
+    _port=$(printf '%s' "$_json" | jq -r '.port // empty' 2>/dev/null)
+    _auth=$(printf '%s' "$_json" | jq -r '.auth_enabled // false' 2>/dev/null)
+    _user=$(printf '%s' "$_json" | jq -r '.username // ""' 2>/dev/null)
+    _pass=$(printf '%s' "$_json" | jq -r '.password // ""' 2>/dev/null)
+    case "$_port" in ''|*[!0-9]*) return 2;; esac
+    [ "$_port" -ge 1024 ] 2>/dev/null && [ "$_port" -le 65535 ] 2>/dev/null || return 2
+    case "$_auth" in true|1) _auth=1;; false|0) _auth=0;; *) return 3;; esac
+    [ ${#_user} -le 128 ] 2>/dev/null || return 3
+    [ ${#_pass} -le 255 ] 2>/dev/null || return 3
+    printf '%s' "$_user$_pass" | LC_ALL=C grep -q '[[:cntrl:]]' && return 3
+
+    _oldpass=$(uci -q get podkop_bearhole.main.auth_pass 2>/dev/null)
+    [ "$_auth" = 1 ] && [ -z "$_pass" ] && _pass="$_oldpass"
+    if [ "$_auth" = 1 ] && { [ -z "$_user" ] || [ -z "$_pass" ]; }; then return 3; fi
+
+    _was_active=0
+    [ "$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)" = 1 ] && _was_active=1
+    stop_start_worker
+    [ "$_was_active" = 1 ] && "$CTL" disable >/dev/null 2>&1 || true
+
+    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
+    uci -q set "podkop_bearhole.main.port=$_port" || return 1
+    uci -q set "podkop_bearhole.main.auth_enabled=$_auth" || return 1
+    if [ "$_auth" = 1 ]; then
+        uci -q set "podkop_bearhole.main.auth_user=$_user" || return 1
+        uci -q set "podkop_bearhole.main.auth_pass=$_pass" || return 1
+    else
+        uci -q delete podkop_bearhole.main.auth_user >/dev/null 2>&1 || true
+        uci -q delete podkop_bearhole.main.auth_pass >/dev/null 2>&1 || true
+    fi
+    uci -q commit podkop_bearhole || return 1
+    log_event "event=hwelp_proxy_config port=$_port auth=$([ "$_auth" = 1 ] && echo on || echo off)"
+    [ "$_was_active" = 1 ] && start_async
+    return 0
+}
+
 case "$1" in
     list)
-        echo '{"status":{},"results":{},"start":{},"set_enabled":{"enabled":true},"set_port":{"port":0},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
+        echo '{"status":{},"results":{},"start":{},"set_enabled":{"enabled":true},"set_port":{"port":0},"set_proxy":{"port":0,"auth_enabled":false,"username":"","password":""},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
         ;;
     call)
         case "$2" in
@@ -288,6 +337,16 @@ case "$1" in
                     printf '{"ok":true,"port":%s,"restarting":%s}\n' "$(hwelp_port)" "$_restarting"
                 else
                     _rc=$?; [ "$_rc" = 2 ] && printf '{"ok":false,"reason":"bad_port"}\n' || printf '{"ok":false,"reason":"port_save_failed"}\n'
+                fi
+                ;;
+            set_proxy)
+                read -r _in 2>/dev/null || _in='{}'
+                if set_proxy "$_in"; then
+                    _restarting=false; [ -d "$START_LOCK" ] && _restarting=true
+                    printf '{"ok":true,"port":%s,"restarting":%s}\n' "$(hwelp_port)" "$_restarting"
+                else
+                    _rc=$?
+                    [ "$_rc" = 2 ] && printf '{"ok":false,"reason":"bad_port"}\n' || { [ "$_rc" = 3 ] && printf '{"ok":false,"reason":"auth_invalid"}\n' || printf '{"ok":false,"reason":"proxy_save_failed"}\n'; }
                 fi
                 ;;
             qualify_start)

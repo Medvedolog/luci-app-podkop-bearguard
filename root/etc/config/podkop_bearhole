@@ -1,5 +1,3 @@
 config bearhole 'main'
 	option enabled '0'
 	option policy 'auto'
-	option port '1066'
-	option max_route_attempts '3'

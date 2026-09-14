@@ -1,0 +1,128 @@
+-	_core_fetch "https://raw.githubusercontent.com/" "/tmp/podkop_core_netcheck.$$"; _gh_rc=$?
+-	rm -f "/tmp/podkop_core_netcheck.$$" 2>/dev/null
++	_feed_tmp="/tmp/podkop_feed_netcheck.$$"
++	_gh_tmp="/tmp/podkop_core_netcheck.$$"
++	_bh_enabled=$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)
++	if [ "$_bh_enabled" = "1" ]; then
++		_core_fetch "https://downloads.openwrt.org/" "$_feed_tmp"; _feed_rc=$?
++	else
++		curl -q -4 -sfL --proxy '' -o /dev/null --connect-timeout 5 --max-time 8 "https://downloads.openwrt.org/" 2>/dev/null; _feed_rc=$?
++	fi
++	_core_fetch "https://raw.githubusercontent.com/" "$_gh_tmp"; _gh_rc=$?
++	rm -f "$_feed_tmp" "$_gh_tmp" 2>/dev/null
+ 	[ "$_feed_rc" = "0" ] && [ "$_gh_rc" = "0" ] && { printf 'ok'; return 0; }
+ 	_m="blocked:"; [ "$_feed_rc" != "0" ] && _m="$_m openwrt-feed"; [ "$_gh_rc" != "0" ] && _m="$_m github-raw"
++	[ "$_bh_enabled" = "1" ] && _m="$_m via-bearhole"
+ 	printf '%s' "$_m"; return 1
+ }
+ # 50 MB on /overlay — install.sh's own 15 MB threshold is too low for sing-box.
+@@ -974,6 +1007,7 @@
+ 
+ 	(
+ 		trap '_resolv_v4_restore; rm -rf "/tmp/podkop_core_update.lock" 2>/dev/null' EXIT INT TERM
++		_bearhole_export_env || true
+ 		_resolv_v4_override
+ 		# Auto-answer the fork installer's interactive prompts with "n".
+ 		#
+@@ -1063,7 +1097,10 @@
+ 		printf '{"ok":false,"reason":"installer_missing","detail":"%s"}\n' "$INSTALLER_PATH"; return
+ 	fi
+ 	: > "$LUCI_UPDATE_LOG" 2>/dev/null
+-	setsid sh "$INSTALLER_PATH" --unattended --action update-luci >> "$LUCI_UPDATE_LOG" 2>&1 &
++	(
++		_bearhole_export_env || true
++		exec setsid sh "$INSTALLER_PATH" --unattended --action update-luci
++	) >> "$LUCI_UPDATE_LOG" 2>&1 &
+ 	printf '{"ok":true,"started":true,"log":"%s"}\n' "$LUCI_UPDATE_LOG"
+ }
+ 
+--- a/root/etc/init.d/podkop-bearhole
++++ b/root/etc/init.d/podkop-bearhole
+@@ -28,9 +28,9 @@
+ }
+ 
+ stop_service() {
+-    local enabled
+-    enabled="$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)"
+-    [ "$enabled" = 1 ] || "$BH_CTL" system-off >/dev/null 2>&1 || true
++    # Never leave curl/wget/opkg/environment pointing at a stopped 1066
++    # listener. restart_service() will re-apply the proxy immediately in start.
++    "$BH_CTL" system-off >/dev/null 2>&1 || true
+ }
+ 
+ reload_service() {
+--- a/root/usr/bin/podkop-bearhole-proxy
++++ b/root/usr/bin/podkop-bearhole-proxy
+@@ -10,6 +10,7 @@
+ let listen_port = 1066;
+ let route_file = '/tmp/podkop_bot/bearhole/routes.conf';
+ let current_file = '/tmp/podkop_bot/bearhole/current';
++const CONNECT_TIMEOUT = 5000;
+ 
+ for (let i = 0; i < length(ARGV); i++) {
+ 	if (ARGV[i] == '-l' && ARGV[i + 1]) listen_host = ARGV[++i];
+@@ -70,6 +71,10 @@
+ 	return { scheme, host: hp.host, port: hp.port, user, pass };
+ }
+ 
++function tcp_connect(host, port) {
++	return socket.connect(host, port, { socktype: socket.SOCK_STREAM }, CONNECT_TIMEOUT);
++}
++
+ function load_routes() {
+ 	let raw = fs.readfile(route_file);
+ 	if (!raw) return [];
+@@ -97,7 +102,7 @@
+ }
+ 
+ function socks5_connect(up, host, port) {
+-	let s = socket.connect(up.host, up.port);
++	let s = tcp_connect(up.host, up.port);
+ 	if (!s) return null;
+ 	let methods = up.user != null ? pack('>BBBB', 5, 2, 0, 2) : pack('>BBB', 5, 1, 0);
+ 	if (!send_all(s, methods)) { s.close(); return null; }
+@@ -132,7 +137,7 @@
+ }
+ 
+ function http_connect(up, host, port) {
+-	let s = socket.connect(up.host, up.port);
++	let s = tcp_connect(up.host, up.port);
+ 	if (!s) return null;
+ 	let auth = up.user != null ? `Proxy-Authorization: Basic ${b64enc(up.user + ':' + up.pass)}\r\n` : '';
+ 	let req = `CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n${auth}Proxy-Connection: Keep-Alive\r\n\r\n`;
+@@ -144,7 +149,7 @@
+ 
+ function connect_route(route, host, port) {
+ 	let up = route.upstream;
+-	if (up.scheme == 'direct') return socket.connect(host, port);
++	if (up.scheme == 'direct') return tcp_connect(host, port);
+ 	if (up.scheme == 'socks5' || up.scheme == 'socks5h') return socks5_connect(up, host, port);
+ 	if (up.scheme == 'http') return http_connect(up, host, port);
+ 	return null;
+@@ -153,7 +158,7 @@
+ function plain_http_route(route, host, port, original_header, rewritten_header) {
+ 	let up = route.upstream;
+ 	if (up.scheme == 'http') {
+-		let s = socket.connect(up.host, up.port);
++		let s = tcp_connect(up.host, up.port);
+ 		if (!s) return null;
+ 		let hdr = original_header;
+ 		if (up.user != null)
+--- a/root/www/luci-static/resources/view/podkop-bot/transport.js
++++ b/root/www/luci-static/resources/view/podkop-bot/transport.js
+@@ -15,6 +15,11 @@
+ var callRuntimeSections = rpc.declare({ object:'podkop_bot', method:'runtime_sections' });
+ var callWarpStatus = rpc.declare({ object:'podkop_bot_warpscout', method:'status', params:['force'] });
+ var callRescueStatus = rpc.declare({ object:'podkop_bot_warpscout_rescue', method:'status' });
++var callBearStatus = rpc.declare({ object:'podkop_bot_bearhole', method:'status' });
++var callBearResults = rpc.declare({ object:'podkop_bot_bearhole', method:'results' });
++var callBearSetEnabled = rpc.declare({ object:'podkop_bot_bearhole', method:'set_enabled', params:['enabled'] });
++var callBearQualify = rpc.declare({ object:'podkop_bot_bearhole', method:'qualify_start' });
++var callBearRefresh = rpc.declare({ object:'podkop_bot_bearhole', method:'refresh_routes' });
+ 
+ var _CHAIN_STORE_KEY = 'podkop-bot.transport-chain-cache.v1';
+ var _chainTestedThisSession = false;
+@@ -74,6 +79,8 @@
+ function dot(c,label){return E('span',{'style':'display:inline-flex;align-items:flex-start;gap:.4em;'},[E('span',{'style':'width:.7em;height:.7em;border-radius:50%;display:inline-block;flex:none;margin-top:.28em;background:'+(COLOURS[c]||COLOURS.grey)+';'}),E('span',{},label)]);}
+ function pbInjectCss(){if(document.getElementById('pb-css'))return;document.querySelector('head').appendChild(E('link',{'id':'pb-css','rel':'stylesheet','type':'text/css','href':L.resource('css/podkop-bot/podkop-bot.css')}));}
+ function pbFooter(){var callAppInfo=rpc.declare({object:'podkop_bot',method:'app_info'}),span=E('span',{},''),box=E('div',{'style':'max-width:820px;margin-top:1.2em;padding-top:.6em;border-top:1px solid rgba(127,127,127,.15);color:#888;font-size:85%;text-align:right;'},[span]);callAppInfo().then(function(a){if(a&&a.ok)dom.content(span,[E('span',{},'luci-app-podkop-bot v'+(a.luci_app_version||'?')+' · '),E('a',{'href':a.repo||'https://github.com/Medvedolog/luci-app-podkop-bot','target':'_blank','rel':'noopener'},_('репозиторий'))]);}).catch(function(){});return box;}

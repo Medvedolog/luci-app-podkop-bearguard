@@ -10,12 +10,14 @@ let listen_host = '127.0.0.1';
 let listen_port = 1066;
 let route_file = '/tmp/podkop_bot/bearhole/routes.conf';
 let current_file = '/tmp/podkop_bot/bearhole/current';
+let check_only = false;
 const CONNECT_TIMEOUT = 5000;
 
 for (let i = 0; i < length(ARGV); i++) {
 	if (ARGV[i] == '-l' && ARGV[i + 1]) listen_host = ARGV[++i];
 	else if (ARGV[i] == '-p' && ARGV[i + 1]) listen_port = +ARGV[++i];
 	else if (ARGV[i] == '-c' && ARGV[i + 1]) route_file = ARGV[++i];
+	else if (ARGV[i] == '--check') check_only = true;
 }
 
 function send_all(sock, data) {
@@ -247,6 +249,11 @@ function handle_client(client) {
 		if (length(extra) && !send_all(upstream, extra)) { upstream.close(); client.close(); return; }
 		start_relay(client, upstream);
 	}, uloop.ULOOP_READ);
+}
+
+if (check_only) {
+	printf('podkop-bearhole-proxy: check ok\n');
+	exit(0);
 }
 
 uloop.init();

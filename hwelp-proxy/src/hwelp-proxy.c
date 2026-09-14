@@ -5,6 +5,7 @@
 #include <netdb.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,8 +25,8 @@
 #define MAX_ROUTES 64
 #define HDR_MAX 65536
 #define CONN_MS 5000
-#define SESSION_LOG_MIN_BYTES 4096ULL
-#define SESSION_LOG_MIN_MS 1000ULL
+#define SESSION_LOG_MIN_BYTES 16384ULL
+#define SESSION_LOG_MIN_MS 2000ULL
 
 enum scheme { DIRECT, SOCKS5, HTTPP };
 
@@ -58,10 +59,33 @@ static const char *listen_host = "127.0.0.1";
 static const char *routes_file = "/tmp/podkop_bot/bearhole/routes.conf";
 static const char *current_file = "/tmp/podkop_bot/bearhole/current";
 static const char *auth_file = NULL;
+static const char *activity_log_file = NULL;
 static int listen_port = 1066;
 static bool local_auth = false;
 static char local_user[256];
 static char local_pass[256];
+
+static void hlog(int priority, const char *fmt, ...)
+{
+    char msg[1024], line[1200];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    syslog(priority, "%s", msg);
+
+    if (activity_log_file && *activity_log_file) {
+        int n = snprintf(line, sizeof(line), "%lld hwelp %s\n", (long long)time(NULL), msg);
+        if (n > 0) {
+            int fd = open(activity_log_file, O_WRONLY | O_CREAT | O_APPEND, 0600);
+            if (fd >= 0) {
+                size_t len = (size_t)n < sizeof(line) ? (size_t)n : sizeof(line) - 1;
+                (void)write(fd, line, len);
+                close(fd);
+            }
+        }
+    }
+}
 
 static unsigned long long monotonic_ms(void)
 {
@@ -633,7 +657,7 @@ static int handle_client(int client)
                             "Proxy-Authenticate: Basic realm=\"hwelp\"\r\n"
                             "Connection: close\r\n\r\n";
         write_all(client, reply, strlen(reply));
-        syslog(LOG_WARNING, "client authentication rejected");
+        hlog(LOG_WARNING, "client authentication rejected");
         free(header);
         return -1;
     }
@@ -659,8 +683,8 @@ static int handle_client(int client)
     if (upstream < 0) {
         const char *reply = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n";
         write_all(client, reply, strlen(reply));
-        syslog(LOG_WARNING, "OpenWrt request to %s:%d failed: no usable upstream route (%d tried)",
-               req.host, req.port, count);
+        hlog(LOG_WARNING, "OpenWrt request to %s:%d failed: no usable upstream route (%d tried)",
+             req.host, req.port, count);
         free(header);
         return -1;
     }
@@ -720,10 +744,10 @@ static int handle_client(int client)
         char up[32], down[32];
         human_bytes(traffic.client_to_upstream, up, sizeof(up));
         human_bytes(traffic.upstream_to_client, down, sizeof(down));
-        syslog(LOG_INFO,
-               "OpenWrt session %s:%d via %s [%s] finished: %llums, up %s, down %s%s",
-               req.host, req.port, routes[chosen].label, scheme_name(routes[chosen].s),
-               elapsed, up, down, chosen > 0 ? " (fallback route)" : "");
+        hlog(LOG_INFO,
+             "OpenWrt session %s:%d via %s [%s]: %.1fs, up %s, down %s%s",
+             req.host, req.port, routes[chosen].label, scheme_name(routes[chosen].s),
+             (double)elapsed / 1000.0, up, down, chosen > 0 ? " (fallback)" : "");
     }
     return 0;
 
@@ -746,11 +770,11 @@ static int make_listener(bool check_only)
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
     if (af == AF_INET) {
-        struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(listen_port)};
+        struct sockaddr_in addr = {.sin_family=AF_INET, .sin_port=htons(listen_port)};
         inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
         rc = bind(fd, (void *)&addr, sizeof(addr));
     } else {
-        struct sockaddr_in6 addr = {.sin6_family = AF_INET6, .sin6_port = htons(listen_port)};
+        struct sockaddr_in6 addr = {.sin6_family=AF_INET6, .sin6_port=htons(listen_port)};
         inet_pton(AF_INET6, "::1", &addr.sin6_addr);
         rc = bind(fd, (void *)&addr, sizeof(addr));
     }
@@ -793,6 +817,8 @@ int main(int argc, char **argv)
             routes_file = argv[++i];
         else if (!strcmp(argv[i], "-a") && i + 1 < argc)
             auth_file = argv[++i];
+        else if (!strcmp(argv[i], "-L") && i + 1 < argc)
+            activity_log_file = argv[++i];
         else if (!strcmp(argv[i], "--check"))
             check = true;
         else if (!strcmp(argv[i], "--check-bind"))
@@ -834,20 +860,20 @@ int main(int argc, char **argv)
     signal(SIGCHLD, SIG_IGN);
     openlog("hwelp-proxy", LOG_PID, LOG_DAEMON);
 
-    syslog(LOG_NOTICE, "[bear] hwelp proxy starting on %s:%d; auth=%s",
-           listen_host, listen_port, local_auth ? "on" : "off");
+    hlog(LOG_NOTICE, "(^..^) hwelp proxy starting on %s:%d; auth=%s",
+         listen_host, listen_port, local_auth ? "on" : "off");
 
     int listener = make_listener(false);
     if (listener < 0) {
-        syslog(LOG_ERR, "cannot bind %s:%d: %s", listen_host, listen_port, strerror(errno));
+        hlog(LOG_ERR, "cannot bind %s:%d: %s", listen_host, listen_port, strerror(errno));
         closelog();
         return 1;
     }
 
     struct route startup_routes[MAX_ROUTES];
     int startup_count = load_routes(startup_routes);
-    syslog(LOG_NOTICE, "[bear] hwelp proxy ready to help; %d route%s available",
-           startup_count, startup_count == 1 ? "" : "s");
+    hlog(LOG_NOTICE, "(^..^) hwelp proxy ready to help; %d route%s available",
+         startup_count, startup_count == 1 ? "" : "s");
 
     for (;;) {
         int client = accept(listener, NULL, NULL);

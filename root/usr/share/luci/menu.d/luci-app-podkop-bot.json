@@ -28,6 +28,10 @@
 		"title": "Цепочка прокси", "order": 5,
 		"action": { "type": "view", "path": "podkop-bot/transport" }
 	},
+	"admin/services/podkop-bot/transport/bearhole": {
+		"title": "OpenWrt Bearhole", "order": 10,
+		"action": { "type": "view", "path": "podkop-bot/bearhole" }
+	},
 	"admin/services/podkop-bot/transport/warp-revolver": {
 		"title": "Револьвер WARP", "order": 15,
 		"action": { "type": "view", "path": "podkop-bot/warpscout-rescue" }

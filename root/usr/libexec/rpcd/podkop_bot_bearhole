@@ -1,0 +1,57 @@
+#!/bin/sh
+# rpcd object: podkop_bot_bearhole
+
+CTL=/usr/lib/podkop_bot/bearhole.sh
+LOG=/tmp/podkop_bot/bearhole/bearhole.log
+
+case "$1" in
+    list)
+        echo '{"status":{},"results":{},"set_enabled":{"enabled":true},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
+        ;;
+    call)
+        case "$2" in
+            status)
+                read -r _in 2>/dev/null || true
+                "$CTL" status
+                ;;
+            results)
+                read -r _in 2>/dev/null || true
+                "$CTL" results
+                ;;
+            set_enabled)
+                read -r _in 2>/dev/null || _in='{}'
+                _v=$(printf '%s' "$_in" | jq -r '.enabled // false' 2>/dev/null)
+                case "$_v" in
+                    true|1) "$CTL" enable && printf '{"ok":true,"enabled":true}\n' || printf '{"ok":false,"reason":"enable_failed"}\n' ;;
+                    false|0) "$CTL" disable && printf '{"ok":true,"enabled":false}\n' || printf '{"ok":false,"reason":"disable_failed"}\n' ;;
+                    *) printf '{"ok":false,"reason":"bad_value"}\n' ;;
+                esac
+                ;;
+            qualify_start)
+                read -r _in 2>/dev/null || true
+                if "$CTL" qualify-start; then printf '{"ok":true,"started":true}\n'; else
+                    _rc=$?; [ "$_rc" = 2 ] && printf '{"ok":true,"started":false,"reason":"already_running"}\n' || printf '{"ok":false,"reason":"start_failed"}\n'
+                fi
+                ;;
+            refresh_routes)
+                read -r _in 2>/dev/null || true
+                if "$CTL" bootstrap; then
+                    /etc/init.d/podkop-bearhole reload >/dev/null 2>&1 || true
+                    printf '{"ok":true}\n'
+                else printf '{"ok":false,"reason":"no_routes"}\n'; fi
+                ;;
+            log)
+                read -r _in 2>/dev/null || _in='{}'
+                _off=$(printf '%s' "$_in" | jq -r '.offset // 0' 2>/dev/null); case "$_off" in ''|*[!0-9]*) _off=0;; esac
+                if [ ! -f "$LOG" ]; then printf '{"ok":true,"offset":0,"chunk":""}\n'; exit 0; fi
+                _size=$(wc -c < "$LOG" 2>/dev/null | tr -d ' '); [ -n "$_size" ] || _size=0
+                [ "$_off" -gt "$_size" ] 2>/dev/null && _off=0
+                _chunk=$(tail -c "+$((_off + 1))" "$LOG" 2>/dev/null; printf x); _chunk=${_chunk%x}
+                _esc=$(printf '%s' "$_chunk" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk 'BEGIN{ORS=""}{if(NR>1)printf "\\n";printf "%s",$0}')
+                printf '{"ok":true,"offset":%s,"chunk":"%s"}\n' "$_size" "$_esc"
+                ;;
+            *) printf '{"ok":false,"reason":"unknown_method"}\n' ;;
+        esac
+        ;;
+    *) exit 1 ;;
+esac

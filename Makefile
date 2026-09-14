@@ -8,13 +8,13 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-podkop-bot
 PKG_VERSION:=0.19.18
-PKG_RELEASE:=17
+PKG_RELEASE:=18
 
 PKG_MAINTAINER:=Medvedolog
 PKG_LICENSE:=GPL-2.0-or-later
 
 LUCI_TITLE:=LuCI interface for podkop_bot (Telegram bot for podkop/sing-box)
-LUCI_DEPENDS:=+luci-base +jq +curl
+LUCI_DEPENDS:=+luci-base +jq +curl +ucode +ucode-mod-fs +ucode-mod-socket +ucode-mod-struct +ucode-mod-uloop
 LUCI_PKGARCH:=all
 
 include $(TOPDIR)/feeds/luci/luci.mk

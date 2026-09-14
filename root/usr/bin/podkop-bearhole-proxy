@@ -1,0 +1,261 @@
+#!/usr/bin/env ucode
+'use strict';
+
+import * as fs from 'fs';
+import * as socket from 'socket';
+import * as uloop from 'uloop';
+import { pack, unpack } from 'struct';
+
+let listen_host = '127.0.0.1';
+let listen_port = 1066;
+let route_file = '/tmp/podkop_bot/bearhole/routes.conf';
+let current_file = '/tmp/podkop_bot/bearhole/current';
+
+for (let i = 0; i < length(ARGV); i++) {
+	if (ARGV[i] == '-l' && ARGV[i + 1]) listen_host = ARGV[++i];
+	else if (ARGV[i] == '-p' && ARGV[i + 1]) listen_port = +ARGV[++i];
+	else if (ARGV[i] == '-c' && ARGV[i + 1]) route_file = ARGV[++i];
+}
+
+function send_all(sock, data) {
+	let off = 0;
+	while (off < length(data)) {
+		let n = sock.send(substr(data, off));
+		if (n == null || n <= 0) return false;
+		off += n;
+	}
+	return true;
+}
+
+function recv_exact(sock, n) {
+	let out = '';
+	while (length(out) < n) {
+		let s = sock.recv(n - length(out));
+		if (s == null || length(s) == 0) return null;
+		out += s;
+	}
+	return out;
+}
+
+function recv_header(sock, limit = 16384) {
+	let out = '';
+	while (length(out) < limit) {
+		let s = sock.recv(2048);
+		if (s == null || length(s) == 0) return null;
+		out += s;
+		let p = index(out, '\r\n\r\n');
+		if (p >= 0) return [ substr(out, 0, p + 4), substr(out, p + 4) ];
+	}
+	return null;
+}
+
+function parse_hostport(value, default_port) {
+	let m = match(value, /^\[([^\]]+)\](?::([0-9]+))?$/);
+	if (m) return { host: m[1], port: +(m[2] || default_port) };
+	m = match(value, /^(.+):([0-9]+)$/);
+	if (m) return { host: m[1], port: +m[2] };
+	return { host: value, port: +default_port };
+}
+
+function parse_upstream(ep) {
+	if (ep == 'direct://' || ep == 'direct') return { scheme: 'direct' };
+	let m = match(ep, /^([A-Za-z0-9+.-]+):\/\/(.+)$/);
+	if (!m) return null;
+	let scheme = lc(m[1]);
+	if (scheme != 'socks5' && scheme != 'socks5h' && scheme != 'http') return null;
+	let rest = m[2], user = null, pass = null;
+	let a = match(rest, /^([^:@]+)(?::([^@]*))?@(.+)$/);
+	if (a) { user = a[1]; pass = a[2] || ''; rest = a[3]; }
+	let hp = parse_hostport(rest, scheme == 'http' ? 8080 : 1080);
+	return { scheme, host: hp.host, port: hp.port, user, pass };
+}
+
+function load_routes() {
+	let raw = fs.readfile(route_file);
+	if (!raw) return [];
+	let routes = [];
+	for (let line in split(raw, '\n')) {
+		if (!line) continue;
+		let f = split(line, '|', 5);
+		if (length(f) < 3) continue;
+		let up = parse_upstream(f[2]);
+		if (!up) continue;
+		push(routes, { id: f[0], label: f[1], endpoint: f[2], upstream: up });
+	}
+	let cur = fs.readfile(current_file);
+	if (cur) {
+		let id = split(trim(cur), '|', 2)[0];
+		let sticky = [], rest = [];
+		for (let r in routes) (r.id == id ? push(sticky, r) : push(rest, r));
+		routes = [ ...sticky, ...rest ];
+	}
+	return routes;
+}
+
+function set_current(route) {
+	fs.writefile(current_file, `${route.id}|${route.label}\n`);
+}
+
+function socks5_connect(up, host, port) {
+	let s = socket.connect(up.host, up.port);
+	if (!s) return null;
+	let methods = up.user != null ? pack('>BBBB', 5, 2, 0, 2) : pack('>BBB', 5, 1, 0);
+	if (!send_all(s, methods)) { s.close(); return null; }
+	let rep = recv_exact(s, 2);
+	if (!rep) { s.close(); return null; }
+	let rr = unpack('>BB', rep);
+	if (rr[0] != 5 || rr[1] == 255) { s.close(); return null; }
+	if (rr[1] == 2) {
+		if (up.user == null || length(up.user) > 255 || length(up.pass) > 255) { s.close(); return null; }
+		let auth = pack('>BB', 1, length(up.user)) + up.user + pack('>B', length(up.pass)) + up.pass;
+		if (!send_all(s, auth)) { s.close(); return null; }
+		let ar = recv_exact(s, 2);
+		if (!ar || unpack('>BB', ar)[1] != 0) { s.close(); return null; }
+	} else if (rr[1] != 0) { s.close(); return null; }
+	if (length(host) > 255 || port < 1 || port > 65535) { s.close(); return null; }
+	let req = pack('>BBBBB', 5, 1, 0, 3, length(host)) + host + pack('>H', port);
+	if (!send_all(s, req)) { s.close(); return null; }
+	let head = recv_exact(s, 4);
+	if (!head) { s.close(); return null; }
+	let hv = unpack('>BBBB', head);
+	if (hv[0] != 5 || hv[1] != 0) { s.close(); return null; }
+	let alen;
+	if (hv[3] == 1) alen = 4;
+	else if (hv[3] == 4) alen = 16;
+	else if (hv[3] == 3) {
+		let lb = recv_exact(s, 1);
+		if (!lb) { s.close(); return null; }
+		alen = unpack('>B', lb)[0];
+	} else { s.close(); return null; }
+	if (!recv_exact(s, alen + 2)) { s.close(); return null; }
+	return s;
+}
+
+function http_connect(up, host, port) {
+	let s = socket.connect(up.host, up.port);
+	if (!s) return null;
+	let auth = up.user != null ? `Proxy-Authorization: Basic ${b64enc(up.user + ':' + up.pass)}\r\n` : '';
+	let req = `CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n${auth}Proxy-Connection: Keep-Alive\r\n\r\n`;
+	if (!send_all(s, req)) { s.close(); return null; }
+	let h = recv_header(s, 32768);
+	if (!h || !match(h[0], /^HTTP\/1\.[01] 2[0-9][0-9]/)) { s.close(); return null; }
+	return s;
+}
+
+function connect_route(route, host, port) {
+	let up = route.upstream;
+	if (up.scheme == 'direct') return socket.connect(host, port);
+	if (up.scheme == 'socks5' || up.scheme == 'socks5h') return socks5_connect(up, host, port);
+	if (up.scheme == 'http') return http_connect(up, host, port);
+	return null;
+}
+
+function plain_http_route(route, host, port, original_header, rewritten_header) {
+	let up = route.upstream;
+	if (up.scheme == 'http') {
+		let s = socket.connect(up.host, up.port);
+		if (!s) return null;
+		let hdr = original_header;
+		if (up.user != null)
+			hdr = replace(hdr, /\r\n\r\n$/, `\r\nProxy-Authorization: Basic ${b64enc(up.user + ':' + up.pass)}\r\n\r\n`);
+		if (!send_all(s, hdr)) { s.close(); return null; }
+		return s;
+	}
+	let s = connect_route(route, host, port);
+	if (!s) return null;
+	if (!send_all(s, rewritten_header)) { s.close(); return null; }
+	return s;
+}
+
+function close_conn(c) {
+	if (c.closed) return;
+	c.closed = true;
+	if (c.ch) c.ch.delete();
+	if (c.uh) c.uh.delete();
+	if (c.client) c.client.close();
+	if (c.upstream) c.upstream.close();
+}
+
+function relay_handle(src, dst, c) {
+	let data = src.recv(32768);
+	if (data == null || length(data) == 0) { close_conn(c); return; }
+	if (!send_all(dst, data)) close_conn(c);
+}
+
+function start_relay(client, upstream) {
+	let c = { client, upstream, closed: false };
+	c.ch = uloop.handle(client.fileno(), () => relay_handle(client, upstream, c), uloop.ULOOP_READ);
+	c.uh = uloop.handle(upstream.fileno(), () => relay_handle(upstream, client, c), uloop.ULOOP_READ);
+	return c;
+}
+
+function parse_request(header) {
+	let lines = split(header, '\r\n');
+	let first = lines[0] || '';
+	let c = match(first, /^CONNECT\s+([^\s]+)\s+HTTP\/1\.[01]$/i);
+	if (c) {
+		let hp = parse_hostport(c[1], 443);
+		return { connect: true, host: hp.host, port: hp.port };
+	}
+	let m = match(first, /^([A-Z]+)\s+http:\/\/([^\/\s]+)(\/[^\s]*)?\s+(HTTP\/1\.[01])$/i);
+	if (m) {
+		let hp = parse_hostport(m[2], 80), path = m[3] || '/';
+		let newline = `${m[1]} ${path} ${m[4]}`;
+		return { connect: false, host: hp.host, port: hp.port, rewritten: replace(header, /^[^\r\n]+/, newline) };
+	}
+	let hm;
+	for (let line in lines) {
+		hm = match(line, /^Host:\s*(.+)$/i);
+		if (hm) break;
+	}
+	if (!hm) return null;
+	let hp = parse_hostport(trim(hm[1]), 80);
+	return { connect: false, host: hp.host, port: hp.port, rewritten: header };
+}
+
+function handle_client(client) {
+	let state = { buf: '', handle: null };
+	state.handle = uloop.handle(client.fileno(), () => {
+		let data = client.recv(4096);
+		if (data == null || length(data) == 0) { state.handle.delete(); client.close(); return; }
+		state.buf += data;
+		if (length(state.buf) > 65536) {
+			state.handle.delete(); send_all(client, 'HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n'); client.close(); return;
+		}
+		let p = index(state.buf, '\r\n\r\n');
+		if (p < 0) return;
+		state.handle.delete();
+		let header = substr(state.buf, 0, p + 4), extra = substr(state.buf, p + 4);
+		let req = parse_request(header);
+		if (!req) { send_all(client, 'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); client.close(); return; }
+		let routes = load_routes(), upstream = null, selected = null;
+		for (let route in routes) {
+			if (req.connect) upstream = connect_route(route, req.host, req.port);
+			else upstream = plain_http_route(route, req.host, req.port, header, req.rewritten);
+			if (upstream) { selected = route; break; }
+		}
+		if (!upstream) { send_all(client, 'HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'); client.close(); return; }
+		set_current(selected);
+		if (req.connect && !send_all(client, 'HTTP/1.1 200 Connection Established\r\nProxy-Agent: podkop-bearhole-proxy\r\n\r\n')) {
+			upstream.close(); client.close(); return;
+		}
+		if (length(extra) && !send_all(upstream, extra)) { upstream.close(); client.close(); return; }
+		start_relay(client, upstream);
+	}, uloop.ULOOP_READ);
+}
+
+uloop.init();
+let server = socket.listen(listen_host, listen_port, { family: socket.AF_INET, socktype: socket.SOCK_STREAM }, null, true);
+if (!server) {
+	warn(`podkop-bearhole-proxy: listen ${listen_host}:${listen_port}: ${socket.error()}\n`);
+	exit(1);
+}
+let listener = uloop.handle(server.fileno(), () => {
+	let addr = {};
+	let client = server.accept(addr);
+	if (client) handle_client(client);
+}, uloop.ULOOP_READ);
+warn(`podkop-bearhole-proxy: listening on ${listen_host}:${listen_port}\n`);
+uloop.run();
+listener.delete();
+server.close();

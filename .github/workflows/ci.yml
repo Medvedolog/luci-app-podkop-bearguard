@@ -85,6 +85,7 @@ jobs:
             exec test -x /usr/lib/podkop_bot/bearhole.sh
             exec test -x /usr/bin/podkop-bearhole-proxy
             exec test -x /etc/init.d/podkop-bearhole
+            exec /usr/bin/podkop-bearhole-proxy --check
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
 
@@ -114,6 +115,7 @@ jobs:
             exec test -x /usr/lib/podkop_bot/bearhole.sh
             exec test -x /usr/bin/podkop-bearhole-proxy
             exec test -x /etc/init.d/podkop-bearhole
+            exec /usr/bin/podkop-bearhole-proxy --check
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
 

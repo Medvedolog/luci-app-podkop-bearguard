@@ -2,7 +2,19 @@
 # rpcd object: podkop_bot_bearhole
 
 CTL=/usr/lib/podkop_bot/bearhole.sh
+PROXY=/usr/bin/podkop-bearhole-proxy
 LOG=/tmp/podkop_bot/bearhole/bearhole.log
+
+engine_reason() {
+    [ -x /usr/bin/ucode ] || { printf 'ucode_missing'; return; }
+    [ -x "$PROXY" ] || { printf 'proxy_missing'; return; }
+    /usr/bin/ucode "$PROXY" --check >/dev/null 2>&1 || { printf 'ucode_modules_missing'; return; }
+    printf ''
+}
+
+engine_ready() {
+    [ -z "$(engine_reason)" ]
+}
 
 case "$1" in
     list)
@@ -12,7 +24,11 @@ case "$1" in
         case "$2" in
             status)
                 read -r _in 2>/dev/null || true
-                "$CTL" status
+                _base=$("$CTL" status 2>/dev/null || printf '{"ok":false}')
+                _reason=$(engine_reason)
+                if [ -z "$_reason" ]; then _ready=true; else _ready=false; fi
+                printf '%s' "$_base" | jq -c --argjson ready "$_ready" --arg reason "$_reason" '. + {engine_ready:$ready,engine_reason:$reason}' 2>/dev/null || \
+                    printf '{"ok":false,"engine_ready":%s,"engine_reason":%s}\n' "$_ready" "$(printf '%s' "$_reason" | jq -Rs .)"
                 ;;
             results)
                 read -r _in 2>/dev/null || true
@@ -22,7 +38,17 @@ case "$1" in
                 read -r _in 2>/dev/null || _in='{}'
                 _v=$(printf '%s' "$_in" | jq -r '.enabled // false' 2>/dev/null)
                 case "$_v" in
-                    true|1) "$CTL" enable && printf '{"ok":true,"enabled":true}\n' || printf '{"ok":false,"reason":"enable_failed"}\n' ;;
+                    true|1)
+                        if ! engine_ready; then
+                            "$CTL" system-off >/dev/null 2>&1 || true
+                            printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
+                        elif "$CTL" enable; then
+                            printf '{"ok":true,"enabled":true}\n'
+                        else
+                            "$CTL" system-off >/dev/null 2>&1 || true
+                            printf '{"ok":false,"reason":"enable_failed"}\n'
+                        fi
+                        ;;
                     false|0) "$CTL" disable && printf '{"ok":true,"enabled":false}\n' || printf '{"ok":false,"reason":"disable_failed"}\n' ;;
                     *) printf '{"ok":false,"reason":"bad_value"}\n' ;;
                 esac

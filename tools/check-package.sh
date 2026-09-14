@@ -25,8 +25,10 @@ for f in \
     ./usr/lib/podkop_bot/podkop_bot \
     ./usr/lib/podkop_bot/podkop_bot_init \
     ./usr/lib/podkop_bot/bearhole.sh \
+    ./usr/lib/podkop_bot/warpscout-rescue-watchdog \
     ./usr/lib/podkop_bot/vendor.sha256 \
     ./etc/init.d/podkop-bearhole \
+    ./etc/init.d/podkop-warp-rescue \
     ./etc/config/podkop_bearhole \
     ./usr/share/luci/menu.d/luci-app-podkop-bot.json \
     ./usr/share/rpcd/acl.d/luci-app-podkop-bot.json \
@@ -44,7 +46,9 @@ for f in \
     ./usr/lib/podkop_bot/podkop_bot \
     ./usr/lib/podkop_bot/podkop_bot_init \
     ./usr/lib/podkop_bot/bearhole.sh \
-    ./etc/init.d/podkop-bearhole
+    ./usr/lib/podkop_bot/warpscout-rescue-watchdog \
+    ./etc/init.d/podkop-bearhole \
+    ./etc/init.d/podkop-warp-rescue
 do
     [ -x "$work/data/$f" ] || { echo "payload is not executable: $f" >&2; exit 1; }
 done

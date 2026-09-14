@@ -26,7 +26,6 @@ for f in \
     ./usr/lib/podkop_bot/podkop_bot_init \
     ./usr/lib/podkop_bot/bearhole.sh \
     ./usr/lib/podkop_bot/vendor.sha256 \
-    ./usr/bin/podkop-bearhole-proxy \
     ./etc/init.d/podkop-bearhole \
     ./etc/config/podkop_bearhole \
     ./usr/share/luci/menu.d/luci-app-podkop-bot.json \
@@ -45,25 +44,28 @@ for f in \
     ./usr/lib/podkop_bot/podkop_bot \
     ./usr/lib/podkop_bot/podkop_bot_init \
     ./usr/lib/podkop_bot/bearhole.sh \
-    ./usr/bin/podkop-bearhole-proxy \
     ./etc/init.d/podkop-bearhole
 do
     [ -x "$work/data/$f" ] || { echo "payload is not executable: $f" >&2; exit 1; }
 done
+
+# Native HWELP is a separate architecture-specific package. Neither the new
+# binary nor the retired ucode helper belongs in this noarch management package.
+[ ! -e "$work/data/usr/bin/hwelp-proxy" ] || { echo "native hwelp-proxy leaked into noarch LuCI package" >&2; exit 1; }
+[ ! -e "$work/data/usr/bin/podkop-bearhole-proxy" ] || { echo "legacy ucode Bearhole helper still packaged" >&2; exit 1; }
 
 # This LuCI package deliberately does not own the bot's persistent UCI config.
 [ ! -e "$work/data/etc/config/podkop_bot" ] || {
     echo "unexpected conffile: /etc/config/podkop_bot" >&2; exit 1;
 }
 
-# Bearhole has its own package-owned UCI config and it must survive sysupgrade.
 grep -qx '/etc/config/podkop_bearhole' "$work/control/conffiles" || {
     echo "Bearhole conffile is not declared" >&2; exit 1;
 }
 
-# Bootstrap contract: Bearhole engine modules must NOT be package hard-deps.
-# If feeds are blocked, the management/UI package still has to install/repair;
-# runtime activation is separately gated on engine availability.
+# Bootstrap contract: hwelp-proxy must NOT be a hard dependency. Bearhole can
+# fetch the native package on first launch, while LuCI remains repairable even
+# when feeds are inaccessible.
 deps=$(sed -n 's/^Depends:[[:space:]]*//p' "$work/control/control" | tr ',' '\n' | sed 's/[[:space:]]//g;s/[[:space:](].*$//' | sed '/^$/d' | sort -u)
 expected=$(printf '%s\n' libc luci-base jq curl | sort -u)
 [ "$deps" = "$expected" ] || {
@@ -72,17 +74,15 @@ expected=$(printf '%s\n' libc luci-base jq curl | sort -u)
     echo "actual:" >&2; printf '%s\n' "$deps" >&2
     exit 1
 }
-for forbidden in ucode-mod-socket ucode-mod-struct ucode-mod-uloop; do
+for forbidden in hwelp-proxy ucode-mod-socket ucode-mod-struct ucode-mod-uloop; do
     printf '%s\n' "$deps" | grep -qx "$forbidden" && {
         echo "bootstrap: forbidden hard dependency: $forbidden" >&2; exit 1;
     }
 done
 
 [ -x "$work/control/postinst" ] || { echo "postinst missing/not executable" >&2; exit 1; }
-# post-deinstall maps to postrm for the IPK leg when supported by the builder.
 [ -x "$work/control/postrm" ] || { echo "postrm missing/not executable" >&2; exit 1; }
 
-# Vendor checksum must validate inside the actual package payload.
 (cd "$work/data/usr/lib/podkop_bot" && sha256sum -c vendor.sha256)
 
 echo "package contents OK"

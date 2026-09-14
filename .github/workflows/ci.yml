@@ -59,6 +59,10 @@ jobs:
           name: owfeed-packages
           path: dist/
 
+      # Bootstrap contract: these clean userspaces intentionally do not install
+      # Bearhole's optional socket/struct/uloop engine modules. The management
+      # package must still install and LuCI must stay usable; runtime activation
+      # is fail-closed by rpcd/init until the engine is available.
       - name: OpenWrt 25.12 APKv3
         uses: owfeed/owlab/action@v0.6.1
         with:
@@ -85,7 +89,6 @@ jobs:
             exec test -x /usr/lib/podkop_bot/bearhole.sh
             exec test -x /usr/bin/podkop-bearhole-proxy
             exec test -x /etc/init.d/podkop-bearhole
-            exec /usr/bin/podkop-bearhole-proxy --check
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
 
@@ -115,7 +118,6 @@ jobs:
             exec test -x /usr/lib/podkop_bot/bearhole.sh
             exec test -x /usr/bin/podkop-bearhole-proxy
             exec test -x /etc/init.d/podkop-bearhole
-            exec /usr/bin/podkop-bearhole-proxy --check
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
 

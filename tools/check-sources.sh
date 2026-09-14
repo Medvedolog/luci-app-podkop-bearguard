@@ -17,11 +17,14 @@ done
 for f in \
     root/usr/libexec/rpcd/podkop_bot \
     root/usr/libexec/rpcd/podkop_bot_bearhole \
+    root/usr/libexec/rpcd/podkop_bot_warpscout_rescue \
     root/usr/lib/podkop_bot/install.sh \
     root/usr/lib/podkop_bot/podkop_bot \
     root/usr/lib/podkop_bot/podkop_bot_init \
     root/usr/lib/podkop_bot/bearhole.sh \
+    root/usr/lib/podkop_bot/warpscout-rescue-watchdog \
     root/etc/init.d/podkop-bearhole \
+    root/etc/init.d/podkop-warp-rescue \
     scripts/postinst scripts/postrm tools/*.sh
 do
     [ -f "$f" ] || continue
@@ -70,6 +73,7 @@ files = [
     pathlib.Path('root/usr/lib/podkop_bot/podkop_bot'),
     pathlib.Path('root/usr/libexec/rpcd/podkop_bot'),
     pathlib.Path('root/usr/lib/podkop_bot/bearhole.sh'),
+    pathlib.Path('root/usr/lib/podkop_bot/warpscout-rescue-watchdog'),
 ]
 forbidden_vars = (
     'ROUTE_NAME', 'LAST_ROUTE_NAME', 'LAST_ROUTE_FAST_NAME',
@@ -178,13 +182,14 @@ grep -Fq "form.ListValue, 'log_level'" root/www/luci-static/resources/view/podko
 }
 
 # Runtime/LuCI regression guards.
-OVERVIEW_ASYNC="root/www/luci-static/resources/view/podkop-bot/overview-async.js"
-grep -Fq 'return base.constructor.extend({' "$OVERVIEW_ASYNC" || {
-    echo "LuCI: overview async wrapper must return a constructor" >&2; fail=1
-}
-if grep -Fq 'return base;' "$OVERVIEW_ASYNC"; then
-    echo "LuCI: overview async wrapper returns an injected instance" >&2; fail=1
-fi
+for ASYNC in root/www/luci-static/resources/view/podkop-bot/*-async.js; do
+    grep -Fq 'return base.constructor.extend({' "$ASYNC" || {
+        echo "LuCI: async wrapper must return a constructor: $ASYNC" >&2; fail=1
+    }
+    if grep -Fq 'return base;' "$ASYNC"; then
+        echo "LuCI: async wrapper returns an injected instance: $ASYNC" >&2; fail=1
+    fi
+done
 WARPSCOUT_JS="root/www/luci-static/resources/view/podkop-bot/warpscout.js"
 if grep -Fq 'self.refreshView();},1800' "$WARPSCOUT_JS"; then
     echo "WARPSCOUT: manual TG result-erasing delayed refresh returned" >&2; fail=1
@@ -207,6 +212,18 @@ grep -Fq 'wait_pid_gone(){' "$RESCUE_RPC" || {
 grep -Fq "jq -e '.ok == true'" "$RESCUE_RPC" || {
     echo "WARP Rescue: ubus JSON acknowledgement guard missing" >&2; fail=1
 }
+grep -Fq 'rescue_autostart' "$RESCUE_RPC" || {
+    echo "WARP Rescue: autostart setting missing" >&2; fail=1
+}
+grep -Fq 'start_control resume' "$RESCUE_RPC" || {
+    echo "WARP Rescue: runtime-test restore fallback missing" >&2; fail=1
+}
+grep -Fq 'event=watchdog_recover' root/usr/lib/podkop_bot/warpscout-rescue-watchdog || {
+    echo "WARP Rescue: watchdog recovery path missing" >&2; fail=1
+}
+if grep -Fq 'Bearhole' root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js; then
+    echo "WARP Rescue UI must not contain Bearhole copy" >&2; fail=1
+fi
 
 [ "$fail" -eq 0 ] || { echo "source checks failed"; exit 1; }
 echo "source checks passed"

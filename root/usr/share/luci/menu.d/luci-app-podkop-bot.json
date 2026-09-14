@@ -20,13 +20,17 @@
 		"title": "WARP Rescue / WARPSCOUT", "order": 10,
 		"action": { "type": "view", "path": "podkop-bot/warpscout" }
 	},
+	"admin/services/podkop-bot/settings/wizard": {
+		"title": "Мастер настройки", "order": 20,
+		"action": { "type": "view", "path": "podkop-bot/wizard" }
+	},
 	"admin/services/podkop-bot/transport": {
 		"title": "Транспорт", "order": 20,
 		"action": { "type": "firstchild" }
 	},
 	"admin/services/podkop-bot/transport/main": {
 		"title": "Цепочка прокси", "order": 5,
-		"action": { "type": "view", "path": "podkop-bot/transport" }
+		"action": { "type": "view", "path": "podkop-bot/transport-ux" }
 	},
 	"admin/services/podkop-bot/transport/bearhole": {
 		"action": { "type": "view", "path": "podkop-bot/bearhole" }
@@ -42,8 +46,7 @@
 		"action": { "type": "alias", "path": "admin/services/podkop-bot/transport/warp-revolver" }
 	},
 	"admin/services/podkop-bot/wizard": {
-		"title": "Мастер настройки", "order": 25,
-		"action": { "type": "view", "path": "podkop-bot/wizard" }
+		"action": { "type": "alias", "path": "admin/services/podkop-bot/settings/wizard" }
 	},
 	"admin/services/podkop-bot/runtime": {
 		"title": "Проверка маршрутов", "order": 30,

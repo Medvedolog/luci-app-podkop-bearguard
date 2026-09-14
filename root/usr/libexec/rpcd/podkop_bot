@@ -2449,17 +2449,24 @@ method_active_probe() {
 	_clash_hdr=""
 	[ -n "$_clash_secret" ] && _clash_hdr="Authorization: Bearer $_clash_secret"
 	_proxy_cfg_type=$(_section_mode "$_variant" "$_pkg" "$_sec"); [ -z "$_proxy_cfg_type" ] && _proxy_cfg_type="selector"
-	_proxies=$(curl -s --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H "$_clash_hdr"} "http://${_clash_addr}/proxies" 2>/dev/null)
+	_proxies=$(curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H "$_clash_hdr"} "http://${_clash_addr}/proxies" 2>/dev/null)
+	# Bearhole installs a global curl config for system recovery. Clash API is a local
+	# control-plane endpoint and must never traverse hwelp. Retry once because sing-box
+	# may still be settling immediately after a reload.
+	if [ -z "$_proxies" ] || [ "$_proxies" = "null" ] || ! printf '%s' "$_proxies" | jq -e '.proxies | type == "object"' >/dev/null 2>&1; then
+		sleep 1
+		_proxies=$(curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H "$_clash_hdr"} "http://${_clash_addr}/proxies" 2>/dev/null)
+	fi
 	_proxy_name=""
 	if [ -n "$_proxies" ] && [ "$_proxies" != "null" ] && command -v jq >/dev/null 2>&1; then
 		_sel=$(printf '%s' "$_proxies" | jq -r --arg s "$_sec" '
 			.proxies as $p |
-			if ($p[$s] and (($p[$s].type == "Selector") or ($p[$s].type == "URLTest"))) then $s
+			if ($p[$s] and (($p[$s].type == "Selector") or ($p[$s].type == "URLTest") or ($p[$s].type == "Fallback") or ($p[$s].type == "LoadBalance"))) then $s
 			elif $p[$s + "-out"] then ($s + "-out")
 			elif $p[$s + "-1-out"] then ($s + "-1-out")
 			else (
 				$p | to_entries
-				| map(select((.key | startswith($s)) and ((.value.type == "Selector") or (.value.type == "URLTest"))))
+				| map(select((.key | startswith($s)) and ((.value.type == "Selector") or (.value.type == "URLTest") or (.value.type == "Fallback") or (.value.type == "LoadBalance"))))
 				| sort_by((.value.all // []) | length) | last | .key
 			) // (
 				$p | to_entries
@@ -2470,7 +2477,7 @@ method_active_probe() {
 		if [ -n "$_sel" ]; then
 			_sel_type=$(printf '%s' "$_proxies" | jq -r --arg s "$_sel" '.proxies[$s].type // empty' 2>/dev/null)
 			case "$_sel_type" in
-				Selector|URLTest)
+				Selector|URLTest|Fallback|LoadBalance)
 					_proxy_name=$(printf '%s' "$_proxies" | jq -r --arg s "$_sel" '.proxies[$s].now // empty' 2>/dev/null)
 					[ -z "$_proxy_name" ] && _proxy_name=$(printf '%s' "$_proxies" | jq -r --arg s "$_sel" '(.proxies[$s].all // [])[0] // empty' 2>/dev/null)
 					# recurse to the real leaf (nested selector→urltest→…→server)
@@ -2494,7 +2501,7 @@ method_active_probe() {
 		# Delay to the active leaf (not service latency). Encode the path segment.
 		if [ -n "$_proxy_name" ]; then
 			_penc=$(printf '%s' "$_proxy_name" | jq -sRr @uri 2>/dev/null)
-			_dl=$(curl -s --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H "$_clash_hdr"} \
+			_dl=$(curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8 ${_clash_hdr:+-H "$_clash_hdr"} \
 				"http://${_clash_addr}/proxies/${_penc}/delay?timeout=5000&url=http://www.gstatic.com/generate_204" 2>/dev/null)
 			_srv_delay=$(printf '%s' "$_dl" | jq -r '.delay // empty' 2>/dev/null)
 		fi

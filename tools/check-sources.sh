@@ -189,6 +189,17 @@ WARPSCOUT_JS="root/www/luci-static/resources/view/podkop-bot/warpscout.js"
 if grep -Fq 'self.refreshView();},1800' "$WARPSCOUT_JS"; then
     echo "WARPSCOUT: manual TG result-erasing delayed refresh returned" >&2; fail=1
 fi
+RUNTIME_RPC="root/usr/libexec/rpcd/podkop_bot"
+BOT_SRC="root/usr/lib/podkop_bot/podkop_bot"
+grep -Fq "curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8" "$RUNTIME_RPC" || {
+    echo "Runtime: local Clash API must bypass Bearhole/curlrc" >&2; fail=1
+}
+grep -Fq 'Selector|URLTest|Fallback|LoadBalance)' "$RUNTIME_RPC" || {
+    echo "Runtime: selector-like Clash group coverage regressed" >&2; fail=1
+}
+grep -Fq "curl -q --noproxy '*' -s" "$BOT_SRC" || {
+    echo "Bot: local Clash API must bypass Bearhole/curlrc" >&2; fail=1
+}
 RESCUE_RPC="root/usr/libexec/rpcd/podkop_bot_warpscout_rescue"
 grep -Fq 'wait_pid_gone(){' "$RESCUE_RPC" || {
     echo "WARP Rescue: worker completion race guard missing" >&2; fail=1

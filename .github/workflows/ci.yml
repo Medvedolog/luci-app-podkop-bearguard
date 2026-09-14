@@ -83,7 +83,9 @@ jobs:
             file /usr/share/luci/menu.d/luci-app-podkop-bot.json
             file /usr/share/rpcd/acl.d/luci-app-podkop-bot.json
             file /www/luci-static/resources/view/podkop-bot/overview.js
+            file /www/luci-static/resources/view/podkop-bot/runtime-async.js
             file /www/luci-static/resources/view/podkop-bot/transport.js
+            file /www/luci-static/resources/view/podkop-bot/transport-ux.js
             exec test -x /usr/libexec/rpcd/podkop_bot
             exec test -x /usr/libexec/rpcd/podkop_bot_bearhole
             exec test -x /usr/lib/podkop_bot/install.sh
@@ -91,7 +93,10 @@ jobs:
             exec test -x /usr/bin/podkop-bearhole-proxy
             exec test -x /etc/init.d/podkop-bearhole
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/settings/wizard
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/runtime/services
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/update
 
       - name: OpenWrt 24.10 IPK
         uses: owfeed/owlab/action@v0.6.1
@@ -112,7 +117,9 @@ jobs:
             file /usr/share/luci/menu.d/luci-app-podkop-bot.json
             file /usr/share/rpcd/acl.d/luci-app-podkop-bot.json
             file /www/luci-static/resources/view/podkop-bot/overview.js
+            file /www/luci-static/resources/view/podkop-bot/runtime-async.js
             file /www/luci-static/resources/view/podkop-bot/transport.js
+            file /www/luci-static/resources/view/podkop-bot/transport-ux.js
             exec test -x /usr/libexec/rpcd/podkop_bot
             exec test -x /usr/libexec/rpcd/podkop_bot_bearhole
             exec test -x /usr/lib/podkop_bot/install.sh
@@ -120,7 +127,10 @@ jobs:
             exec test -x /usr/bin/podkop-bearhole-proxy
             exec test -x /etc/init.d/podkop-bearhole
             http 200 /cgi-bin/luci/admin/services/podkop-bot/overview
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/settings/wizard
             http 200 /cgi-bin/luci/admin/services/podkop-bot/transport/main
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/runtime/services
+            http 200 /cgi-bin/luci/admin/services/podkop-bot/update
 
   release-preflight:
     name: Release signing preflight

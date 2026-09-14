@@ -25,9 +25,6 @@ case "$VERSION" in
     *)         BASE_VERSION="$VERSION"; PKG_VERSION="${VERSION}-r${MAKE_RELEASE}" ;;
 esac
 
-# Keep release/package version sources coherent. The staged rpcd payload gets the
-# same BASE_VERSION below; this avoids rewriting the 100+ KiB backend merely to
-# change its build-visible LUCI_APP_VERSION constant on a development branch.
 TXT_VERSION="$(cat "$ROOT/version.txt" 2>/dev/null || true)"
 MAKE_VERSION="$(sed -n 's/^PKG_VERSION:=//p' "$ROOT/Makefile" | head -n1)"
 for pair in "version.txt:$TXT_VERSION" "Makefile:$MAKE_VERSION"; do
@@ -45,15 +42,17 @@ printf '%s\n' "$PKG_VERSION" > "$OUT/VERSION"
 # root/ is already laid out as an OpenWrt root filesystem.
 cp -a "$ROOT/root/." "$OUT/root/"
 
-# Synchronize app_info/footer version in the staged package payload. Source bot
-# version remains independent; only LUCI_APP_VERSION is replaced.
+# The old ucode proxy was bundled in early Bearhole development builds. Native
+# hwelp-proxy is now an independent architecture-specific package installed on
+# demand, so never ship the legacy helper inside the noarch LuCI package.
+rm -f "$OUT/root/usr/bin/podkop-bearhole-proxy"
+
 RPCD="$OUT/root/usr/libexec/rpcd/podkop_bot"
 [ -f "$RPCD" ] || { echo "required payload missing: /usr/libexec/rpcd/podkop_bot" >&2; exit 1; }
 sed -i "s/^LUCI_APP_VERSION=\"[^\"]*\"/LUCI_APP_VERSION=\"$BASE_VERSION\"/" "$RPCD"
 RPC_VERSION="$(sed -n 's/^LUCI_APP_VERSION="\([^"]*\)".*/\1/p' "$RPCD" | head -n1)"
 [ "$RPC_VERSION" = "$BASE_VERSION" ] || { echo "failed to synchronize staged rpcd version" >&2; exit 1; }
 
-# Runtime files that must remain executable even if a checkout/import lost modes.
 for f in \
     usr/libexec/rpcd/podkop_bot \
     usr/libexec/rpcd/podkop_bot_warpscout \
@@ -65,14 +64,12 @@ for f in \
     usr/lib/podkop_bot/podkop_bot \
     usr/lib/podkop_bot/podkop_bot_init \
     usr/lib/podkop_bot/bearhole.sh \
-    usr/bin/podkop-bearhole-proxy \
     etc/init.d/podkop-bearhole
 do
     [ -f "$OUT/root/$f" ] || { echo "required payload missing: /$f" >&2; exit 1; }
     chmod 0755 "$OUT/root/$f"
 done
 
-# Normalize maintainer hooks only; payload bytes otherwise stay untouched.
 for s in postinst postrm; do
     src="$ROOT/scripts/$s"
     [ -f "$src" ] || continue

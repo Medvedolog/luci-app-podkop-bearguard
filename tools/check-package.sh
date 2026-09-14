@@ -61,19 +61,22 @@ grep -qx '/etc/config/podkop_bearhole' "$work/control/conffiles" || {
     echo "Bearhole conffile is not declared" >&2; exit 1;
 }
 
-# Dependency set must not drift silently. Ignore package-manager decoration and
-# compare names rather than relying on field ordering.
+# Bootstrap contract: Bearhole engine modules must NOT be package hard-deps.
+# If feeds are blocked, the management/UI package still has to install/repair;
+# runtime activation is separately gated on engine availability.
 deps=$(sed -n 's/^Depends:[[:space:]]*//p' "$work/control/control" | tr ',' '\n' | sed 's/[[:space:]]//g;s/[[:space:](].*$//' | sed '/^$/d' | sort -u)
-expected=$(printf '%s\n' \
-    libc luci-base jq curl \
-    ucode ucode-mod-fs ucode-mod-socket ucode-mod-struct ucode-mod-uloop \
-    | sort -u)
+expected=$(printf '%s\n' libc luci-base jq curl | sort -u)
 [ "$deps" = "$expected" ] || {
     echo "dependency mismatch" >&2
     echo "expected:" >&2; printf '%s\n' "$expected" >&2
     echo "actual:" >&2; printf '%s\n' "$deps" >&2
     exit 1
 }
+for forbidden in ucode-mod-socket ucode-mod-struct ucode-mod-uloop; do
+    printf '%s\n' "$deps" | grep -qx "$forbidden" && {
+        echo "bootstrap: forbidden hard dependency: $forbidden" >&2; exit 1;
+    }
+done
 
 [ -x "$work/control/postinst" ] || { echo "postinst missing/not executable" >&2; exit 1; }
 # post-deinstall maps to postrm for the IPK leg when supported by the builder.

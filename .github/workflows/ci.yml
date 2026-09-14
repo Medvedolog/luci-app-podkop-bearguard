@@ -46,6 +46,11 @@ jobs:
       - run: owfeed build
       - run: sh tools/check-package.sh
 
+      - name: Prepare writable HWELP artifact directory
+        run: |
+          mkdir -p hwelp-proxy/dist
+          chmod 0777 hwelp-proxy/dist
+
       - name: Build x86_64 hwelp-proxy for runtime smoke
         working-directory: hwelp-proxy
         run: owlab build

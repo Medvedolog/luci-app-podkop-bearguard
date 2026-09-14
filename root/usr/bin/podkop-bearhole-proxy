@@ -40,7 +40,8 @@ function recv_exact(sock, n) {
 	return out;
 }
 
-function recv_header(sock, limit = 16384) {
+function recv_header(sock, limit) {
+	if (limit == null) limit = 16384;
 	let out = '';
 	while (length(out) < limit) {
 		let s = sock.recv(2048);

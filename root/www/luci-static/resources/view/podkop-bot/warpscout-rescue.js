@@ -23,7 +23,7 @@ function ago(ts){var n=parseInt(ts||0,10);if(!n)return '—';var s=Math.max(0,Ma
 function magazineLoader(){
 	var cells=[];
 	for(var i=0;i<6;i++)cells.push(E('span',{'class':'pb-mag-load-cell','style':'animation-delay:'+(i*140)+'ms;'},'■'));
-	return E('span',{'class':'pb-mag-load','title':_('Магазин перезаряжается'),'aria-label':_('Магазин перезаряжается')},[E('span',{'class':'pb-mag-load-cells'},cells),E('span',{'class':'pb-mag-load-text'},_('заряжаю магазин…'))]);
+	return E('span',{'class':'pb-mag-load','title':_('Магазин перезаряжается'),'aria-label':_('Магазин перезаряжается')},[E('span',{'class':'pb-mag-load-cells'},cells),E('span',{'class':'pb-mag-load-text'},_('патроны в барабан…'))]);
 }
 
 return view.extend({
@@ -78,10 +78,10 @@ return view.extend({
 		var saveAuto=E('button',{'class':'cbi-button cbi-button-apply','disabled':rs.busy?'disabled':null,'click':ui.createHandlerFn(this,function(){return callRescueSet('rescue_auto',auto.checked?'1':'0').then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'write_failed');return callRescueSet('rescue_autostart',autostart.checked?'1':'0');}).then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'write_failed');return self.refreshView();}).catch(function(e){dom.content(actionStatus,dot('red',_('Ошибка настроек автоматики: ')+((e&&e.message)||'?')));});})},_('Применить автоматику'));
 		var busyLabel=String(rs.state||_('работает'));
 		if(rs.busy&&rs.state==='reloading'){
-			var phase={manual:_('этап 1/4 · подготовка'),discovery:_('этап 1/4 · поиск WARP-узлов'),qualification:_('этап 2/4 · проверка Telegram API'),building:_('этап 3/4 · сбор магазина')};
+			var phase={manual:_('открываю барабан · готовлюсь к перезарядке'),discovery:_('ищу патроны · Discovery WARP-узлов'),qualification:_('проверяю капсюли · Telegram API qualification'),building:_('заряжаю магазин · укладываю только VALID')};
 			busyLabel=_('Перезарядка')+' · '+(phase[rs.reason]||rs.reason||_('подготовка'));
 		}else if(rs.busy&&rs.state==='firing'){
-			busyLabel=_('Запуск WARP')+' · '+String(rs.index||0)+' / '+String(rs.total||0)+' · '+_('SOCKS → Telegram getMe');
+			busyLabel=_('Взвожу курок')+' · '+String(rs.index||0)+' / '+String(rs.total||0)+' · '+_('тестовый отстрел: SOCKS → Telegram getMe');
 		}
 		var stateNode=rs.running?dot('green',_('работает')):(rs.busy?dot('yellow',busyLabel):dot((rs.state==='exhausted'||rs.state==='reload_failed'||rs.state==='fire_failed')?'red':'grey',enabled?_('не запущен'):String(rs.state||_('остановлен'))));
 		var magNode=(rs.total||0)>0?dot('green',_('заряжен · ')+String(rs.total)+_(' VALID WARP-маршрутов')):dot('grey',_('пуст · сначала нужны VALID результаты Telegram API'));

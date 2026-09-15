@@ -180,11 +180,11 @@ return view.extend({
 		}
 		var rows=items.map(function(x){return E('tr',{},[
 			E('td',{},[E('strong',{},x.label||x.id),E('div',{'class':'pb-hint-90','style':'overflow-wrap:anywhere;'},x.endpoint||'')]),
-			E('td',{'style':'text-align:center;'},[routeStatus(x.status)]),E('td',{'style':'text-align:center;'},[q(x.github_core)]),E('td',{'style':'text-align:center;'},[q(x.github_raw)]),E('td',{'style':'text-align:center;'},[q(x.github_api)]),E('td',{'style':'text-align:center;'},[q(x.github_codeload)]),E('td',{'style':'text-align:center;'},[q(x.openwrt_feeds)]),E('td',{'style':'white-space:nowrap;text-align:right;padding-right:1.2em;'},age(x.checked_at))
+			E('td',{'style':'text-align:center;'},[routeStatus(x.status)]),E('td',{'style':'text-align:center;'},[q(x.github_core)]),E('td',{'style':'text-align:center;'},[q(x.github_raw)]),E('td',{'style':'text-align:center;'},[q(x.github_api)]),E('td',{'style':'text-align:center;'},[q(x.github_codeload)]),E('td',{'style':'text-align:center;'},[q(x.openwrt_feeds)]),E('td',{'style':'white-space:nowrap;text-align:center;'},age(x.checked_at))
 		]);});
 		function th(label,title){return E('th',{'title':title||label,'style':'white-space:nowrap;text-align:center;'},label);}
 		return E('div',{'style':'overflow-x:auto;'},[E('table',{'class':'table','style':'min-width:760px;'},[
-			E('thead',{},[E('tr',{},[E('th',{'style':'text-align:left;'},_('Маршрут')),th(_('Статус'),_('Итоговая пригодность маршрута')),th('GitHub',_('github.com')),th('Raw',_('raw.githubusercontent.com')),th('API',_('api.github.com')),th(_('Архив'),_('codeload.github.com')),th('Feeds',_('Репозитории OpenWrt')),E('th',{'style':'text-align:right;padding-right:1.2em;'},_('Проверено'))])]),E('tbody',{},rows)
+			E('thead',{},[E('tr',{},[E('th',{'style':'text-align:left;'},_('Маршрут')),th(_('Статус'),_('Итоговая пригодность маршрута')),th('GitHub',_('github.com')),th('Raw',_('raw.githubusercontent.com')),th('API',_('api.github.com')),th(_('Архив'),_('codeload.github.com')),th('Feeds',_('Репозитории OpenWrt')),E('th',{'style':'text-align:center;white-space:nowrap;'},_('Проверено'))])]),E('tbody',{},rows)
 		])]);
 	},
 

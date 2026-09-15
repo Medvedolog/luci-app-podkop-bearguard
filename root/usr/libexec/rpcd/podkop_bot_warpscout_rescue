@@ -1,4 +1,5 @@
 #!/bin/sh
+. /usr/lib/podkop_bot/json-log.sh
 # WARP Rescue revolver controller.
 # Consumes VALID WARPSCOUT candidates from TG API qualification results,
 # serially tries them, keeps one rescue SOCKS alive, and can reload the
@@ -296,7 +297,7 @@ method_resume(){
 	start_control fire "$_auto" ""
 	printf '{"ok":true,"fallback":true}\n'
 }
-method_log(){ read -r _in 2>/dev/null; _o=$(printf '%s' "$_in"|sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); [ -n "$_o" ]||_o=0; _sz=$(wc -c <"$RESCUE_LOG" 2>/dev/null|tr -d ' '); [ -n "$_sz" ]||_sz=0; [ "$_o" -le "$_sz" ] 2>/dev/null || _o=0; _b=$((_sz-_o)); [ "$_b" -gt 32768 ]&&_b=32768; if [ "$_b" -gt 0 ]; then _c=$(tail -c +$((_o+1)) "$RESCUE_LOG"|head -c "$_b"|jq -Rs .); [ -n "$_c" ]||_c='""'; else _c='""'; fi; printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_c" "$((_o+_b))"; }
+method_log(){ read -r _in 2>/dev/null; _o=$(printf '%s' "$_in"|sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); [ -n "$_o" ]||_o=0; _sz=$(wc -c <"$RESCUE_LOG" 2>/dev/null|tr -d ' '); [ -n "$_sz" ]||_sz=0; [ "$_o" -le "$_sz" ] 2>/dev/null || _o=0; _b=$((_sz-_o)); [ "$_b" -gt 32768 ]&&_b=32768; if [ "$_b" -gt 0 ]; then _c=$(tail -c +$((_o+1)) "$RESCUE_LOG"|head -c "$_b"| pb_json_log_filter); [ -n "$_c" ]||_c='""'; else _c='""'; fi; printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_c" "$((_o+_b))"; }
 
 case "$1" in
  list) echo '{"status":{},"magazine":{},"set":{"key":"x","value":"x"},"trigger":{},"next":{},"fire":{"endpoint":"x"},"reload":{},"stop":{},"pause":{},"resume":{},"log":{"offset":0}}';;

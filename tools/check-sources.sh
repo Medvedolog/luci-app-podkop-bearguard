@@ -73,6 +73,20 @@ if grep -Fq 'Проверяю цепочку сверху вниз…' "$TRANSPO
     echo "FAIL  persistent full-chain notification returned" >&2; fail=1
 fi
 
+# All auxiliary rpcd log streams must use the shared control-byte/ANSI sanitizer.
+LOG_JSON_LIB="root/usr/lib/podkop_bot/json-log.sh"
+[ -f "$LOG_JSON_LIB" ] || { echo "FAIL  shared RPC log sanitizer missing"; fail=1; }
+for _lf in \
+    root/usr/libexec/rpcd/podkop_bot_bearhole \
+    root/usr/libexec/rpcd/podkop_bot_warpscout \
+    root/usr/libexec/rpcd/podkop_bot_warpscout_rescue \
+    root/usr/libexec/rpcd/podkop_bot_warpscout_runtime \
+    root/usr/libexec/rpcd/podkop_bot_warpscout_tgscan
+do
+    grep -Fq '. /usr/lib/podkop_bot/json-log.sh' "$_lf" || { echo "FAIL  shared log sanitizer not sourced by $_lf"; fail=1; }
+    grep -Eq 'pb_json_log_(str|filter)' "$_lf" || { echo "FAIL  unsafe log JSON encoder remains in $_lf"; fail=1; }
+done
+
 # Vendored bot is an integrity contract, not merely documentation.
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
     :

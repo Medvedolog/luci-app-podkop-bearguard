@@ -1,4 +1,5 @@
 #!/bin/sh
+. /usr/lib/podkop_bot/json-log.sh
 # rpcd object: podkop_bot_bearhole
 
 CTL=/usr/lib/podkop_bot/bearhole.sh
@@ -96,7 +97,7 @@ progress_json() {
     case "$_done" in ''|*[!0-9]*) _done=0;; esac
     _starting=false; [ -d "$START_LOCK" ] && _starting=true
     printf '{"starting":%s,"progress_done":%s,"progress_total":%s,"progress_route":%s,"progress_label":%s}' \
-        "$_starting" "$_done" "$_total" "$(printf '%s' "$_current" | jq -Rs .)" "$(printf '%s' "$_label" | jq -Rs .)"
+        "$_starting" "$_done" "$_total" "$(printf '%s' "$_current" | pb_json_log_filter)" "$(printf '%s' "$_label" | pb_json_log_filter)"
 }
 
 start_worker() {
@@ -298,7 +299,7 @@ case "$1" in
                 if [ -z "$_reason" ]; then _ready=true; else _ready=false; fi
                 _prog=$(progress_json "$_base")
                 printf '%s' "$_base" | jq -c --argjson ready "$_ready" --arg reason "$_reason" --argjson prog "$_prog" '. + {engine_ready:$ready,engine_reason:$reason} + $prog' 2>/dev/null || \
-                    printf '{"ok":false,"engine_ready":%s,"engine_reason":%s}\n' "$_ready" "$(printf '%s' "$_reason" | jq -Rs .)"
+                    printf '{"ok":false,"engine_ready":%s,"engine_reason":%s}\n' "$_ready" "$(printf '%s' "$_reason" | pb_json_log_filter)"
                 ;;
             results)
                 cat >/dev/null 2>&1 || true
@@ -358,7 +359,7 @@ case "$1" in
             qualify_start)
                 cat >/dev/null 2>&1 || true
                 if ! engine_ready; then
-                    printf '{"ok":false,"reason":%s}\n' "$(engine_reason | jq -Rs .)"
+                    printf '{"ok":false,"reason":%s}\n' "$(engine_reason | pb_json_log_filter)"
                 elif "$CTL" qualify-start; then printf '{"ok":true,"started":true}\n'; else
                     _rc=$?; [ "$_rc" = 2 ] && printf '{"ok":true,"started":false,"reason":"already_running"}\n' || printf '{"ok":false,"reason":"start_failed"}\n'
                 fi
@@ -379,8 +380,8 @@ case "$1" in
                 _size=$(wc -c < "$LOG" 2>/dev/null | tr -d ' '); [ -n "$_size" ] || _size=0
                 [ "$_off" -gt "$_size" ] 2>/dev/null && _off=0
                 _chunk=$(tail -c "+$((_off + 1))" "$LOG" 2>/dev/null; printf x); _chunk=${_chunk%x}
-                _esc=$(printf '%s' "$_chunk" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk 'BEGIN{ORS=""}{if(NR>1)printf "\\n";printf "%s",$0}')
-                printf '{"ok":true,"offset":%s,"chunk":"%s"}\n' "$_size" "$_esc"
+                _esc=$(pb_json_log_str "$_chunk")
+                printf '{"ok":true,"offset":%s,"chunk":%s}\n' "$_size" "$_esc"
                 ;;
             *) printf '{"ok":false,"reason":"unknown_method"}\n' ;;
         esac

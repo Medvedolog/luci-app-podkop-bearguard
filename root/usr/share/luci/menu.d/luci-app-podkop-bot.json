@@ -6,7 +6,7 @@
 	},
 	"admin/services/podkop-bot/overview": {
 		"title": "Обзор", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/overview-async" }
+		"action": { "type": "view", "path": "podkop-bot/overview-r37" }
 	},
 	"admin/services/podkop-bot/settings": {
 		"title": "Настройки", "order": 15,
@@ -34,7 +34,7 @@
 	},
 	"admin/services/podkop-bot/transport/bearhole": {
 		"title": "Bearhole", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/bearhole" }
+		"action": { "type": "view", "path": "podkop-bot/bearhole-r37" }
 	},
 	"admin/services/podkop-bot/transport/warp-revolver": {
 		"title": "Револьвер WARP", "order": 15,

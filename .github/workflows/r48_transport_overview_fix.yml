@@ -63,6 +63,7 @@ jobs:
               p.write_text(s.replace(marker,block+marker,1))
           PY
           sed -i 's/^PKG_RELEASE:=47$/PKG_RELEASE:=48/' Makefile
+          (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
           sh -n root/usr/lib/podkop_bot/podkop_bot
           sh tools/check-sources.sh
           sh tools/check-async-wrappers.sh
@@ -72,6 +73,6 @@ jobs:
           set -e
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Makefile root/usr/lib/podkop_bot/podkop_bot root/www/luci-static/resources/view/podkop-bot/overview.js root/www/luci-static/resources/view/podkop-bot/overview-state.js tools/check-sources.sh
+          git add Makefile root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/vendor.sha256 root/www/luci-static/resources/view/podkop-bot/overview.js root/www/luci-static/resources/view/podkop-bot/overview-state.js tools/check-sources.sh
           git commit -m '0.19.18-r48: fix transport stalls and duplicate Overview polling'
           git push origin HEAD:dev/0.19.18-bearhole-mvp

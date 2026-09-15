@@ -1,0 +1,93 @@
+name: r46 shared RPC log sanitizer v2
+
+on:
+  push:
+    branches: [dev/0.19.18-bearhole-mvp]
+    paths: ['.github/workflows/r46_log_sanitizer_v2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev/0.19.18-bearhole-mvp
+          fetch-depth: 0
+      - name: Install shared sanitizer and migrate RPC log methods
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > root/usr/lib/podkop_bot/json-log.sh <<'EOF'
+          # Shared JSON encoder for log chunks returned by rpcd backends.
+          # Keep TAB/LF/CR (jq escapes them), strip ANSI CSI and unsafe C0/DEL.
+          pb_json_log_filter() {
+              _pb_esc=$(printf '\033')
+              sed "s/${_pb_esc}\\[[0-9;?]*[a-zA-Z]//g" \
+                  | tr -d '\000-\010\013\014\016-\037\177' \
+                  | jq -Rs .
+          }
+          pb_json_log_str() {
+              printf '%s' "$1" | pb_json_log_filter
+          }
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          files = [
+              'root/usr/libexec/rpcd/podkop_bot_bearhole',
+              'root/usr/libexec/rpcd/podkop_bot_warpscout',
+              'root/usr/libexec/rpcd/podkop_bot_warpscout_rescue',
+              'root/usr/libexec/rpcd/podkop_bot_warpscout_runtime',
+              'root/usr/libexec/rpcd/podkop_bot_warpscout_tgscan',
+          ]
+          source = '. /usr/lib/podkop_bot/json-log.sh\n'
+          for name in files:
+              p = Path(name)
+              s = p.read_text()
+              if source not in s:
+                  lines = s.splitlines(True)
+                  lines.insert(1, source)
+                  s = ''.join(lines)
+              old_count = 0
+              lines = s.splitlines(True)
+              for i, line in enumerate(lines):
+                  if '_esc=$(printf \'%s\' "$_chunk"' in line:
+                      indent = line[:len(line)-len(line.lstrip())]
+                      lines[i] = indent + '_esc=$(pb_json_log_str "$_chunk")\n'
+                      old_count += 1
+              s = ''.join(lines)
+              if old_count:
+                  s = s.replace('"chunk":"%s"', '"chunk":%s')
+              new_count = s.count('| jq -Rs . 2>/dev/null)')
+              s = s.replace('| jq -Rs . 2>/dev/null)', '| pb_json_log_filter)')
+              if old_count + new_count < 1:
+                  raise SystemExit(f'{name}: no log JSON encoder found')
+              p.write_text(s)
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tools/check-sources.sh')
+          s=p.read_text()
+          marker='# Vendored bot is an integrity contract, not merely documentation.\n'
+          block='''# All auxiliary rpcd log streams must use the shared control-byte/ANSI sanitizer.\nLOG_JSON_LIB="root/usr/lib/podkop_bot/json-log.sh"\n[ -f "$LOG_JSON_LIB" ] || { echo "FAIL  shared RPC log sanitizer missing"; fail=1; }\nfor _lf in \\\n    root/usr/libexec/rpcd/podkop_bot_bearhole \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_rescue \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_runtime \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_tgscan\ndo\n    grep -Fq '. /usr/lib/podkop_bot/json-log.sh' "$_lf" || { echo "FAIL  shared log sanitizer not sourced by $_lf"; fail=1; }\n    grep -Eq 'pb_json_log_(str|filter)' "$_lf" || { echo "FAIL  unsafe log JSON encoder remains in $_lf"; fail=1; }\ndone\n\n'''
+          if block not in s:
+              if marker not in s:
+                  raise SystemExit('check-sources marker not found')
+              s=s.replace(marker, block+marker)
+              p.write_text(s)
+          PY
+          sed -i 's/^PKG_RELEASE:=45$/PKG_RELEASE:=46/' Makefile
+          sh tools/check-sources.sh
+          sh tools/check-async-wrappers.sh
+          git diff --check
+      - name: Commit r46
+        run: |
+          set -e
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Makefile root/usr/lib/podkop_bot/json-log.sh root/usr/libexec/rpcd tools/check-sources.sh
+          git commit -m '0.19.18-r46: share safe JSON log encoding across rpcd backends'
+          git push origin HEAD:dev/0.19.18-bearhole-mvp

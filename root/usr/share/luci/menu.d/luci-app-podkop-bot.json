@@ -55,7 +55,7 @@
 	},
 	"admin/services/podkop-bot/runtime/services": {
 		"title": "Тест сервисов", "order": 5,
-		"action": { "type": "view", "path": "podkop-bot/runtime-async" }
+		"action": { "type": "view", "path": "podkop-bot/runtime-r41" }
 	},
 	"admin/services/podkop-bot/runtime/tg-api-routes": {
 		"action": { "type": "alias", "path": "admin/services/podkop-bot/runtime/services" }

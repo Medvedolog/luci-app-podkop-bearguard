@@ -37,8 +37,13 @@ kill_pidfile() {
 	rm -f "$_pf" 2>/dev/null || true
 }
 
-# First ask the control planes to undo any system-wide proxy state while their
-# package payload is still available.
+# First ask live control planes to undo state while rpcd plugins are still
+# available. These calls are best-effort; the manual cleanup below is the
+# authoritative fallback for partial/broken installations.
+ubus call podkop_bot_warpscout_rescue stop '{}' >/dev/null 2>&1 || true
+ubus call podkop_bot_warpscout_runtime stop '{}' >/dev/null 2>&1 || true
+ubus call podkop_bot_warpscout remove '{}' >/dev/null 2>&1 || true
+
 if [ -x /usr/lib/podkop_bot/bearhole.sh ]; then
 	/usr/lib/podkop_bot/bearhole.sh system-off >/dev/null 2>&1 || true
 fi
@@ -64,6 +69,7 @@ for _pf in \
 	/tmp/podkop_bot/warpscout_rescue_control.pid \
 	/tmp/podkop_bot/warpscout_action.pid \
 	/tmp/podkop_bot/warpscout_tgscan.pid \
+	/tmp/podkop_bot/warpscout_update.pid \
 	/tmp/podkop_bot/warpscout_rescue_watchdog.pid
 do
 	kill_pidfile "$_pf"
@@ -98,12 +104,18 @@ strip_bearhole_block /root/.curlrc
 strip_bearhole_block /root/.wgetrc
 
 # Runtime and persistent state created by Bearhole/WARPSCOUT belong to this
-# integration and must disappear on a real uninstall.
+# integration and must disappear on a real uninstall. WARPSCOUT itself is
+# installed by this LuCI integration through the upstream installer, so purge
+# the downloaded binary too; this mirrors the UI's explicit WARPSCOUT Remove.
 rm -rf /tmp/podkop_bot/bearhole 2>/dev/null || true
-rm -f /tmp/podkop_bot/warpscout* /tmp/podkop_bot/rescue_tg_body.* 2>/dev/null || true
 rm -f \
+	/usr/bin/warpscout \
+	/tmp/warpscout-account-upload.json \
+	/tmp/podkop_bot/warpscout* \
+	/tmp/podkop_bot/rescue_tg_body.* \
 	/etc/podkop_bot/warpscout.conf \
 	/etc/podkop_bot/warpscout-account.json \
+	/etc/podkop_bot/warpscout-shortlist.tsv \
 	/etc/podkop_bot/warpscout-rescue.magazine \
 	2>/dev/null || true
 rmdir /etc/podkop_bot 2>/dev/null || true

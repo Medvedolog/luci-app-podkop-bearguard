@@ -25,7 +25,7 @@ for f in \
     root/usr/lib/podkop_bot/warpscout-rescue-watchdog \
     root/etc/init.d/podkop-bearhole \
     root/etc/init.d/podkop-warp-rescue \
-    scripts/postinst scripts/postrm tools/*.sh
+    scripts/preinst scripts/postinst scripts/postrm tools/*.sh
 do
     [ -f "$f" ] || continue
     if sh -n "$f" 2>/tmp/pb-sherr; then echo "ok    sh -n $f"; else echo "FAIL  sh -n $f"; cat /tmp/pb-sherr; fail=1; fi
@@ -53,6 +53,25 @@ grep -Fq 'BH_PROXY=/usr/bin/hwelp-proxy' root/etc/init.d/podkop-bearhole || { ec
 [ ! -e root/usr/bin/podkop-bearhole-proxy ] || { echo "FAIL  retired ucode Bearhole helper returned"; fail=1; }
 grep -Fq 'install-hwelp' root/usr/lib/podkop_bot/bearhole.sh || { echo "FAIL  on-demand HWELP bootstrap missing"; fail=1; }
 grep -Fq 'set_port' root/usr/libexec/rpcd/podkop_bot_bearhole || { echo "FAIL  HWELP configurable port RPC missing"; fail=1; }
+
+# Bearhole r35 contracts: UCI is user-owned, upgrade hooks are quiet/preserving,
+# HWELP cannot be abandoned after a few crashes, and mobile/manual-probe UX is
+# explicitly guarded against regression.
+[ ! -e root/etc/config/podkop_bearhole ] || { echo "FAIL  Bearhole UCI must not be packaged as a conffile"; fail=1; }
+grep -Fq 'podkop_bearhole.preupgrade' scripts/preinst || { echo "FAIL  Bearhole pre-upgrade config preservation missing"; fail=1; }
+grep -Fq 'podkop_bearhole-opkg' scripts/postinst || { echo "FAIL  stale Bearhole -opkg cleanup missing"; fail=1; }
+grep -Fq 'procd_set_param respawn 3600 5 0' root/etc/init.d/podkop-bearhole || { echo "FAIL  HWELP must not be abandoned after finite respawns"; fail=1; }
+BEARHOLE_JS='root/www/luci-static/resources/view/podkop-bot/bearhole.js'
+TRANSPORT_JS='root/www/luci-static/resources/view/podkop-bot/transport.js'
+REVOLVER_JS='root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js'
+grep -Fq "max-width: 720px" "$BEARHOLE_JS" || { echo "FAIL  Bearhole mobile resource-card layout missing"; fail=1; }
+grep -Fq 'Локальная авторизация hwelp (обычно не нужна)' "$BEARHOLE_JS" || { echo "FAIL  local/upstream HWELP auth distinction missing"; fail=1; }
+grep -Fq "transport/warp-revolver" "$TRANSPORT_JS" || { echo "FAIL  WARP route must link to Revolver automation"; fail=1; }
+grep -Fq 'Автозапуск и самовосстановление' "$REVOLVER_JS" || { echo "FAIL  WARP Rescue automation control is not prominent"; fail=1; }
+grep -Fq 'Проверка цепочки:' "$TRANSPORT_JS" || { echo "FAIL  manual chain probe must use inline progress"; fail=1; }
+if grep -Fq 'Проверяю цепочку сверху вниз…' "$TRANSPORT_JS"; then
+    echo "FAIL  persistent full-chain notification returned" >&2; fail=1
+fi
 
 # Vendored bot is an integrity contract, not merely documentation.
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
@@ -167,7 +186,7 @@ grep -Fq 'blocked_user_ids' "$BOT_SRC" && grep -Fq 'blocked_sender_chat_ids' "$B
     echo "security: persistent manual blocklist support missing" >&2; exit 1;
 }
 if grep -E 'logger .*\[Security\].*(text=|\$\{text\}|\$text)' "$BOT_SRC" >/dev/null 2>&1; then
-    echo "security: attacker-controlled Telegram text must not reach syslog" >&2; exit 1;
+    echo "security: attacker-controlled Telegram text must not reach syslog" >&2; exit 1
 fi
 
 # Journal verbosity contract (0.19.17+).

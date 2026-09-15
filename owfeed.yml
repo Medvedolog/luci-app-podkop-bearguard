@@ -36,15 +36,14 @@ packages:
     # feed must never block installation/repair of luci-app-podkop-bot itself;
     # RPC/LuCI gate the Bearhole switch until the optional engine is available.
     depends: [libc, luci-base, jq, curl]
-    conffiles:
-      - /etc/config/podkop_bearhole
     license: GPL-2.0-or-later
     url: https://github.com/Medvedolog/luci-app-podkop-bot
     maintainer: "Medvedolog <Medvedolog@github.com>"
     repo-commit: env:GITHUB_SHA
 
-    # podkop_bot configuration is created and owned by the bot installer; this
-    # LuCI package intentionally ships no /etc/config/podkop_bot defaults.
+    # Bearhole UCI is runtime/user-owned and is deliberately not shipped in the
+    # package payload, so upgrades preserve the existing router configuration.
+    # podkop_bot configuration is likewise created and owned by the bot installer.
 
     scripts:
       post-install: ./dist/scripts/postinst

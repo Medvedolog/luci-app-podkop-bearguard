@@ -24,12 +24,14 @@ jobs:
           cat > root/usr/lib/podkop_bot/json-log.sh <<'EOF'
           # Shared JSON encoder for log chunks returned by rpcd backends.
           # Keep TAB/LF/CR (jq escapes them), strip ANSI CSI and unsafe C0/DEL.
-          pb_json_log_str() {
+          pb_json_log_filter() {
               _pb_esc=$(printf '\033')
-              printf '%s' "$1" \
-                  | sed "s/${_pb_esc}\\[[0-9;?]*[a-zA-Z]//g" \
+              sed "s/${_pb_esc}\\[[0-9;?]*[a-zA-Z]//g" \
                   | tr -d '\000-\010\013\014\016-\037\177' \
                   | jq -Rs .
+          }
+          pb_json_log_str() {
+              printf '%s' "$1" | pb_json_log_filter
           }
           EOF
           python3 - <<'PY'
@@ -49,16 +51,28 @@ jobs:
                   lines = s.splitlines(True)
                   lines.insert(1, source)
                   s = ''.join(lines)
+
+              # Old Bearhole path: chunk is preserved with the printf-x guard,
+              # then manually escaped with sed+awk.
+              old_count = 0
               lines = s.splitlines(True)
-              replaced = 0
               for i, line in enumerate(lines):
                   if '_esc=$(printf \'%s\' "$_chunk"' in line:
                       indent = line[:len(line)-len(line.lstrip())]
                       lines[i] = indent + '_esc=$(pb_json_log_str "$_chunk")\n'
-                      replaced += 1
-              s = ''.join(lines).replace('"chunk":"%s"', '"chunk":%s')
-              if replaced != 1:
-                  raise SystemExit(f'{name}: expected exactly one log encoder, got {replaced}')
+                      old_count += 1
+              s = ''.join(lines)
+              if old_count:
+                  s = s.replace('"chunk":"%s"', '"chunk":%s')
+
+              # New WARPSCOUT paths already use jq -Rs directly on the byte
+              # stream. Keep their bounded byte accounting and insert the shared
+              # filter at exactly that point.
+              new_count = s.count('| jq -Rs . 2>/dev/null)')
+              s = s.replace('| jq -Rs . 2>/dev/null)', '| pb_json_log_filter)')
+
+              if old_count + new_count < 1:
+                  raise SystemExit(f'{name}: no log JSON encoder found')
               p.write_text(s)
           PY
           python3 - <<'PY'
@@ -66,7 +80,7 @@ jobs:
           p=Path('tools/check-sources.sh')
           s=p.read_text()
           marker='# Vendored bot is an integrity contract, not merely documentation.\n'
-          block='''# All auxiliary rpcd log streams must use the shared control-byte/ANSI sanitizer.\nLOG_JSON_LIB="root/usr/lib/podkop_bot/json-log.sh"\n[ -f "$LOG_JSON_LIB" ] || { echo "FAIL  shared RPC log sanitizer missing"; fail=1; }\nfor _lf in \\\n    root/usr/libexec/rpcd/podkop_bot_bearhole \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_rescue \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_runtime \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_tgscan\ndo\n    grep -Fq '. /usr/lib/podkop_bot/json-log.sh' "$_lf" || { echo "FAIL  shared log sanitizer not sourced by $_lf"; fail=1; }\n    grep -Fq 'pb_json_log_str "$_chunk"' "$_lf" || { echo "FAIL  unsafe log JSON encoder remains in $_lf"; fail=1; }\ndone\n\n'''
+          block='''# All auxiliary rpcd log streams must use the shared control-byte/ANSI sanitizer.\nLOG_JSON_LIB="root/usr/lib/podkop_bot/json-log.sh"\n[ -f "$LOG_JSON_LIB" ] || { echo "FAIL  shared RPC log sanitizer missing"; fail=1; }\nfor _lf in \\\n    root/usr/libexec/rpcd/podkop_bot_bearhole \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_rescue \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_runtime \\\n    root/usr/libexec/rpcd/podkop_bot_warpscout_tgscan\ndo\n    grep -Fq '. /usr/lib/podkop_bot/json-log.sh' "$_lf" || { echo "FAIL  shared log sanitizer not sourced by $_lf"; fail=1; }\n    if ! grep -Eq 'pb_json_log_(str|filter)' "$_lf"; then echo "FAIL  unsafe log JSON encoder remains in $_lf"; fail=1; fi\ndone\n\n'''
           if block not in s:
               if marker not in s:
                   raise SystemExit('check-sources marker not found')

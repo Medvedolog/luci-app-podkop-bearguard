@@ -75,7 +75,7 @@ start_service() {
     else
         procd_set_param command "$BH_PROXY" -l 127.0.0.1 -p "$port" -c "$BH_ROUTES" -L "$BH_LOG"
     fi
-    procd_set_param respawn 3600 5 5
+    procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_close_instance

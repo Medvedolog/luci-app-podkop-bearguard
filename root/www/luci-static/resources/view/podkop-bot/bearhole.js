@@ -88,16 +88,25 @@ return view.extend({
 		var auth=E('input',{'type':'checkbox','checked':st.auth_enabled?'checked':null,'disabled':isBusy?'disabled':null});
 		var user=E('input',{'type':'text','value':st.auth_user||'','disabled':isBusy?'disabled':null,'autocomplete':'username','style':'max-width:18em;'});
 		var pass=E('input',{'type':'password','value':'','placeholder':st.auth_configured?_('оставьте пустым, чтобы не менять'):_('пароль'),'disabled':isBusy?'disabled':null,'autocomplete':'new-password','style':'max-width:18em;'});
-		var authFields=E('div',{'style':'display:'+(st.auth_enabled?'block':'none')+';margin-top:.65em;padding-left:.2em;'},[row(_('Логин'),user),row(_('Пароль'),pass)]);
+		var authFields=E('div',{'style':'display:'+(st.auth_enabled?'block':'none')+';margin-top:.5em;'},[row(_('Локальный логин'),user),row(_('Локальный пароль'),pass)]);
 		auth.addEventListener('change',function(){authFields.style.display=auth.checked?'block':'none';});
+		var localAuth=E('details',{'style':'margin:.7em 0;padding:.55em .7em;border:1px solid rgba(127,127,127,.16);border-radius:8px;'},[
+			E('summary',{'style':'cursor:pointer;font-weight:600;'},_('Локальная авторизация hwelp (обычно не нужна)')),
+			E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Это защита ВХОДА в hwelp на 127.0.0.1. Она не относится к логину/паролю вышестоящего SOCKS/HTTP proxy. Так как hwelp слушает только loopback, обычно эту опцию можно оставить выключенной.')),
+			row(_('Требовать авторизацию'),E('label',{'style':'display:inline-flex;align-items:center;gap:.45em;'},[auth,E('span',{},_('у программ самого OpenWrt'))])),authFields
+		]);
 		return E('details',{'id':'bearhole-proxy-settings','open':this.proxyOpen?'':null,'style':'margin:.7em 0 .3em;'},[
-			E('summary',{'style':'cursor:pointer;font-weight:600;'},_('Настройки hwelp proxy')),
+			E('summary',{'style':'cursor:pointer;font-weight:600;'},_('Настройки локального hwelp proxy')),
 			E('div',{'style':'margin-top:.65em;max-width:720px;'},[
-				row(_('Адрес'),E('code',{},'127.0.0.1')),
-				row(_('Порт'),port),
-				row(_('Авторизация'),E('label',{'style':'display:inline-flex;align-items:center;gap:.45em;'},[auth,E('span',{},_('требовать логин и пароль'))])),
-				authFields,
-				E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Адрес намеренно фиксирован на loopback. Порт можно менять при конфликте. Если включить авторизацию, Bearhole сам передаст учётные данные системным curl/wget/opkg. Пароль в LuCI обратно не показывается.')),
+				row(_('Адрес входа'),E('code',{},'127.0.0.1')),
+				row(_('Порт входа'),port),
+				E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Адрес намеренно фиксирован на loopback. Порт меняется только при конфликте.')),
+				localAuth,
+				E('div',{'style':'margin:.8em 0;padding:.65em .75em;border-left:3px solid #4d8fd8;background:rgba(77,143,216,.06);'},[
+					E('strong',{},_('Авторизация на вышестоящих прокси')),
+					E('div',{'class':'pb-hint-90','style':'margin-top:.35em;'},_('Логин и пароль SOCKS5/HTTP задаются в самой записи маршрута. hwelp получает их из общего registry и использует при подключении к upstream proxy.')),
+					E('a',{'class':'cbi-button','style':'margin-top:.55em;','href':L.url('admin/services/podkop-bot/transport/main')},_('Открыть «Цепочку прокси»'))
+				]),
 				E('button',{'class':'cbi-button cbi-button-action','disabled':isBusy?'disabled':null,'click':function(){return self.saveProxy(port,auth,user,pass);}},_('Применить'))
 			])
 		]);
@@ -136,21 +145,26 @@ return view.extend({
 
 	resultsTable:function(items){
 		if(!items.length)return E('p',{'class':'pb-hint-90'},_('Свежей проверки ещё нет. Нажмите «🐻 Запустить Bearhole» — при первом запуске он сам проверит всю цепочку.'));
+		var narrow=!!(window.matchMedia&&window.matchMedia('(max-width: 720px)').matches);
+		if(narrow){
+			function res(label,val,title){return E('div',{'style':'display:flex;align-items:center;justify-content:space-between;gap:.45em;min-width:0;padding:.25em .35em;border-radius:6px;background:rgba(127,127,127,.06);'},[E('span',{'title':title||label,'style':'font-size:86%;white-space:nowrap;'},label),q(val)]);}
+			return E('div',{},items.map(function(x){return E('div',{'style':'padding:.7em .15em;border-top:1px solid rgba(127,127,127,.16);'},[
+				E('div',{'style':'display:flex;align-items:flex-start;justify-content:space-between;gap:.6em;'},[E('strong',{'style':'min-width:0;overflow-wrap:anywhere;'},x.label||x.id),routeStatus(x.status)]),
+				E('div',{'class':'pb-hint-90','style':'font-family:monospace;overflow-wrap:anywhere;margin:.2em 0 .55em;'},x.endpoint||''),
+				E('div',{'style':'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.35em;'},[
+					res('GitHub',x.github_core,'github.com'),res('Raw',x.github_raw,'raw.githubusercontent.com'),res('API',x.github_api,'api.github.com'),
+					res(_('Архив'),x.github_codeload,'codeload.github.com'),res(_('Релизы'),x.github_assets,_('GitHub release assets')),res('Feeds',x.openwrt_feeds,_('Репозитории OpenWrt'))
+				]),
+				E('div',{'class':'pb-hint-90','style':'text-align:right;margin-top:.45em;'},_('Проверено: ')+age(x.checked_at))
+			]);}));
+		}
 		var rows=items.map(function(x){return E('tr',{},[
 			E('td',{},[E('strong',{},x.label||x.id),E('div',{'class':'pb-hint-90','style':'overflow-wrap:anywhere;'},x.endpoint||'')]),
-			E('td',{'style':'text-align:center;'},[routeStatus(x.status)]),
-			E('td',{'style':'text-align:center;'},[q(x.github_core)]),
-			E('td',{'style':'text-align:center;'},[q(x.github_raw)]),
-			E('td',{'style':'text-align:center;'},[q(x.github_api)]),
-			E('td',{'style':'text-align:center;'},[q(x.github_codeload)]),
-			E('td',{'style':'text-align:center;'},[q(x.github_assets)]),
-			E('td',{'style':'text-align:center;'},[q(x.openwrt_feeds)]),
-			E('td',{'style':'white-space:nowrap;'},age(x.checked_at))
+			E('td',{'style':'text-align:center;'},[routeStatus(x.status)]),E('td',{'style':'text-align:center;'},[q(x.github_core)]),E('td',{'style':'text-align:center;'},[q(x.github_raw)]),E('td',{'style':'text-align:center;'},[q(x.github_api)]),E('td',{'style':'text-align:center;'},[q(x.github_codeload)]),E('td',{'style':'text-align:center;'},[q(x.github_assets)]),E('td',{'style':'text-align:center;'},[q(x.openwrt_feeds)]),E('td',{'style':'white-space:nowrap;'},age(x.checked_at))
 		]);});
 		function th(label,title){return E('th',{'title':title||label,'style':'white-space:nowrap;text-align:center;'},label);}
 		return E('div',{'style':'overflow-x:auto;'},[E('table',{'class':'table','style':'min-width:760px;'},[
-			E('thead',{},[E('tr',{},[E('th',{'style':'text-align:left;'},_('Маршрут')),th(_('Статус'),_('Итоговая пригодность маршрута')),th('GitHub',_('github.com')),th('Raw',_('raw.githubusercontent.com')),th('API',_('api.github.com')),th(_('Архив'),_('codeload.github.com')),th(_('Релизы'),_('Файлы GitHub Releases и redirect-хосты')),th('Feeds',_('Репозитории OpenWrt')),E('th',{},_('Проверено'))])]),
-			E('tbody',{},rows)
+			E('thead',{},[E('tr',{},[E('th',{'style':'text-align:left;'},_('Маршрут')),th(_('Статус'),_('Итоговая пригодность маршрута')),th('GitHub',_('github.com')),th('Raw',_('raw.githubusercontent.com')),th('API',_('api.github.com')),th(_('Архив'),_('codeload.github.com')),th(_('Релизы'),_('Файлы GitHub Releases и redirect-хосты')),th('Feeds',_('Репозитории OpenWrt')),E('th',{},_('Проверено'))])]),E('tbody',{},rows)
 		])]);
 	},
 

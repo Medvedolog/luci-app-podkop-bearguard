@@ -112,8 +112,9 @@ return view.extend({
 			E('div',{},[E('strong',{},_('Перечитать состояние')),': ',_('не проверяет сеть, а только заново читает текущую конфигурацию и состояние бота, Podkop/Forkop и WARP.')])
 		]);
 		this._chainMeta=E('div',{'style':'margin:.4em 0 .6em;color:#888;font-size:85%;'});
-		var ttl=600, stale=!_chainCheckedAt||(Math.floor(Date.now()/1000)-_chainCheckedAt)>ttl;
-		if(!_chainTestedThisSession||stale)window.setTimeout(function(){self.testFullChain();},60);else window.setTimeout(function(){self.applyChainCache();},60);
+		/* Opening the page must be side-effect free: show the last cached result,
+		 * but never start Telegram probes without an explicit button click. */
+		window.setTimeout(function(){self.applyChainCache();},60);
 		if(this.bearStatus&&this.bearStatus.probing)window.setTimeout(function(){self.refreshBearhole(true);},500);
 		return E('div',{},[
 			E('h2',{},_('Цепочка прокси')),
@@ -206,6 +207,8 @@ return view.extend({
 		if(ws.installed&&ws.account_ready&&wc.enabled){
 			var parts=[_('настроен'),String(ws.shortlist_count||0)+' '+_('кандидатов')];
 			if(rs.running){parts.push(_('WARP Rescue SOCKS активен'));if(rs.endpoint)parts.push(rs.endpoint);}else parts.push(_('WARP Rescue SOCKS остановлен'));
+			parts.push(_('автозапуск/самовосстановление: ')+(rs.autostart?_('ВКЛ'):_('ВЫКЛ')));
+			parts.push(_('автоперезарядка: ')+(rs.auto?_('ВКЛ'):_('ВЫКЛ')));
 			t.push({id:'warp_rescue',name:'WARP Rescue [warp_rescue]',configured:true,endpoint:rs.running?(rs.proxy||''):'',note:parts.join(' · '),_warp:true,_noProbe:!rs.running});
 		}
 
@@ -225,7 +228,7 @@ return view.extend({
 			if(t.id==='tier1')extraBtn=E('button',{'class':'cbi-button','style':'padding:.1em .4em;font-size:85%;','title':_('изменить порт Mixed Proxy'),'click':ui.createHandlerFn(self,'editTier1Port',t.endpoint)},'✎');
 			else if(t.id==='tier3')extraBtn=E('button',{'class':'cbi-button','style':'padding:.1em .4em;font-size:85%;','title':_('задать или изменить свой прокси'),'click':ui.createHandlerFn(self,'editCustomProxy',t.endpoint)},'✎');
 			else if(t.id==='tier4')extraBtn=E('button',{'class':'cbi-button','style':'padding:.1em .4em;font-size:85%;','title':_('выбрать интерфейс привязки'),'click':ui.createHandlerFn(self,'editBindIface')},'⚙');
-			else if(t._warp)extraBtn=E('a',{'class':'cbi-button','style':'padding:.1em .5em;font-size:85%;','href':L.url('admin/services/podkop-bot/transport/warpscout')},_('WARP Rescue'));
+			else if(t._warp)extraBtn=E('a',{'class':'cbi-button','style':'padding:.1em .5em;font-size:85%;','href':L.url('admin/services/podkop-bot/transport/warp-revolver')},_('WARP Rescue'));
 			var crudBtns=E('span',{});
 			if(t.id.indexOf('tier2_')===0&&t._fbIndex!=null)crudBtns=E('span',{'style':'display:inline-flex;gap:.2em;'},[
 				E('button',{'class':'cbi-button','style':'padding:.1em .4em;font-size:85%;','title':_('редактировать'),'click':ui.createHandlerFn(self,'fbEdit',t._fbIndex,t.endpoint)},'✎'),
@@ -256,7 +259,9 @@ return view.extend({
 			self.state=res[0];self.sectionsData=res[1];self.warpStatus=res[2];self.rescueStatus=res[3];self.bearStatus=res[4]||self.bearStatus;self.bearResults=res[5]||self.bearResults;
 			self.tiers=self.buildTiers(self.state);dom.content(self.chainBox,self.renderTiers(self.tiers,self.state));
 			if(self.bearholeBox)dom.content(self.bearholeBox,[self.bearholeCard()]);
-			if(mutated)window.setTimeout(function(){self.testFullChain();},60);else window.setTimeout(function(){self.applyChainCache();},60);
+			/* A config mutation invalidates the cache above, but does not implicitly
+			 * generate network traffic. The operator starts a full probe explicitly. */
+			window.setTimeout(function(){self.applyChainCache();},60);
 		});
 	},
 
@@ -289,7 +294,32 @@ return view.extend({
 	editBindIface:function(){var self=this;return callListIfaces().then(function(d){var ifaces=(d&&d.interfaces)||[],current=(d&&d.current)||'',sel=E('select',{'class':'cbi-input-select','style':'width:100%;'},[E('option',{'value':''},_('Авто (без привязки)'))].concat(ifaces.map(function(i){return E('option',{'value':i},i);})));sel.value=current||'';var err=E('div',{'style':'color:#cc2b2b;font-size:90%;margin-top:.4em;'});ui.showModal(_('Интерфейс прямого WAN'),[E('p',{},_('Интерфейс, к которому привязывается прямой выход. В режиме «Авто» интерфейс выбирает система.')),sel,err,E('div',{'class':'right','style':'margin-top:.6em;'},[E('button',{'class':'cbi-button','click':ui.hideModal},_('Отмена')),' ',E('button',{'class':'cbi-button cbi-button-apply','click':ui.createHandlerFn(self,function(){return callSetField('bind_interface',sel.value).then(function(r){if(r&&r.ok){ui.hideModal();return self.refreshState(true);}dom.content(err,(r&&r.detail)||_('ошибка'));}).catch(function(){dom.content(err,_('ошибка вызова'));});})},_('Сохранить'))])]);}).catch(function(){ui.addNotification(null,E('p',{},_('Не удалось получить список интерфейсов')),'error');});},
 
 	probeOne:function(t){var node=t._resultNode,self=this;dom.content(node,_('проверка…'));var target=t.id==='tier4'?'direct':fbEndpoint(t.endpoint);function recolour(c){if(t._dotWrap)dom.content(t._dotWrap,[dot(c,t.name+(t._active?'  ✓ '+_('активен'):''))]);}function store(html,colour){_chainCache[chainKey(t)]={html:html,colour:colour,active:!!t._active};saveChainProbeCache();}return callProbe(target).then(function(r){if(r&&r.result==='ok'){var ms=(r.latency_ms!=null&&r.latency_ms>0)?(' · '+r.latency_ms+' мс'):'';var html='✓ OK'+(r.http?(' ('+r.http+')'):'')+ms;dom.content(node,html);recolour('green');store(html,'green');}else if(r&&r.result==='unknown'){var h='— '+(r.reason||'unknown');dom.content(node,h);store(h,'grey');}else{var hf='✗ FAIL'+(r&&r.http?(' ('+r.http+')'):'');dom.content(node,hf);recolour('yellow');store(hf,'yellow');}}).catch(function(){var he='✗ '+_('ошибка');dom.content(node,he);recolour('yellow');store(he,'yellow');});},
-	testFullChain:function(){var self=this,seq=this.tiers.filter(function(t){return t.endpoint&&t.endpoint!==''&&!t._noProbe;}),i=0;if(this._testAllBtn)this._testAllBtn.disabled=true;function finish(){_chainCheckedAt=Math.floor(Date.now()/1000);_chainTestedThisSession=true;saveChainProbeCache();self.renderChainMeta();if(self._testAllBtn)self._testAllBtn.disabled=false;}function next(){if(i>=seq.length){finish();return Promise.resolve();}return self.probeOne(seq[i]).then(function(){i++;return next();});}ui.addNotification(null,E('p',{},_('Проверяю цепочку сверху вниз…')),'info');return next().catch(function(){if(self._testAllBtn)self._testAllBtn.disabled=false;});},
+	testFullChain:function(){
+		var self=this;
+		if(this._chainProbePromise)return this._chainProbePromise;
+		var seq=this.tiers.filter(function(t){return t.endpoint&&t.endpoint!==''&&!t._noProbe;}),i=0;
+		if(this._testAllBtn)this._testAllBtn.disabled=true;
+		function progress(t){
+			if(!self._chainMeta)return;
+			var name=t?(t.name||t.id||''):_('завершение');
+			dom.content(self._chainMeta,_('Проверка цепочки: ')+String(Math.min(i+1,seq.length))+' / '+String(seq.length)+(name?' · '+name:''));
+		}
+		function finish(){
+			_chainCheckedAt=Math.floor(Date.now()/1000);_chainTestedThisSession=true;saveChainProbeCache();
+			self.renderChainMeta();if(self._testAllBtn)self._testAllBtn.disabled=false;self._chainProbePromise=null;
+		}
+		function fail(){
+			if(self._chainMeta)dom.content(self._chainMeta,_('Проверка цепочки прервана. Нажмите «Проверить всю цепочку», чтобы повторить.'));
+			if(self._testAllBtn)self._testAllBtn.disabled=false;self._chainProbePromise=null;
+		}
+		function next(){
+			if(i>=seq.length){finish();return Promise.resolve();}
+			var t=seq[i];progress(t);return self.probeOne(t).then(function(){i++;return next();});
+		}
+		if(!seq.length){finish();return Promise.resolve();}
+		this._chainProbePromise=Promise.resolve().then(next).catch(function(e){fail();throw e;});
+		return this._chainProbePromise;
+	},
 	applyChainCache:function(){(this.tiers||[]).forEach(function(t){var c=_chainCache[chainKey(t)];if(!c)return;if(t._resultNode)dom.content(t._resultNode,c.html);if(t._dotWrap)dom.content(t._dotWrap,[dot(c.colour,t.name+(c.active?'  ✓ '+_('активен'):''))]);});this.renderChainMeta();},
 	renderChainMeta:function(){if(!this._chainMeta)return;if(!_chainCheckedAt){dom.content(this._chainMeta,'');return;}var d=new Date(_chainCheckedAt*1000);dom.content(this._chainMeta,_('Последняя проверка цепочки: ')+d.toLocaleString());},
 	enableMixedProxy:function(){var self=this;ui.showModal(_('Включить Mixed Proxy'),[E('p',{},_('Включить Mixed Proxy для основной секции? Это необходимо для работы tier1 — быстрого SOCKS Podkop.')),E('div',{'class':'right'},[E('button',{'class':'cbi-button','click':ui.hideModal},_('Отмена')),' ',E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(this,function(){ui.hideModal();return callEnsureMP().then(function(r){if(r&&r.ok){var msg=r.already_enabled?_('Mixed Proxy уже включён'):(r.probe==='ok'?_('Mixed Proxy включён, SOCKS отвечает'):_('Mixed Proxy включён'));ui.addNotification(null,E('p',{},msg+(r.endpoint?(' · '+r.endpoint):'')),'info');return self.refreshState(true);}var rm={not_proxy_section:_('Секция не является прокси-секцией — Mixed Proxy неприменим'),probe_failed:_('Mixed Proxy включён, но SOCKS не ответил — изменения отменены'),variant_unknown:_('Вариант Podkop не определён'),uci_missing:_('Конфигурация Podkop не найдена'),commit_failed:_('Ошибка записи конфигурации')};ui.addNotification(null,E('p',{},_('Не удалось включить: ')+(rm[r&&r.reason]||(r&&r.detail)||'?')),'error');}).catch(function(){ui.addNotification(null,E('p',{},_('Ошибка вызова')),'error');});})},_('Включить'))])]);},

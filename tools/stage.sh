@@ -90,7 +90,7 @@ do
     chmod 0755 "$OUT/root/$f"
 done
 
-for s in postinst postrm; do
+for s in preinst postinst postrm; do
     src="$ROOT/scripts/$s"
     [ -f "$src" ] || continue
     sed -e '1s/^\xef\xbb\xbf//' -e 's/\r$//' "$src" > "$OUT/scripts/$s"

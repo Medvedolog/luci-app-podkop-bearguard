@@ -29,7 +29,6 @@ for f in \
     ./usr/lib/podkop_bot/vendor.sha256 \
     ./etc/init.d/podkop-bearhole \
     ./etc/init.d/podkop-warp-rescue \
-    ./etc/config/podkop_bearhole \
     ./usr/share/luci/menu.d/luci-app-podkop-bot.json \
     ./usr/share/rpcd/acl.d/luci-app-podkop-bot.json \
     ./www/luci-static/resources/view/podkop-bot/overview.js \
@@ -63,9 +62,12 @@ done
     echo "unexpected conffile: /etc/config/podkop_bot" >&2; exit 1;
 }
 
-grep -qx '/etc/config/podkop_bearhole' "$work/control/conffiles" || {
-    echo "Bearhole conffile is not declared" >&2; exit 1;
+[ ! -e "$work/data/etc/config/podkop_bearhole" ] || {
+    echo "Bearhole config must be user-owned, not packaged" >&2; exit 1;
 }
+if [ -f "$work/control/conffiles" ] && grep -qx '/etc/config/podkop_bearhole' "$work/control/conffiles"; then
+    echo "Bearhole config unexpectedly declared as package conffile" >&2; exit 1
+fi
 
 # Bootstrap contract: hwelp-proxy must NOT be a hard dependency. Bearhole can
 # fetch the native package on first launch, while LuCI remains repairable even
@@ -84,6 +86,7 @@ for forbidden in hwelp-proxy ucode-mod-socket ucode-mod-struct ucode-mod-uloop; 
     }
 done
 
+[ -x "$work/control/preinst" ] || { echo "preinst missing/not executable" >&2; exit 1; }
 [ -x "$work/control/postinst" ] || { echo "postinst missing/not executable" >&2; exit 1; }
 [ -x "$work/control/postrm" ] || { echo "postrm missing/not executable" >&2; exit 1; }
 

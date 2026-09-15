@@ -87,9 +87,13 @@ return view.extend({
 			E('div',{'class':'cbi-section pb-card','style':'max-width:820px;'},[
 				E('h3',{'style':'margin-top:0;'},_('WARP Rescue')),
 				E('p',{'class':'pb-muted'},_('«Перезарядить» выполняет поиск WARP-узлов → проверку Telegram API → сбор магазина → запуск лучшего WARP. «Следующий WARP» переключает Rescue на следующий VALID узел.')),
-				row(_('WARP Rescue'),enabled?dot('green',_('включён')):dot('grey',_('выключен'))),row(_('Состояние'),stateNode),row(_('Магазин'),magNode),row(_('Позиция'),E('span',{},position)),row(_('Активный WARP-узел'),E('span',{},rs.endpoint||'—')),row(_('SOCKS WARP Rescue'),rs.running?dot('green',(rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))):E('span',{},rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))),row(_('Автовосстановление WARP Rescue'),autostart),row(_('Автоперезарядка при исчерпании магазина'),auto),
-				E('p',{'class':'pb-hint-90'},_('Автовосстановление запускает Rescue после загрузки роутера и поднимает его снова, если SOCKS-процесс упал или не восстановился после тестового WARP. Ручная кнопка «Остановить WARP» выключает Rescue и не даёт watchdog запускать его снова.')),
-				E('p',{'class':'pb-hint-90'},_('Автоперезарядка нужна, когда сохранённые VALID WARP-узлы перестали работать: выполняется новый поиск, проверка Telegram API и сбор магазина.')),
+				row(_('WARP Rescue'),enabled?dot('green',_('включён')):dot('grey',_('выключен'))),row(_('Состояние'),stateNode),row(_('Магазин'),magNode),row(_('Позиция'),E('span',{},position)),row(_('Активный WARP-узел'),E('span',{},rs.endpoint||'—')),row(_('SOCKS WARP Rescue'),rs.running?dot('green',(rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))):E('span',{},rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))),E('div',{'style':'margin:.8em 0;padding:.7em .8em;border:1px solid rgba(127,127,127,.18);border-radius:8px;'},[
+					E('h4',{'style':'margin:.05em 0 .55em;'},_('Автоматика Rescue')),
+					row(_('Автозапуск и самовосстановление'),E('label',{'style':'display:inline-flex;align-items:center;gap:.5em;font-weight:600;'},[autostart,E('span',{},_('Включить'))])),
+					E('p',{'class':'pb-hint-90','style':'margin:.25em 0 .65em;'},_('Поднимает WARP Rescue после загрузки роутера и восстанавливает SOCKS, если он упал. Ручная кнопка «Остановить WARP» отключает Rescue и запрещает watchdog поднимать его снова.')),
+					row(_('Автоперезарядка магазина'),E('label',{'style':'display:inline-flex;align-items:center;gap:.5em;font-weight:600;'},[auto,E('span',{},_('Включить'))])),
+					E('p',{'class':'pb-hint-90','style':'margin:.25em 0 0;'},_('Когда сохранённые VALID WARP-узлы исчерпаны, автоматически выполняет новый поиск, Telegram qualification и собирает магазин заново.'))
+				]),
 				E('div',{'style':'display:flex;gap:.5em;flex-wrap:wrap;'},[powerBtn,saveAuto,act(callRescueNext,_('Следующий WARP'),!enabled),act(callRescueReload,_('Перезарядить'),false)]),actionStatus
 			]),
 			this.magazineCard(mag,rs,actionStatus),

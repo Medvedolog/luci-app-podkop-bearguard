@@ -4,7 +4,6 @@
 'require dom';
 
 var callBearholeStatus = rpc.declare({ object:'podkop_bot_bearhole', method:'status' });
-var callRescueStatus = rpc.declare({ object:'podkop_bot_warpscout_rescue', method:'status' });
 
 var COLOURS={green:'#33a02c',yellow:'#e8a33d',grey:'#888888',red:'#cc2b2b'};
 function dot(c,label){return E('span',{'style':'display:inline-flex;align-items:flex-start;gap:.4em;'},[E('span',{'style':'width:.7em;height:.7em;border-radius:50%;display:inline-block;flex:none;margin-top:.28em;background:'+(COLOURS[c]||COLOURS.grey)+';'}),E('span',{},label)]);}
@@ -55,10 +54,9 @@ return base.constructor.extend({
 		var warpCell=E('span',{},rescueNode(this._lastRescueStatus||null));
 		var box=E('div',{'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},_('Ресурсы')),rrow('sing-box',sbNode),rrow('hwelp proxy',hwelpCell),rrow(_('WARP Rescue'),warpCell),rrow(_('Оперативная память'),ramNode)]);
 		var self=this;
-		Promise.all([callBearholeStatus().catch(function(){return null;}),callRescueStatus().catch(function(){return null;})]).then(function(v){
-			self._lastBearholeStatus=v[0];self._lastRescueStatus=v[1];
-			dom.content(hwelpCell,hwelpNode(v[0]));
-			dom.content(warpCell,rescueNode(v[1]));
+		callBearholeStatus().catch(function(){return null;}).then(function(bh){
+			self._lastBearholeStatus=bh;
+			dom.content(hwelpCell,hwelpNode(bh));
 		});
 		return box;
 	}

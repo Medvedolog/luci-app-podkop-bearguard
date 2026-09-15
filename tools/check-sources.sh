@@ -91,6 +91,12 @@ done
 grep -Fq 'ensure_bearhole_uci()' root/usr/libexec/rpcd/podkop_bot_bearhole || { echo "FAIL  Bearhole rpcd lazy UCI init missing"; fail=1; }
 grep -Fq 'bh_cfg_ensure()' root/usr/lib/podkop_bot/bearhole.sh || { echo "FAIL  Bearhole control lazy UCI init missing"; fail=1; }
 
+# Transport/UI regression guards.
+if grep -Fq 'while ! _warp_rescue_pid_alive' root/usr/lib/podkop_bot/podkop_bot; then echo "FAIL  blocking WARP Rescue wait returned"; fail=1; fi
+grep -Fq 'action=demote_after_streak' root/usr/lib/podkop_bot/podkop_bot || { echo "FAIL  bounded POLL demotion missing"; fail=1; }
+if grep -Fq "callRescueStatus = rpc.declare" root/www/luci-static/resources/view/podkop-bot/overview-state.js; then echo "FAIL  duplicate Overview Rescue RPC returned"; fail=1; fi
+grep -Fq 'self._lastRescueStatus=v[2]' root/www/luci-static/resources/view/podkop-bot/overview.js || { echo "FAIL  Overview Rescue status reuse missing"; fail=1; }
+
 # Vendored bot is an integrity contract, not merely documentation.
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
     :

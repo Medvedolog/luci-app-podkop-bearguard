@@ -7,6 +7,8 @@
 if [ ! -f /etc/config/podkop_bearhole ] && [ -f /tmp/podkop_bearhole.preupgrade ]; then
 	cp -p /tmp/podkop_bearhole.preupgrade /etc/config/podkop_bearhole 2>/dev/null || true
 fi
+mkdir -p /etc/config
+[ -f /etc/config/podkop_bearhole ] || : > /etc/config/podkop_bearhole
 uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
 uci -q get podkop_bearhole.main.enabled >/dev/null 2>&1 || uci -q set podkop_bearhole.main.enabled=0
 uci -q get podkop_bearhole.main.policy >/dev/null 2>&1 || uci -q set podkop_bearhole.main.policy=auto

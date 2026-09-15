@@ -20,6 +20,11 @@ function row(label,val){return E('div',{'class':'pb-row pb-row--plain'},[E('span
 function pbInjectCss(){if(document.getElementById('pb-css'))return;document.querySelector('head').appendChild(E('link',{'id':'pb-css','rel':'stylesheet','type':'text/css','href':L.resource('css/podkop-bot/podkop-bot.css')}));}
 function rescueError(reason){var m={warpscout_disabled:_('WARP Rescue выключен'),not_ready:_('WARPSCOUT или учётная запись WARP ещё не готовы'),controller_busy:_('револьвер уже выполняет другую команду'),qualification_running:_('сейчас выполняется проверка Telegram API'),discovery_running:_('сейчас выполняется поиск WARP-узлов'),runtime_handoff_failed:_('не удалось освободить тестовый WARP SOCKS'),bad_endpoint:_('некорректный WARP-узел'),not_in_magazine:_('этого WARP-узла нет в текущем магазине')};return m[reason]||reason||'?';}
 function ago(ts){var n=parseInt(ts||0,10);if(!n)return '—';var s=Math.max(0,Math.floor(Date.now()/1000)-n);if(s<60)return _('только что');if(s<3600)return Math.floor(s/60)+_(' мин назад');if(s<86400)return Math.floor(s/3600)+_(' ч назад');return Math.floor(s/86400)+_(' дн назад');}
+function magazineLoader(){
+	var cells=[];
+	for(var i=0;i<6;i++)cells.push(E('span',{'class':'pb-mag-load-cell','style':'animation-delay:'+(i*140)+'ms;'},'■'));
+	return E('span',{'class':'pb-mag-load','title':_('Магазин перезаряжается'),'aria-label':_('Магазин перезаряжается')},[E('span',{'class':'pb-mag-load-cells'},cells),E('span',{'class':'pb-mag-load-text'},_('заряжаю магазин…'))]);
+}
 
 return view.extend({
 	loadData:function(){return Promise.all([callWarpStatus('').catch(function(){return null;}),callRescueStatus().catch(function(){return null;}),callRescueMagazine().catch(function(){return {ok:false,items:[]};})]);},
@@ -80,14 +85,14 @@ return view.extend({
 		}
 		var stateNode=rs.running?dot('green',_('работает')):(rs.busy?dot('yellow',busyLabel):dot((rs.state==='exhausted'||rs.state==='reload_failed'||rs.state==='fire_failed')?'red':'grey',enabled?_('не запущен'):String(rs.state||_('остановлен'))));
 		var magNode=(rs.total||0)>0?dot('green',_('заряжен · ')+String(rs.total)+_(' VALID WARP-маршрутов')):dot('grey',_('пуст · сначала нужны VALID результаты Telegram API'));
-		var position=rs.busy&&rs.state==='reloading'?_('перезарядка'):String(rs.index||0)+' / '+String(rs.total||0);
+		var position=rs.busy&&rs.state==='reloading'?magazineLoader():E('span',{},String(rs.index||0)+' / '+String(rs.total||0));
 		return E('div',{},[
 			E('h2',{},_('Револьвер WARP')),
 			E('p',{'class':'pb-muted','style':'max-width:820px;'},_('Постоянный резервный WARP SOCKS для Telegram. Использует только WARP-узлы со статусом VALID и работает независимо от открытой страницы LuCI.')),
 			E('div',{'class':'cbi-section pb-card','style':'max-width:820px;'},[
 				E('h3',{'style':'margin-top:0;'},_('WARP Rescue')),
 				E('p',{'class':'pb-muted'},_('«Перезарядить» выполняет поиск WARP-узлов → проверку Telegram API → сбор магазина → запуск лучшего WARP. «Следующий WARP» переключает Rescue на следующий VALID узел.')),
-				row(_('WARP Rescue'),enabled?dot('green',_('включён')):dot('grey',_('выключен'))),row(_('Состояние'),stateNode),row(_('Магазин'),magNode),row(_('Позиция'),E('span',{},position)),row(_('Активный WARP-узел'),E('span',{},rs.endpoint||'—')),row(_('SOCKS WARP Rescue'),rs.running?dot('green',(rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))):E('span',{},rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))),E('div',{'style':'margin:.8em 0;padding:.7em .8em;border:1px solid rgba(127,127,127,.18);border-radius:8px;'},[
+				row(_('WARP Rescue'),enabled?dot('green',_('включён')):dot('grey',_('выключен'))),row(_('Состояние'),stateNode),row(_('Магазин'),magNode),row(_('Позиция'),position),row(_('Активный WARP-узел'),E('span',{},rs.endpoint||'—')),row(_('SOCKS WARP Rescue'),rs.running?dot('green',(rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))):E('span',{},rs.proxy||('socks5h://127.0.0.1:'+(cfg.socks_port||18191)))),E('div',{'style':'margin:.8em 0;padding:.7em .8em;border:1px solid rgba(127,127,127,.18);border-radius:8px;'},[
 					E('h4',{'style':'margin:.05em 0 .55em;'},_('Автоматика Rescue')),
 					row(_('Автозапуск и самовосстановление'),E('label',{'style':'display:inline-flex;align-items:center;gap:.5em;font-weight:600;'},[autostart,E('span',{},_('Включить'))])),
 					E('p',{'class':'pb-hint-90','style':'margin:.25em 0 .65em;'},_('Поднимает WARP Rescue после загрузки роутера и восстанавливает SOCKS, если он упал. Ручная кнопка «Остановить WARP» отключает Rescue и запрещает watchdog поднимать его снова.')),

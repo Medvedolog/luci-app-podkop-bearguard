@@ -1,9 +1,13 @@
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] && exit 0
 
-# Bearhole is an emergency system-wide proxy. Removing the LuCI/control package
-# must never leave system tools pointing at a dead local listener. hwelp-proxy
-# itself is a separate native package and is intentionally not uninstalled here.
+# Do not tear down runtime state during an in-place package upgrade. Both opkg
+# and apk may execute deinstall hooks as part of replacement; destructive
+# cleanup belongs to a real uninstall only.
+case "${1:-}" in
+	upgrade|upgrading) exit 0 ;;
+esac
+
 BH_BEGIN="# BEGIN PODKOP BEARHOLE"
 BH_END="# END PODKOP BEARHOLE"
 
@@ -14,25 +18,64 @@ strip_bearhole_block() {
 	awk -v b="$BH_BEGIN" -v e="$BH_END" '$0==b{skip=1;next}$0==e{skip=0;next}!skip{print}' "$_file" > "$_tmp" 2>/dev/null && mv "$_tmp" "$_file"
 }
 
-ubus call service delete '{"name":"podkop-warp-rescue"}' >/dev/null 2>&1 || true
-rm -f /etc/rc.d/*podkop-warp-rescue 2>/dev/null || true
-for _c in /proc/[0-9]*/cmdline; do
-	_cmd=$(tr '\0' ' ' < "$_c" 2>/dev/null) || continue
-	case "$_cmd" in
-		*"/usr/lib/podkop_bot/warpscout-rescue-watchdog"*)
-			_pid=${_c#/proc/}; _pid=${_pid%/cmdline}
-			case "$_pid" in ''|*[!0-9]*) :;; *) kill "$_pid" 2>/dev/null || true;; esac
+kill_pidfile() {
+	_pf="$1"
+	[ -s "$_pf" ] || { rm -f "$_pf" 2>/dev/null || true; return 0; }
+	_p=$(cat "$_pf" 2>/dev/null || true)
+	case "$_p" in
+		''|*[!0-9]*) ;;
+		*)
+			kill "$_p" 2>/dev/null || true
+			_n=0
+			while kill -0 "$_p" 2>/dev/null && [ "$_n" -lt 10 ]; do
+				sleep 0.1 2>/dev/null || sleep 1
+				_n=$((_n + 1))
+			done
+			kill -9 "$_p" 2>/dev/null || true
 			;;
 	esac
-done
+	rm -f "$_pf" 2>/dev/null || true
+}
+
+# First ask the control planes to undo any system-wide proxy state while their
+# package payload is still available.
+if [ -x /usr/lib/podkop_bot/bearhole.sh ]; then
+	/usr/lib/podkop_bot/bearhole.sh system-off >/dev/null 2>&1 || true
+fi
+
+if [ -x /etc/init.d/podkop-bearhole ]; then
+	/etc/init.d/podkop-bearhole stop >/dev/null 2>&1 || true
+	/etc/init.d/podkop-bearhole disable >/dev/null 2>&1 || true
+fi
+if [ -x /etc/init.d/podkop-warp-rescue ]; then
+	/etc/init.d/podkop-warp-rescue stop >/dev/null 2>&1 || true
+	/etc/init.d/podkop-warp-rescue disable >/dev/null 2>&1 || true
+fi
 
 ubus call service delete '{"name":"podkop-bearhole"}' >/dev/null 2>&1 || true
-rm -f /etc/rc.d/*podkop-bearhole 2>/dev/null || true
+ubus call service delete '{"name":"podkop-warp-rescue"}' >/dev/null 2>&1 || true
+rm -f /etc/rc.d/*podkop-bearhole /etc/rc.d/*podkop-warp-rescue 2>/dev/null || true
 
-# Defensive fallback for interrupted package-manager/procd teardown. Match only
-# the Bearhole instance by its routes file; do not kill an unrelated hwelp-proxy.
+# WARPSCOUT can have several detached workers. Kill only PIDs that belong to
+# files owned by this integration; avoid racy /proc/*/cmdline scans entirely.
+for _pf in \
+	/tmp/podkop_bot/warpscout_socks.pid \
+	/tmp/podkop_bot/warpscout_rescue_socks.pid \
+	/tmp/podkop_bot/warpscout_rescue_control.pid \
+	/tmp/podkop_bot/warpscout_action.pid \
+	/tmp/podkop_bot/warpscout_tgscan.pid \
+	/tmp/podkop_bot/warpscout_rescue_watchdog.pid
+do
+	kill_pidfile "$_pf"
+done
+
+# Bearhole native engine PID may outlive procd after an interrupted removal.
+# If procd did not stop it, terminate only the instance referencing Bearhole's
+# private routes file. Reading through cat avoids the shell-redirection race
+# that previously produced '/proc/<pid>/cmdline: no such file'.
 for _c in /proc/[0-9]*/cmdline; do
-	_cmd=$(tr '\0' ' ' < "$_c" 2>/dev/null) || continue
+	[ -r "$_c" ] || continue
+	_cmd=$(cat "$_c" 2>/dev/null | tr '\0' ' ' 2>/dev/null) || continue
 	case "$_cmd" in
 		*"/usr/bin/hwelp-proxy"*"/tmp/podkop_bot/bearhole/routes.conf"*|*"/usr/bin/podkop-bearhole-proxy"*)
 			_pid=${_c#/proc/}; _pid=${_pid%/cmdline}
@@ -41,13 +84,37 @@ for _c in /proc/[0-9]*/cmdline; do
 	esac
 done
 
-rm -f /etc/profile.d/99-podkop-bearhole.sh /etc/opkg/99-podkop-bearhole.conf /etc/opkg/99-hwelp-bootstrap.conf 2>/dev/null || true
+# Restore all files Bearhole may have changed to force system downloads through
+# the local proxy. This is deliberately idempotent and safe after partial setup.
+rm -f \
+	/etc/profile.d/99-podkop-bearhole.sh \
+	/etc/opkg/99-podkop-bearhole.conf \
+	/etc/opkg/99-hwelp-bootstrap.conf \
+	/etc/apk/repositories.d/99-podkop-bearhole.list \
+	/etc/apk/repositories.d/99-hwelp-bootstrap.list \
+	2>/dev/null || true
 strip_bearhole_block /etc/environment
 strip_bearhole_block /root/.curlrc
 strip_bearhole_block /root/.wgetrc
-rm -rf /tmp/podkop_bot/bearhole 2>/dev/null || true
 
-/etc/init.d/rpcd reload 2>/dev/null
-rm -f /tmp/luci-indexcache* 2>/dev/null
-rm -rf /tmp/luci-modulecache 2>/dev/null
+# Runtime and persistent state created by Bearhole/WARPSCOUT belong to this
+# integration and must disappear on a real uninstall.
+rm -rf /tmp/podkop_bot/bearhole 2>/dev/null || true
+rm -f /tmp/podkop_bot/warpscout* /tmp/podkop_bot/rescue_tg_body.* 2>/dev/null || true
+rm -f \
+	/etc/podkop_bot/warpscout.conf \
+	/etc/podkop_bot/warpscout-account.json \
+	/etc/podkop_bot/warpscout-rescue.magazine \
+	2>/dev/null || true
+rmdir /etc/podkop_bot 2>/dev/null || true
+
+# Bearhole UCI is runtime/user-owned rather than a package conffile, so package
+# managers cannot remove it automatically. A full uninstall must.
+uci -q delete podkop_bearhole >/dev/null 2>&1 || true
+uci -q commit podkop_bearhole >/dev/null 2>&1 || true
+rm -f /etc/config/podkop_bearhole 2>/dev/null || true
+
+/etc/init.d/rpcd reload >/dev/null 2>&1 || true
+rm -f /tmp/luci-indexcache* 2>/dev/null || true
+rm -rf /tmp/luci-modulecache 2>/dev/null || true
 exit 0

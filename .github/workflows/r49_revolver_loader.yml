@@ -1,0 +1,77 @@
+name: r49 revolver reload animation
+
+on:
+  push:
+    branches: [dev/0.19.18-bearhole-mvp]
+    paths: ['.github/workflows/r49_revolver_loader.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev/0.19.18-bearhole-mvp
+          fetch-depth: 0
+      - name: Patch revolver loader and packaging migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js')
+          s=p.read_text()
+          anchor="function ago(ts){var n=parseInt(ts||0,10);if(!n)return '—';var s=Math.max(0,Math.floor(Date.now()/1000)-n);if(s<60)return _('только что');if(s<3600)return Math.floor(s/60)+_(' мин назад');if(s<86400)return Math.floor(s/3600)+_(' ч назад');return Math.floor(s/86400)+_(' дн назад');}\n"
+          insert="""function magazineLoader(){\n\tvar cells=[];\n\tfor(var i=0;i<6;i++)cells.push(E('span',{'class':'pb-mag-load-cell','style':'animation-delay:'+(i*140)+'ms;'},'■'));\n\treturn E('span',{'class':'pb-mag-load','title':_('Магазин перезаряжается'),'aria-label':_('Магазин перезаряжается')},[E('span',{'class':'pb-mag-load-cells'},cells),E('span',{'class':'pb-mag-load-text'},_('заряжаю магазин…'))]);\n}\n"""
+          if insert not in s:
+              if anchor not in s: raise SystemExit('ago() anchor not found')
+              s=s.replace(anchor,anchor+insert,1)
+
+          old="var position=rs.busy&&rs.state==='reloading'?_('перезарядка'):String(rs.index||0)+' / '+String(rs.total||0);"
+          new="var position=rs.busy&&rs.state==='reloading'?magazineLoader():E('span',{},String(rs.index||0)+' / '+String(rs.total||0));"
+          if old not in s: raise SystemExit('position anchor not found')
+          s=s.replace(old,new,1)
+
+          old="row(_('Позиция'),E('span',{},position))"
+          new="row(_('Позиция'),position)"
+          if old not in s: raise SystemExit('position row anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+
+          css=Path('root/www/luci-static/resources/css/podkop-bot/podkop-bot.css')
+          c=css.read_text()
+          block="""\n/* WARP revolver reload indicator: lightweight CSS-only magazine animation. */\n.pb-mag-load{display:inline-flex;align-items:center;gap:.65em;min-width:15em}\n.pb-mag-load-cells{display:inline-flex;gap:.18em;align-items:center;font-family:monospace;letter-spacing:0}\n.pb-mag-load-cell{display:inline-block;opacity:.18;transform:translateY(0);animation:pb-mag-load 1.25s ease-in-out infinite}\n.pb-mag-load-text{white-space:nowrap;color:var(--text-color-medium,#aaa)}\n@keyframes pb-mag-load{0%,70%,100%{opacity:.18;transform:translateY(0)}30%,45%{opacity:1;transform:translateY(-1px)}}\n@media (prefers-reduced-motion:reduce){.pb-mag-load-cell{animation:none;opacity:.7}}\n"""
+          if block not in c:
+              css.write_text(c.rstrip()+"\n"+block)
+
+          # r34 -> new packages may leave the old conffile absent before postinst.
+          p=Path('scripts/postinst')
+          s=p.read_text()
+          anchor="if [ ! -f /etc/config/podkop_bearhole ] && [ -f /tmp/podkop_bearhole.preupgrade ]; then\n\tcp -p /tmp/podkop_bearhole.preupgrade /etc/config/podkop_bearhole 2>/dev/null || true\nfi\n"
+          fix=anchor+"mkdir -p /etc/config\n[ -f /etc/config/podkop_bearhole ] || : > /etc/config/podkop_bearhole\n"
+          if "[ -f /etc/config/podkop_bearhole ] || : > /etc/config/podkop_bearhole" not in s:
+              if anchor not in s: raise SystemExit('postinst Bearhole restore anchor not found')
+              s=s.replace(anchor,fix,1)
+          p.write_text(s)
+
+          mk=Path('Makefile')
+          m=mk.read_text()
+          if 'PKG_RELEASE:=48' not in m: raise SystemExit('expected r48')
+          mk.write_text(m.replace('PKG_RELEASE:=48','PKG_RELEASE:=49',1))
+          PY
+          sh -n scripts/postinst
+          sh tools/check-sources.sh
+          sh tools/check-async-wrappers.sh
+          git diff --check
+      - name: Commit r49
+        run: |
+          set -e
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Makefile scripts/postinst root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js root/www/luci-static/resources/css/podkop-bot/podkop-bot.css
+          git commit -m '0.19.18-r49: animate revolver reload and harden Bearhole upgrade'
+          git push origin HEAD:dev/0.19.18-bearhole-mvp

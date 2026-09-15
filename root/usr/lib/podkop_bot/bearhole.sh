@@ -24,7 +24,8 @@ bh_mask_proxy(){ printf '%s' "$1" | sed -E 's|(://[^:@/]+:)[^@/]*@|\1***@|'; }
 bh_section_id(){ _s=$(printf '%s' "$1"|tr '[:upper:]' '[:lower:]'|sed -E 's/[^a-z0-9_]+/_/g;s/^_+//;s/_+$//'); [ -n "$_s" ]||_s=route; printf 'section_%s' "$_s"; }
 
 bh_cfg_get(){ _k=$1; _d=$2; _v=$(uci -q get "podkop_bearhole.main.$_k" 2>/dev/null); [ -n "$_v" ]&&printf '%s' "$_v"||printf '%s' "$_d"; }
-bh_cfg_set(){ _k=$1; _v=$2; uci -q get podkop_bearhole.main >/dev/null 2>&1||uci -q set podkop_bearhole.main=bearhole; uci -q set "podkop_bearhole.main.$_k=$_v"&&uci -q commit podkop_bearhole; }
+bh_cfg_ensure(){ [ -e /etc/config/podkop_bearhole ]||{ mkdir -p /etc/config||return 1; : >/etc/config/podkop_bearhole||return 1; }; uci -q get podkop_bearhole.main >/dev/null 2>&1||uci -q set podkop_bearhole.main=bearhole; }
+bh_cfg_set(){ _k=$1; _v=$2; bh_cfg_ensure||return 1; uci -q set "podkop_bearhole.main.$_k=$_v"&&uci -q commit podkop_bearhole; }
 bh_port(){ _p=$(bh_cfg_get port 1066); case "$_p" in ''|*[!0-9]*) _p=1066;; esac; [ "$_p" -ge 1024 ] 2>/dev/null&&[ "$_p" -le 65535 ] 2>/dev/null||_p=1066; printf '%s' "$_p"; }
 bh_auth_enabled(){ [ "$(bh_cfg_get auth_enabled 0)" = 1 ]; }
 bh_auth_user(){ bh_cfg_get auth_user ''; }

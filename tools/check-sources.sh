@@ -87,6 +87,10 @@ do
     grep -Eq 'pb_json_log_(str|filter)' "$_lf" || { echo "FAIL  unsafe log JSON encoder remains in $_lf"; fail=1; }
 done
 
+# Bearhole owns no packaged UCI file: first mutation must lazily create it.
+grep -Fq 'ensure_bearhole_uci()' root/usr/libexec/rpcd/podkop_bot_bearhole || { echo "FAIL  Bearhole rpcd lazy UCI init missing"; fail=1; }
+grep -Fq 'bh_cfg_ensure()' root/usr/lib/podkop_bot/bearhole.sh || { echo "FAIL  Bearhole control lazy UCI init missing"; fail=1; }
+
 # Vendored bot is an integrity contract, not merely documentation.
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
     :

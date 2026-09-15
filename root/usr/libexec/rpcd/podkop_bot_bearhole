@@ -32,6 +32,15 @@ engine_reason() {
 
 engine_ready() { [ -z "$(engine_reason)" ]; }
 
+ensure_bearhole_uci() {
+    [ -e /etc/config/podkop_bearhole ] || {
+        mkdir -p /etc/config || return 1
+        : > /etc/config/podkop_bearhole || return 1
+    }
+    uci -q get podkop_bearhole.main >/dev/null 2>&1 || \
+        uci -q set podkop_bearhole.main=bearhole
+}
+
 write_state() {
     _state="$1"; _reason="$2"; _now=$(date +%s 2>/dev/null || echo 0)
     _tmp="$STATE.$$"
@@ -72,6 +81,7 @@ stop_start_worker() {
 
 fail_closed() {
     _reason="$1"
+    ensure_bearhole_uci >/dev/null 2>&1 || true
     uci -q set podkop_bearhole.main.enabled=0 >/dev/null 2>&1 || true
     uci -q commit podkop_bearhole >/dev/null 2>&1 || true
     /etc/init.d/podkop-bearhole stop >/dev/null 2>&1 || true
@@ -136,7 +146,7 @@ start_worker() {
         return
     fi
 
-    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
+    ensure_bearhole_uci || { fail_closed uci_init_failed; return; }
     uci -q set podkop_bearhole.main.enabled=1 || { fail_closed uci_enable_failed; return; }
     uci -q commit podkop_bearhole || { fail_closed uci_commit_failed; return; }
 
@@ -239,7 +249,7 @@ set_port() {
         "$CTL" disable >/dev/null 2>&1 || true
     fi
 
-    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
+    ensure_bearhole_uci || return 1
     uci -q set "podkop_bearhole.main.port=$_port" || return 1
     uci -q commit podkop_bearhole || return 1
     log_event "event=hwelp_port_changed old=$_old new=$_port"
@@ -270,7 +280,7 @@ set_proxy() {
     stop_start_worker
     [ "$_was_active" = 1 ] && "$CTL" disable >/dev/null 2>&1 || true
 
-    uci -q get podkop_bearhole.main >/dev/null 2>&1 || uci -q set podkop_bearhole.main=bearhole
+    ensure_bearhole_uci || return 1
     uci -q set "podkop_bearhole.main.port=$_port" || return 1
     uci -q set "podkop_bearhole.main.auth_enabled=$_auth" || return 1
     if [ "$_auth" = 1 ]; then

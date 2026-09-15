@@ -1,0 +1,55 @@
+name: tmp-r35-mobile-upgrade-fixes
+
+on:
+  push:
+    branches:
+      - dev/0.19.18-bearhole-mvp
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev/0.19.18-bearhole-mvp
+          fetch-depth: 0
+      - name: Apply r35 fixes
+        run: python3 tools/_tmp_apply_r35.py
+      - name: Validate edited sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check root/www/luci-static/resources/view/podkop-bot/transport.js
+          node --check root/www/luci-static/resources/view/podkop-bot/transport-ux.js
+          node --check root/www/luci-static/resources/view/podkop-bot/bearhole.js
+          node --check root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js
+          sh -n scripts/preinst
+          sh -n scripts/postinst
+          sh -n scripts/postrm
+          sh -n root/etc/init.d/podkop-bearhole
+          sh -n tools/stage.sh
+          sh -n tools/check-package.sh
+          grep -Fq 'PKG_RELEASE:=35' Makefile
+          grep -Fq 'Проверка цепочки:' root/www/luci-static/resources/view/podkop-bot/transport.js
+          ! grep -Fq 'Проверяю цепочку сверху вниз…' root/www/luci-static/resources/view/podkop-bot/transport.js
+          grep -Fq "transport/warp-revolver" root/www/luci-static/resources/view/podkop-bot/transport.js
+          grep -Fq 'Локальная авторизация hwelp (обычно не нужна)' root/www/luci-static/resources/view/podkop-bot/bearhole.js
+          grep -Fq "max-width: 720px" root/www/luci-static/resources/view/podkop-bot/bearhole.js
+          grep -Fq 'Автозапуск и самовосстановление' root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js
+          grep -Fq 'procd_set_param respawn 3600 5 0' root/etc/init.d/podkop-bearhole
+          test ! -e root/etc/config/podkop_bearhole
+          sh tools/check-sources.sh
+      - name: Commit r35 and remove one-shot files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f tools/_tmp_apply_r35.py .github/workflows/_tmp_apply_r35.yml
+          git config user.name 'medvedolog-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m '0.19.18-r35: fix upgrade mobile Bearhole and manual probe UX'
+          git push origin HEAD:dev/0.19.18-bearhole-mvp

@@ -1,0 +1,30 @@
+name: r51 UI polish
+on:
+  push:
+    branches: [dev/0.19.18-bearhole-mvp]
+    paths:
+      - .github/workflows/r51_ui_polish.yml
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev/0.19.18-bearhole-mvp
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 tools/r51_ui_polish.py
+      - name: Validate
+        run: |
+          sh tools/check-sources.sh
+          sh tools/check-async-wrappers.sh
+          git diff --check
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add root/www/luci-static/resources/view/podkop-bot/bearhole.js root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js
+          git commit -m '0.19.18-r51: polish Bearhole table and WARP reload stages'
+          git push origin HEAD:dev/0.19.18-bearhole-mvp

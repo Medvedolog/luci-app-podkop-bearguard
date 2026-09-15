@@ -1,4 +1,0 @@
-config bearhole 'main'
-	option enabled '0'
-	option port '1066'
-	option auth_enabled '0'

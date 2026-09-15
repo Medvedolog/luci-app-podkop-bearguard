@@ -46,5 +46,6 @@ packages:
     # podkop_bot configuration is likewise created and owned by the bot installer.
 
     scripts:
+      pre-install: ./dist/scripts/preinst
       post-install: ./dist/scripts/postinst
       post-deinstall: ./dist/scripts/postrm

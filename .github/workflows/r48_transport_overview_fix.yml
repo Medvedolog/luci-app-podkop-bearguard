@@ -1,0 +1,77 @@
+name: r48 transport and overview regressions fix
+
+on:
+  push:
+    branches: [dev/0.19.18-bearhole-mvp]
+    paths: ['.github/workflows/r48_transport_overview_fix.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev/0.19.18-bearhole-mvp
+          fetch-depth: 0
+      - name: Patch r48 regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('root/usr/lib/podkop_bot/podkop_bot')
+          s=p.read_text()
+          old='''        _i=0\n        while ! _warp_rescue_pid_alive && [ "$_i" -lt 10 ]; do\n            sleep 1\n            _i=$((_i + 1))\n        done\n'''
+          if old not in s:
+              raise SystemExit('WARP Rescue blocking wait anchor not found')
+          s=s.replace(old,'',1)
+          old='''        if _poll_follower_has_fresh_proxy; then\n            POLL_PROXY_FAIL_STREAK=$(( ${POLL_PROXY_FAIL_STREAK:-0} + 1 ))\n            _TG_NO_DEMOTE=1\n            logger -t podkop-bot "[Transport] POLL proxy cascade failed. streak=${POLL_PROXY_FAIL_STREAK} follower=alive action=hold_direct"\n            return 1\n        fi\n        POLL_PROXY_FAIL_STREAK=0\n        logger -t podkop-bot "[Transport] POLL proxy cascade failed. follower=none_or_stale action=demote"\n'''
+          new='''        if _poll_follower_has_fresh_proxy; then\n            POLL_PROXY_FAIL_STREAK=$(( ${POLL_PROXY_FAIL_STREAK:-0} + 1 ))\n            if [ "$POLL_PROXY_FAIL_STREAK" -lt 2 ]; then\n                _TG_NO_DEMOTE=1\n                logger -t podkop-bot "[Transport] POLL proxy cascade failed. streak=${POLL_PROXY_FAIL_STREAK} follower=alive action=hold_direct"\n                return 1\n            fi\n            logger -t podkop-bot "[Transport] POLL proxy cascade failed. streak=${POLL_PROXY_FAIL_STREAK} follower=alive action=demote_after_streak"\n        else\n            logger -t podkop-bot "[Transport] POLL proxy cascade failed. follower=none_or_stale action=demote"\n        fi\n        POLL_PROXY_FAIL_STREAK=0\n'''
+          if old not in s:
+              raise SystemExit('POLL hysteresis anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+
+          p=Path('root/www/luci-static/resources/view/podkop-bot/overview.js')
+          s=p.read_text()
+          old="""return Promise.all([callResources().catch(function(){return null;}),callWarpStatus('').catch(function(){return null;}),callWarpRescueStatus().catch(function(){return null;})]).then(function(v){if(self.resBox)dom.content(self.resBox,self.buildResources(v[0]));if(self.warpBox)dom.content(self.warpBox,self.buildWarpStatus(v[1],v[2],opened));});"""
+          new="""return Promise.all([callResources().catch(function(){return null;}),callWarpStatus('').catch(function(){return null;}),callWarpRescueStatus().catch(function(){return null;})]).then(function(v){self._lastRescueStatus=v[2];if(self.resBox)dom.content(self.resBox,self.buildResources(v[0]));if(self.warpBox)dom.content(self.warpBox,self.buildWarpStatus(v[1],v[2],opened));});"""
+          if old not in s:
+              raise SystemExit('Overview poller anchor not found')
+          p.write_text(s.replace(old,new,1))
+
+          p=Path('root/www/luci-static/resources/view/podkop-bot/overview-state.js')
+          s=p.read_text()
+          s=s.replace("var callRescueStatus = rpc.declare({ object:'podkop_bot_warpscout_rescue', method:'status' });\n",'',1)
+          old="""\t\tvar hwelpCell=E('span',{},hwelpNode(this._lastBearholeStatus||null));\n\t\tvar warpCell=E('span',{},rescueNode(this._lastRescueStatus||null));\n\t\tvar box=E('div',{'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},_('Ресурсы')),rrow('sing-box',sbNode),rrow('hwelp proxy',hwelpCell),rrow(_('WARP Rescue'),warpCell),rrow(_('Оперативная память'),ramNode)]);\n\t\tvar self=this;\n\t\tPromise.all([callBearholeStatus().catch(function(){return null;}),callRescueStatus().catch(function(){return null;})]).then(function(v){\n\t\t\tself._lastBearholeStatus=v[0];self._lastRescueStatus=v[1];\n\t\t\tdom.content(hwelpCell,hwelpNode(v[0]));\n\t\t\tdom.content(warpCell,rescueNode(v[1]));\n\t\t});\n"""
+          new="""\t\tvar hwelpCell=E('span',{},hwelpNode(this._lastBearholeStatus||null));\n\t\tvar warpCell=E('span',{},rescueNode(this._lastRescueStatus||null));\n\t\tvar box=E('div',{'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},_('Ресурсы')),rrow('sing-box',sbNode),rrow('hwelp proxy',hwelpCell),rrow(_('WARP Rescue'),warpCell),rrow(_('Оперативная память'),ramNode)]);\n\t\tvar self=this;\n\t\tcallBearholeStatus().catch(function(){return null;}).then(function(bh){\n\t\t\tself._lastBearholeStatus=bh;\n\t\t\tdom.content(hwelpCell,hwelpNode(bh));\n\t\t});\n"""
+          if old not in s:
+              raise SystemExit('Overview state duplicate RPC anchor not found')
+          p.write_text(s.replace(old,new,1))
+
+          p=Path('tools/check-sources.sh')
+          s=p.read_text()
+          marker='# Vendored bot is an integrity contract, not merely documentation.\n'
+          block='''# Transport/UI regression guards.\nif grep -Fq 'while ! _warp_rescue_pid_alive' root/usr/lib/podkop_bot/podkop_bot; then echo "FAIL  blocking WARP Rescue wait returned"; fail=1; fi\ngrep -Fq 'action=demote_after_streak' root/usr/lib/podkop_bot/podkop_bot || { echo "FAIL  bounded POLL demotion missing"; fail=1; }\nif grep -Fq "callRescueStatus = rpc.declare" root/www/luci-static/resources/view/podkop-bot/overview-state.js; then echo "FAIL  duplicate Overview Rescue RPC returned"; fail=1; fi\ngrep -Fq 'self._lastRescueStatus=v[2]' root/www/luci-static/resources/view/podkop-bot/overview.js || { echo "FAIL  Overview Rescue status reuse missing"; fail=1; }\n\n'''
+          if block not in s:
+              if marker not in s:
+                  raise SystemExit('check-sources marker not found')
+              p.write_text(s.replace(marker,block+marker,1))
+          PY
+          sed -i 's/^PKG_RELEASE:=47$/PKG_RELEASE:=48/' Makefile
+          sh -n root/usr/lib/podkop_bot/podkop_bot
+          sh tools/check-sources.sh
+          sh tools/check-async-wrappers.sh
+          git diff --check
+      - name: Commit r48
+        run: |
+          set -e
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Makefile root/usr/lib/podkop_bot/podkop_bot root/www/luci-static/resources/view/podkop-bot/overview.js root/www/luci-static/resources/view/podkop-bot/overview-state.js tools/check-sources.sh
+          git commit -m '0.19.18-r48: fix transport stalls and duplicate Overview polling'
+          git push origin HEAD:dev/0.19.18-bearhole-mvp

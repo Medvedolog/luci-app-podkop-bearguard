@@ -21,6 +21,7 @@ jobs:
           set -euo pipefail
           curl -fsSL 'https://raw.githubusercontent.com/Medvedolog/podkop_bot/6460f3ce71523cd1681bc61bada859b0c70744e0/podkop_bot.sh' -o root/usr/lib/podkop_bot/podkop_bot
           chmod 0755 root/usr/lib/podkop_bot/podkop_bot
+          (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
           python3 - <<'PY'
           from pathlib import Path
           p=Path('Makefile')
@@ -40,6 +41,6 @@ jobs:
           set -e
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Makefile root/usr/lib/podkop_bot/podkop_bot
+          git add Makefile root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/vendor.sha256
           git commit -m '0.19.18-r50: sync sing-box restart alert from standalone'
           git push origin HEAD:dev/0.19.18-bearhole-mvp

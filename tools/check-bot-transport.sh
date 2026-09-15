@@ -19,21 +19,21 @@ grep -Fq '_try_warp_rescue "$args" "$max_time" "$ct_fast"' "$BOT" || {
     echo "bot transport: WARP Rescue is not in the full cascade" >&2; exit 1;
 }
 grep -Fq 'action=hold_direct' "$BOT" || {
-    echo "bot transport: fresh follower no-Direct guard missing" >&2; exit 1;
+    echo "bot transport: first fresh-follower POLL failure is not held" >&2; exit 1;
+}
+grep -Fq 'action=demote_after_streak' "$BOT" || {
+    echo "bot transport: bounded POLL demotion missing" >&2; exit 1;
+}
+grep -F 'POLL_PROXY_FAIL_STREAK' "$BOT" | grep -Fq -- '-lt 2' || {
+    echo "bot transport: expected two-strike POLL hysteresis missing" >&2; exit 1;
 }
 grep -Fq "grep -Eq '^(tier(1|2_[0-9]+|3)|warp_rescue)=[0-9]+ms" "$BOT" || {
     echo "bot transport: WARP Rescue is not part of follower health" >&2; exit 1;
 }
 
-# The regression we saw on hardware was exactly this policy: first failed long
-# poll was held, the second was allowed to demote despite a fresh successful
-# getMe through a proxy.  That policy must not return.
-if grep -Fq 'follower=alive action=demote' "$BOT"; then
-    echo "bot transport: follower-positive POLL may demote to Direct" >&2
-    exit 1
-fi
-if grep -F 'POLL_PROXY_FAIL_STREAK' "$BOT" | grep -Fq -- '-lt 2'; then
-    echo "bot transport: two-strike Direct demotion returned" >&2
+# WARP Rescue must never sleep in the synchronous Telegram transport path.
+if grep -Fq 'while ! _warp_rescue_pid_alive' "$BOT"; then
+    echo "bot transport: blocking WARP Rescue startup wait returned" >&2
     exit 1
 fi
 

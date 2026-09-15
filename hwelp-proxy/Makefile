@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=hwelp-proxy
 PKG_VERSION:=0.1.1
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_MAINTAINER:=Medvedolog
 
@@ -39,6 +39,38 @@ endef
 define Package/hwelp-proxy/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/hwelp-proxy $(1)/usr/bin/hwelp-proxy
+endef
+
+# Removing the native gateway while Bearhole is active must never strand opkg,
+# apk, curl or wget behind 127.0.0.1:1066. Run while the binary/control plane is
+# still present. Upgrades are replacements, not destructive uninstalls.
+define Package/hwelp-proxy/prerm
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+case "$${1:-}" in upgrade|upgrading) exit 0;; esac
+if [ -x /usr/lib/podkop_bot/bearhole.sh ]; then
+	/usr/lib/podkop_bot/bearhole.sh system-off >/dev/null 2>&1 || true
+fi
+if [ -x /etc/init.d/podkop-bearhole ]; then
+	/etc/init.d/podkop-bearhole stop >/dev/null 2>&1 || true
+	/etc/init.d/podkop-bearhole disable >/dev/null 2>&1 || true
+fi
+ubus call service delete '{"name":"podkop-bearhole"}' >/dev/null 2>&1 || true
+rm -f /etc/rc.d/*podkop-bearhole \
+	/etc/profile.d/99-podkop-bearhole.sh \
+	/etc/opkg/99-podkop-bearhole.conf \
+	/etc/opkg/99-hwelp-bootstrap.conf \
+	/etc/apk/repositories.d/99-podkop-bearhole.list \
+	/etc/apk/repositories.d/99-hwelp-bootstrap.list \
+	2>/dev/null || true
+for _f in /etc/environment /root/.curlrc /root/.wgetrc; do
+	[ -f "$$_f" ] || continue
+	sed -i '/^# BEGIN PODKOP BEARHOLE$$/,/^# END PODKOP BEARHOLE$$/d' "$$_f" 2>/dev/null || true
+done
+uci -q set podkop_bearhole.main.enabled='0' >/dev/null 2>&1 || true
+uci -q commit podkop_bearhole >/dev/null 2>&1 || true
+rm -rf /tmp/podkop_bot/bearhole 2>/dev/null || true
+exit 0
 endef
 
 $(eval $(call BuildPackage,hwelp-proxy))

@@ -6,7 +6,7 @@
 	},
 	"admin/services/podkop-bot/overview": {
 		"title": "Обзор", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/overview-r39" }
+		"action": { "type": "view", "path": "podkop-bot/overview-live" }
 	},
 	"admin/services/podkop-bot/settings": {
 		"title": "Настройки", "order": 15,
@@ -34,7 +34,7 @@
 	},
 	"admin/services/podkop-bot/transport/bearhole": {
 		"title": "Bearhole", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/bearhole-r37" }
+		"action": { "type": "view", "path": "podkop-bot/bearhole-live" }
 	},
 	"admin/services/podkop-bot/transport/warp-revolver": {
 		"title": "Револьвер WARP", "order": 15,
@@ -55,7 +55,7 @@
 	},
 	"admin/services/podkop-bot/runtime/services": {
 		"title": "Тест сервисов", "order": 5,
-		"action": { "type": "view", "path": "podkop-bot/runtime-r43" }
+		"action": { "type": "view", "path": "podkop-bot/runtime-live" }
 	},
 	"admin/services/podkop-bot/runtime/tg-api-routes": {
 		"action": { "type": "alias", "path": "admin/services/podkop-bot/runtime/services" }

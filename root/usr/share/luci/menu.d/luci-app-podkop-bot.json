@@ -6,7 +6,7 @@
 	},
 	"admin/services/podkop-bot/overview": {
 		"title": "Обзор", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/overview-r37" }
+		"action": { "type": "view", "path": "podkop-bot/overview-r38" }
 	},
 	"admin/services/podkop-bot/settings": {
 		"title": "Настройки", "order": 15,

@@ -46,6 +46,12 @@ fi
 if [ "$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)" = "1" ] && [ -x /usr/bin/hwelp-proxy ]; then
 	/etc/init.d/podkop-bearhole enable >/dev/null 2>&1 || true
 	ubus call podkop_bot_bearhole start '{}' >/dev/null 2>&1 || /etc/init.d/podkop-bearhole start >/dev/null 2>&1 || true
+else
+	# Upgrade invariant: UCI disabled means no stale HWELP instance and no
+	# system proxy files left from the replaced package.
+	/etc/init.d/podkop-bearhole stop >/dev/null 2>&1 || true
+	/etc/init.d/podkop-bearhole disable >/dev/null 2>&1 || true
+	/usr/lib/podkop_bot/bearhole.sh system-off >/dev/null 2>&1 || true
 fi
 
 rm -f /tmp/luci-indexcache* 2>/dev/null || true

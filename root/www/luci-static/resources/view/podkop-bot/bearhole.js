@@ -22,7 +22,7 @@ function pbInjectCss(){if(document.getElementById('pb-css'))return;document.quer
 function age(ts){var n=parseInt(ts||0,10);if(!n)return '—';var s=Math.max(0,Math.floor(Date.now()/1000)-n);if(s<60)return _('только что');if(s<3600)return Math.floor(s/60)+_(' мин назад');if(s<86400)return Math.floor(s/3600)+_(' ч назад');return Math.floor(s/86400)+_(' дн назад');}
 function reasonText(r){var m={hwelp_missing:_('hwelp proxy пока не установлен. При запуске Bearhole будет попытка установить подходящий пакет автоматически.'),hwelp_broken:_('Установленный hwelp proxy не прошёл самопроверку.'),hwelp_install_failed:_('Не удалось установить hwelp proxy через доступные маршруты.'),package_manager_missing:_('Не найден поддерживаемый менеджер пакетов.'),port_in_use:_('Выбранный порт hwelp proxy уже занят.'),bad_port:_('Порт должен быть в диапазоне 1024–65535.'),port_save_failed:_('Не удалось сохранить порт hwelp proxy.'),proxy_save_failed:_('Не удалось сохранить настройки hwelp proxy.'),auth_invalid:_('Для авторизации нужны логин и пароль.'),gateway_start_failed:_('hwelp proxy не смог запуститься на выбранном порту.'),gateway_check_failed:_('hwelp proxy запустился, но контрольная загрузка через него не прошла.'),system_proxy_apply_failed:_('Не удалось включить системный прокси OpenWrt.'),qualification_start_failed:_('Не удалось запустить проверку цепочки маршрутов.'),no_routes:_('В цепочке нет маршрутов для проверки.'),no_usable_route:_('После проверки не найден рабочий маршрут для системных загрузок.'),route_check_timeout:_('Проверка маршрутов превысила допустимое время.'),uci_enable_failed:_('Не удалось сохранить настройку Bearhole.'),uci_commit_failed:_('Не удалось записать конфигурацию Bearhole.')};return m[r]||r||_('Неизвестная ошибка.');}
 function verified(st){return !!(st.running&&st.system_applied&&st.state==='ready'&&st.reason==='gateway_verified');}
-function stateNode(st){if(st.probing)return dot('yellow',_('Проверяю маршруты'));if(st.state==='verifying')return dot('yellow',_('Проверяю локальный шлюз'));if(st.starting)return dot('yellow',_('Запускается'));if(verified(st))return dot('green',_('Работает'));if(st.state==='failed')return dot('red',reasonText(st.reason));if(st.enabled&&!st.running)return dot('red',_('Шлюз не запущен'));return dot('grey',_('Выключен'));}
+function stateNode(st){if(!st.enabled&&st.running)return dot('red',_('Рассинхронизация: Bearhole выключен, hwelp ещё запущен'));if(st.probing)return dot('yellow',_('Проверяю маршруты'));if(st.state==='verifying')return dot('yellow',_('Проверяю локальный шлюз'));if(st.starting)return dot('yellow',_('Запускается'));if(verified(st))return dot('green',_('Работает'));if(st.state==='failed')return dot('red',reasonText(st.reason));if(st.enabled&&!st.running)return dot('red',_('Шлюз не запущен'));return dot('grey',_('Выключен'));}
 function hwelpNode(st){var pid=parseInt(st.pid||0,10)||0,s='';if(!st.hwelp_installed)return dot('grey',_('не установлен'));if(verified(st)){s=_('работает');if(pid>0)s+=' · PID '+String(pid);if(st.hwelp_version)s+=' · v'+st.hwelp_version;return dot('green',s);}if(st.running){s=(st.probing||st.state==='verifying'||st.starting)?_('запущен, проверяется'):_('запущен');if(pid>0)s+=' · PID '+String(pid);if(st.hwelp_version)s+=' · v'+st.hwelp_version;return dot('yellow',s);}if(st.starting)return dot('yellow',_('запускается'));if(st.engine_reason==='hwelp_broken')return dot('red',_('ошибка самопроверки'));return dot('grey',_('установлен, не запущен')+(st.hwelp_version?' · v'+st.hwelp_version:''));}
 function q(v){if(v==='ok')return lamp('green',_('доступен'));if(v==='skip')return lamp('grey',_('не применимо'));return lamp('red',_('нет доступа'));}
 function routeStatus(v){if(v==='VALID')return lamp('green',_('пригоден'));if(v==='DEGRADED')return lamp('yellow',_('частично пригоден'));return lamp('red',_('не пригоден'));}
@@ -121,6 +121,25 @@ return view.extend({
 		var engineWarn=E('span',{});if(!st.hwelp_installed)engineWarn=E('div',{'class':'alert-message warning','style':'margin:.7em 0;'},_('hwelp proxy не установлен. «🐻 Запустить Bearhole» сначала попробует установить нативный пакет из owfeed через доступную цепочку прокси.'));else if(!st.engine_ready)engineWarn=E('div',{'class':'alert-message warning','style':'margin:.7em 0;'},reasonText(st.engine_reason));
 		var summary=(String(st.valid_routes||0)+' '+_('пригодных')+' · '+String(st.degraded_routes||0)+' '+_('частично пригодных'));
 		var localProxy=E('span',{},[E('code',{},st.gateway||('http://127.0.0.1:'+(st.port||1066))),st.auth_enabled?E('span',{'style':'margin-left:.55em;'},dot('green',_('с авторизацией'))):E('span',{})]);
+		var tunnelScope;
+		if(st.system_applied&&st.running){
+			var hooks=[];
+			if(st.env_hook)hooks.push('shell / HTTP(S)_PROXY');
+			if(st.curl_hook)hooks.push('curl');
+			if(st.wget_hook)hooks.push('wget');
+			if(st.opkg_hook)hooks.push('opkg');
+			if(st.package_manager==='apk')hooks.push(_('apk — через HTTP(S)_PROXY окружения'));
+			tunnelScope=E('div',{'style':'margin:.75em 0;padding:.72em .85em;border-left:3px solid #33a02c;background:rgba(51,160,44,.07);line-height:1.45;'},[
+				E('strong',{},_('Нора включена. Системные загрузки OpenWrt идут через hwelp.')),
+				E('div',{'style':'margin-top:.35em;'},[E('span',{},_('Путь: ')),E('code',{},st.gateway||('http://127.0.0.1:'+(st.port||1066))),E('span',{},' → '+(st.route_label||st.route_id||'—'))]),
+				E('div',{'style':'margin-top:.3em;'},_('Подключено: ')+(hooks.length?hooks.join(' · '):_('системное HTTP(S)-окружение'))),
+				E('div',{'class':'pb-hint-90','style':'margin-top:.25em;'},_('LAN-клиенты через Bearhole не идут. Дополнительно нору используют процессы и службы самого роутера, которые читают HTTP_PROXY / HTTPS_PROXY.'))
+			]);
+		}else if(!st.enabled&&st.running){
+			tunnelScope=E('div',{'class':'alert-message warning','style':'margin:.75em 0;'},_('Обнаружен старый процесс hwelp при выключенном Bearhole. r51 автоматически приводит состояние к UCI при обновлении пакета.'));
+		}else{
+			tunnelScope=E('div',{'class':'pb-hint-90','style':'margin:.65em 0;'},_('Нора выключена: системные curl/wget/пакетные загрузки не направляются через Bearhole.'));
+		}
 		var statusCard=card(_('OpenWrt Bearhole'),[
 			E('p',{'class':'pb-muted','style':'max-width:760px;'},_('Аварийный прокси для системных загрузок OpenWrt. Он выбирает рабочий маршрут из цепочки Podkop/Forkop, резервных прокси, WARP Rescue и Direct; LAN-трафик не затрагивается.')),
 			engineWarn,
@@ -130,13 +149,14 @@ return view.extend({
 			row(_('Рабочий маршрут'),E('span',{},st.route_label||st.route_id||'—')),
 			row(_('Проверка маршрутов'),E('span',{},summary)),
 			row(_('Обновлено'),E('span',{},age(st.updated_at))),
+			tunnelScope,
 			this.proxySettings(st,isBusy),
 			E('div',{'style':'display:flex;gap:.5em;flex-wrap:wrap;margin-top:.8em;'},actions)
 		]);
 		var table=this.resultsTable(items);
 		var details=E('details',{'id':'bearhole-service-checks','open':this.resourcesOpen?'':null,'style':'max-width:980px;margin-top:1em;'},[
 			E('summary',{'style':'cursor:pointer;font-weight:600;'},_('Доступ к служебным ресурсам')),
-			E('div',{'class':'pb-hint-90','style':'margin:.55em 0;line-height:1.45;'},_('GitHub, Raw, API, архивы, файлы релизов и настроенные feeds OpenWrt. Цвет лампы показывает доступность через каждый маршрут; наведите на неё для расшифровки.')),
+			E('div',{'class':'pb-hint-90','style':'margin:.55em 0;line-height:1.45;'},_('GitHub, Raw, API, архивы и настроенные feeds OpenWrt. Цвет лампы показывает доступность через каждый маршрут; наведите на неё для расшифровки.')),
 			E('div',{},[table])
 		]);
 		var log=E('details',{'id':'bearhole-log','open':this.logOpen?'':null,'style':'max-width:900px;margin-top:1em;'},[E('summary',{'style':'cursor:pointer;'},_('Журнал Bearhole')),E('pre',{'style':'max-height:320px;overflow:auto;white-space:pre-wrap;font-size:82%;'},this.logText||_('Лог пуст.'))]);
@@ -153,18 +173,18 @@ return view.extend({
 				E('div',{'class':'pb-hint-90','style':'font-family:monospace;overflow-wrap:anywhere;margin:.2em 0 .55em;'},x.endpoint||''),
 				E('div',{'style':'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.35em;'},[
 					res('GitHub',x.github_core,'github.com'),res('Raw',x.github_raw,'raw.githubusercontent.com'),res('API',x.github_api,'api.github.com'),
-					res(_('Архив'),x.github_codeload,'codeload.github.com'),res(_('Релизы'),x.github_assets,_('GitHub release assets')),res('Feeds',x.openwrt_feeds,_('Репозитории OpenWrt'))
+					res(_('Архив'),x.github_codeload,'codeload.github.com'),res('Feeds',x.openwrt_feeds,_('Репозитории OpenWrt'))
 				]),
 				E('div',{'class':'pb-hint-90','style':'text-align:right;margin-top:.45em;'},_('Проверено: ')+age(x.checked_at))
 			]);}));
 		}
 		var rows=items.map(function(x){return E('tr',{},[
 			E('td',{},[E('strong',{},x.label||x.id),E('div',{'class':'pb-hint-90','style':'overflow-wrap:anywhere;'},x.endpoint||'')]),
-			E('td',{'style':'text-align:center;'},[routeStatus(x.status)]),E('td',{'style':'text-align:center;'},[q(x.github_core)]),E('td',{'style':'text-align:center;'},[q(x.github_raw)]),E('td',{'style':'text-align:center;'},[q(x.github_api)]),E('td',{'style':'text-align:center;'},[q(x.github_codeload)]),E('td',{'style':'text-align:center;'},[q(x.github_assets)]),E('td',{'style':'text-align:center;'},[q(x.openwrt_feeds)]),E('td',{'style':'white-space:nowrap;'},age(x.checked_at))
+			E('td',{'style':'text-align:center;'},[routeStatus(x.status)]),E('td',{'style':'text-align:center;'},[q(x.github_core)]),E('td',{'style':'text-align:center;'},[q(x.github_raw)]),E('td',{'style':'text-align:center;'},[q(x.github_api)]),E('td',{'style':'text-align:center;'},[q(x.github_codeload)]),E('td',{'style':'text-align:center;'},[q(x.openwrt_feeds)]),E('td',{'style':'white-space:nowrap;text-align:right;padding-right:1.2em;'},age(x.checked_at))
 		]);});
 		function th(label,title){return E('th',{'title':title||label,'style':'white-space:nowrap;text-align:center;'},label);}
 		return E('div',{'style':'overflow-x:auto;'},[E('table',{'class':'table','style':'min-width:760px;'},[
-			E('thead',{},[E('tr',{},[E('th',{'style':'text-align:left;'},_('Маршрут')),th(_('Статус'),_('Итоговая пригодность маршрута')),th('GitHub',_('github.com')),th('Raw',_('raw.githubusercontent.com')),th('API',_('api.github.com')),th(_('Архив'),_('codeload.github.com')),th(_('Релизы'),_('Файлы GitHub Releases и redirect-хосты')),th('Feeds',_('Репозитории OpenWrt')),E('th',{},_('Проверено'))])]),E('tbody',{},rows)
+			E('thead',{},[E('tr',{},[E('th',{'style':'text-align:left;'},_('Маршрут')),th(_('Статус'),_('Итоговая пригодность маршрута')),th('GitHub',_('github.com')),th('Raw',_('raw.githubusercontent.com')),th('API',_('api.github.com')),th(_('Архив'),_('codeload.github.com')),th('Feeds',_('Репозитории OpenWrt')),E('th',{'style':'text-align:right;padding-right:1.2em;'},_('Проверено'))])]),E('tbody',{},rows)
 		])]);
 	},
 

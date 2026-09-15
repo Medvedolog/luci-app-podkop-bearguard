@@ -23,11 +23,18 @@ for _f in \
 	/usr/lib/podkop_bot/podkop_bot_init \
 	/usr/lib/podkop_bot/bearhole.sh \
 	/usr/lib/podkop_bot/warpscout-rescue-watchdog \
+	/usr/lib/podkop_bot/hotfix-proxy-ui-r42.sh \
 	/etc/init.d/podkop-bearhole \
 	/etc/init.d/podkop-warp-rescue
 do
 	chmod +x "$_f" 2>/dev/null || true
 done
+
+# Keep the bundled bot and an already installed /usr/bin copy in sync with the
+# r42 proxy-chain presentation fix. The patch is signature-based and idempotent.
+if [ -x /usr/lib/podkop_bot/hotfix-proxy-ui-r42.sh ]; then
+	/usr/lib/podkop_bot/hotfix-proxy-ui-r42.sh >/dev/null 2>&1 || true
+fi
 
 /etc/init.d/rpcd restart >/dev/null 2>&1 || true
 

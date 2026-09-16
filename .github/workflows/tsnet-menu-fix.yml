@@ -1,0 +1,42 @@
+name: tsnet-menu-fix
+on:
+  push:
+    branches: [dev/0.19.18-tailscale-multiprovider]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message || '', '[tsnet-menu-fixed]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: dev/0.19.18-tailscale-multiprovider, fetch-depth: 0}
+      - name: Patch menu gates
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('root/usr/lib/podkop_bot/podkop_bot')
+          s=p.read_text(); old=s
+          s=s.replace('''            case "$PODKOP_VARIANT" in
+                plus|forkop)
+                    kb="${kb}[{\\"text\\":\\"${E_SRV} Службы\\",\\"callback_data\\":\\"cmd_server_instances\\"}],"
+                    ;;
+            esac''','''            case "$PODKOP_VARIANT" in
+                original|plus|forkop)
+                    kb="${kb}[{\\"text\\":\\"${E_SRV} Службы\\",\\"callback_data\\":\\"cmd_server_instances\\"}],"
+                    ;;
+            esac''',1)
+          s=s.replace('''            case "$PODKOP_VARIANT" in
+                plus|forkop) : ;;''','''            case "$PODKOP_VARIANT" in
+                original|plus|forkop) : ;;''',1)
+          if s==old: raise SystemExit('menu gate patterns not found')
+          p.write_text(s)
+          PY
+          sh -n root/usr/lib/podkop_bot/podkop_bot
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add root/usr/lib/podkop_bot/podkop_bot
+          git commit -m 'bot: expose tsnet service on classic Podkop [tsnet-menu-fixed]'
+          git push origin HEAD:dev/0.19.18-tailscale-multiprovider

@@ -252,7 +252,7 @@ method_delete() {
 }
 
 case "$1" in
-    list) echo '{"status":{},"create":{"control_url":"","auth_key":"","hostname":"","advertise_exit_node":false,"confirm_standalone":false},"set_enabled":{"enabled":false,"confirm_standalone":false},"set_advertise_exit_node":{"enabled":false},"delete":{"purge_state":false,"legacy_native":false}}' ;;
+    list) echo '{"api_version":1,"status":{},"create":{"control_url":"","auth_key":"","hostname":"","advertise_exit_node":false,"confirm_standalone":false},"set_enabled":{"enabled":false,"confirm_standalone":false},"set_advertise_exit_node":{"enabled":false},"delete":{"purge_state":false,"legacy_native":false}}' ;;
     call)
         case "$2" in
             status) cat >/dev/null 2>&1 || true; status_json ;;

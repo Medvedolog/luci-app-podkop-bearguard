@@ -40,6 +40,10 @@
 		"title": "Револьвер WARP", "order": 15,
 		"action": { "type": "view", "path": "podkop-bot/warpscout-rescue" }
 	},
+	"admin/services/podkop-bot/transport/tailscale": {
+		"title": "Tailscale", "order": 20,
+		"action": { "type": "view", "path": "podkop-bot/tailscale" }
+	},
 	"admin/services/podkop-bot/transport/warpscout": {
 		"action": { "type": "alias", "path": "admin/services/podkop-bot/settings/warpscout" }
 	},

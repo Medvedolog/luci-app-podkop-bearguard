@@ -1,0 +1,219 @@
+#!/bin/sh
+# rpcd object: podkop_bot_tailscale
+# Shared Forkop/Tailscale manager for LuCI. Uses the exact same UCI contract as
+# the Telegram bot so either frontend can create and manage the same endpoint.
+
+UCI_PKG="forkop"
+INIT="/etc/init.d/forkop"
+LOCK="/tmp/podkop_uci.lock"
+BASE_STATE="/etc/forkop/tailscale"
+
+json_in() { _IN=$(cat 2>/dev/null); [ -n "$_IN" ] || _IN='{}'; }
+json_str() { printf '%s' "$1" | jq -Rs '.'; }
+
+lock_begin() {
+    command -v flock >/dev/null 2>&1 || return 0
+    exec 8>>"$LOCK" 2>/dev/null || return 0
+    flock -x -w 10 8 2>/dev/null || flock -x -n 8 2>/dev/null || return 0
+}
+lock_end() { exec 8>&- 2>/dev/null || true; }
+
+forkop_present() {
+    [ -x /usr/bin/forkop ] || [ -x "$INIT" ] || [ -f /etc/config/forkop ]
+}
+
+singbox_supports_tailscale() {
+    command -v sing-box >/dev/null 2>&1 || return 1
+    _v=$(sing-box version 2>/dev/null)
+    printf '%s' "$_v" | grep -qi 'extended' && return 0
+    printf '%s' "$_v" | grep -q 'with_tailscale'
+}
+
+valid_url() {
+    case "$1" in
+        http://?*|https://?*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+valid_hostname() {
+    _h="$1"
+    [ -n "$_h" ] && [ ${#_h} -le 63 ] 2>/dev/null || return 1
+    printf '%s' "$_h" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$'
+}
+
+find_section() {
+    uci -q show "$UCI_PKG" 2>/dev/null | \
+        sed -n "s/^${UCI_PKG}\.\([^.=]*\)\.protocol='tailscale'$/\1/p" | head -n 1
+}
+
+gen_section() {
+    _i=1
+    while [ "$_i" -lt 100 ]; do
+        _n="server_ts_${_i}"
+        if ! uci -q get "${UCI_PKG}.${_n}" >/dev/null 2>&1 && [ ! -e "${BASE_STATE}/${_n}" ]; then
+            printf '%s' "$_n"; return 0
+        fi
+        _i=$((_i + 1))
+    done
+    return 1
+}
+
+restart_forkop() {
+    [ -x "$INIT" ] || return 1
+    "$INIT" restart >/dev/null 2>&1
+}
+
+backup_cfg() {
+    _b="/tmp/forkop.tailscale.$$.bak"
+    cp -p /etc/config/forkop "$_b" 2>/dev/null || : >"$_b"
+    printf '%s' "$_b"
+}
+
+restore_cfg() {
+    _b="$1"
+    [ -f "$_b" ] || return 1
+    cp -p "$_b" /etc/config/forkop 2>/dev/null || return 1
+    rm -f "$_b"
+    uci -q revert forkop >/dev/null 2>&1 || true
+}
+
+status_json() {
+    _present=false; forkop_present && _present=true
+    _cap=false; singbox_supports_tailscale && _cap=true
+    _sec=$(find_section)
+    _ver=$(sing-box version 2>/dev/null | head -n 1)
+    if [ -z "$_sec" ]; then
+        jq -cn --argjson present "$_present" --argjson cap "$_cap" --arg ver "$_ver" \
+            '{ok:true,forkop_present:$present,tailscale_supported:$cap,singbox_version:$ver,configured:false}'
+        return
+    fi
+    _en=$(uci -q get "${UCI_PKG}.${_sec}.enabled" 2>/dev/null); [ "$_en" = 1 ] && _enabled=true || _enabled=false
+    _adv=$(uci -q get "${UCI_PKG}.${_sec}.tailscale_advertise_exit_node" 2>/dev/null); [ "$_adv" = 1 ] && _advertise=true || _advertise=false
+    _host=$(uci -q get "${UCI_PKG}.${_sec}.tailscale_hostname" 2>/dev/null)
+    _url=$(uci -q get "${UCI_PKG}.${_sec}.tailscale_control_url" 2>/dev/null)
+    _state="${BASE_STATE}/${_sec}/tailscaled.state"
+    [ -s "$_state" ] && _registered=true || _registered=false
+    _auth=$(logread 2>/dev/null | grep -F 'Waiting for authentication:' | tail -n 1 | sed 's/.*Waiting for authentication:[[:space:]]*//')
+    case "$_auth" in http://*|https://*) ;; *) _auth='' ;; esac
+    jq -cn --argjson present "$_present" --argjson cap "$_cap" --arg ver "$_ver" \
+        --arg sec "$_sec" --arg host "$_host" --arg url "$_url" --argjson enabled "$_enabled" \
+        --argjson advertise "$_advertise" --argjson registered "$_registered" --arg auth_url "$_auth" \
+        '{ok:true,forkop_present:$present,tailscale_supported:$cap,singbox_version:$ver,configured:true,section:$sec,hostname:$host,control_url:$url,enabled:$enabled,advertise_exit_node:$advertise,registered:$registered,auth_url:$auth_url}'
+}
+
+method_create() {
+    json_in
+    forkop_present || { printf '{"ok":false,"reason":"forkop_missing"}\n'; return; }
+    singbox_supports_tailscale || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }
+    [ -z "$(find_section)" ] || { printf '{"ok":false,"reason":"already_configured"}\n'; return; }
+    _url=$(printf '%s' "$_IN" | jq -r '.control_url // "https://controlplane.tailscale.com"')
+    _key=$(printf '%s' "$_IN" | jq -r '.auth_key // ""')
+    _host=$(printf '%s' "$_IN" | jq -r '.hostname // ""')
+    _adv=$(printf '%s' "$_IN" | jq -r '.advertise_exit_node // false')
+    valid_url "$_url" || { printf '{"ok":false,"reason":"bad_control_url"}\n'; return; }
+    valid_hostname "$_host" || { printf '{"ok":false,"reason":"bad_hostname"}\n'; return; }
+    [ -n "$_key" ] || { printf '{"ok":false,"reason":"auth_key_required"}\n'; return; }
+    printf '%s' "$_key" | LC_ALL=C grep -q '[[:cntrl:]]' && { printf '{"ok":false,"reason":"bad_auth_key"}\n'; return; }
+    case "$_adv" in true|1) _adv=1 ;; false|0) _adv=0 ;; *) printf '{"ok":false,"reason":"bad_advertise_value"}\n'; return ;; esac
+    _sec=$(gen_section) || { printf '{"ok":false,"reason":"section_name_exhausted"}\n'; return; }
+    lock_begin
+    _bak=$(backup_cfg)
+    _ok=1
+    uci -q set "${UCI_PKG}.${_sec}=server" || _ok=0
+    [ "$_ok" = 1 ] && uci -q set "${UCI_PKG}.${_sec}.protocol=tailscale" || _ok=0
+    [ "$_ok" = 1 ] && uci -q set "${UCI_PKG}.${_sec}.enabled=0" || _ok=0
+    [ "$_ok" = 1 ] && uci -q set "${UCI_PKG}.${_sec}.routing_mode=rules" || _ok=0
+    [ "$_ok" = 1 ] && uci -q set "${UCI_PKG}.${_sec}.label=Tailscale" || _ok=0
+    [ "$_ok" = 1 ] && uci -q set "${UCI_PKG}.${_sec}.tailscale_control_url=$_url" || _ok=0
+    [ "$_ok" = 1 ] && uci -q set "${UCI_PKG}.${_sec}.tailscale_auth_key=$_key" || _ok=0
+    [ "$_ok" = 1 ] && uci -q set "${UCI_PKG}.${_sec}.tailscale_hostname=$_host" || _ok=0
+    [ "$_ok" = 1 ] && uci -q set "${UCI_PKG}.${_sec}.tailscale_advertise_exit_node=$_adv" || _ok=0
+    [ "$_ok" = 1 ] && uci -q commit "$UCI_PKG" || _ok=0
+    if [ "$_ok" != 1 ]; then
+        restore_cfg "$_bak" >/dev/null 2>&1 || true
+        lock_end
+        printf '{"ok":false,"reason":"uci_write_failed"}\n'; return
+    fi
+    rm -f "$_bak"; lock_end
+    logger -t podkop-bot-rpcd "event=tailscale_create section=$_sec enabled=0"
+    jq -cn --arg section "$_sec" '{ok:true,section:$section,enabled:false}'
+}
+
+method_set_enabled() {
+    json_in
+    _sec=$(find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
+    _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
+    case "$_v" in true|1) _v=1; singbox_supports_tailscale || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; } ;; false|0) _v=0 ;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return ;; esac
+    _old=$(uci -q get "${UCI_PKG}.${_sec}.enabled" 2>/dev/null); [ -n "$_old" ] || _old=0
+    lock_begin; _bak=$(backup_cfg)
+    if ! uci -q set "${UCI_PKG}.${_sec}.enabled=$_v" || ! uci -q commit "$UCI_PKG" || ! restart_forkop; then
+        restore_cfg "$_bak" >/dev/null 2>&1 || true
+        restart_forkop >/dev/null 2>&1 || true
+        lock_end
+        printf '{"ok":false,"reason":"restart_failed","rolled_back":true}\n'; return
+    fi
+    rm -f "$_bak"; lock_end
+    logger -t podkop-bot-rpcd "event=tailscale_enabled section=$_sec enabled=$_v"
+    [ "$_v" = 1 ] && printf '{"ok":true,"enabled":true}\n' || printf '{"ok":true,"enabled":false}\n'
+}
+
+method_set_advertise() {
+    json_in
+    _sec=$(find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
+    _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
+    case "$_v" in true|1) _v=1 ;; false|0) _v=0 ;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return ;; esac
+    _running=$(uci -q get "${UCI_PKG}.${_sec}.enabled" 2>/dev/null)
+    lock_begin; _bak=$(backup_cfg)
+    if ! uci -q set "${UCI_PKG}.${_sec}.tailscale_advertise_exit_node=$_v" || ! uci -q commit "$UCI_PKG"; then
+        restore_cfg "$_bak" >/dev/null 2>&1 || true; lock_end
+        printf '{"ok":false,"reason":"uci_write_failed"}\n'; return
+    fi
+    if [ "$_running" = 1 ] && ! restart_forkop; then
+        restore_cfg "$_bak" >/dev/null 2>&1 || true; restart_forkop >/dev/null 2>&1 || true; lock_end
+        printf '{"ok":false,"reason":"restart_failed","rolled_back":true}\n'; return
+    fi
+    rm -f "$_bak"; lock_end
+    logger -t podkop-bot-rpcd "event=tailscale_advertise_exit_node section=$_sec enabled=$_v"
+    [ "$_v" = 1 ] && printf '{"ok":true,"advertise_exit_node":true}\n' || printf '{"ok":true,"advertise_exit_node":false}\n'
+}
+
+method_delete() {
+    json_in
+    _sec=$(find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
+    _purge=$(printf '%s' "$_IN" | jq -r '.purge_state // false')
+    case "$_purge" in true|1) _purge=1 ;; *) _purge=0 ;; esac
+    lock_begin; _bak=$(backup_cfg)
+    _was=$(uci -q get "${UCI_PKG}.${_sec}.enabled" 2>/dev/null)
+    if [ "$_was" = 1 ]; then
+        if ! uci -q set "${UCI_PKG}.${_sec}.enabled=0" || ! uci -q commit "$UCI_PKG" || ! restart_forkop; then
+            restore_cfg "$_bak" >/dev/null 2>&1 || true; restart_forkop >/dev/null 2>&1 || true; lock_end
+            printf '{"ok":false,"reason":"disable_failed","rolled_back":true}\n'; return
+        fi
+    fi
+    if ! uci -q delete "${UCI_PKG}.${_sec}" || ! uci -q commit "$UCI_PKG"; then
+        restore_cfg "$_bak" >/dev/null 2>&1 || true; [ "$_was" = 1 ] && restart_forkop >/dev/null 2>&1 || true; lock_end
+        printf '{"ok":false,"reason":"delete_failed","rolled_back":true}\n'; return
+    fi
+    rm -f "$_bak"; lock_end
+    [ "$_purge" = 1 ] && rm -rf "${BASE_STATE:?}/${_sec}" 2>/dev/null || true
+    logger -t podkop-bot-rpcd "event=tailscale_delete section=$_sec purge_state=$_purge"
+    [ "$_purge" = 1 ] && printf '{"ok":true,"purged_state":true}\n' || printf '{"ok":true,"purged_state":false}\n'
+}
+
+case "$1" in
+    list)
+        echo '{"status":{},"create":{"control_url":"","auth_key":"","hostname":"","advertise_exit_node":false},"set_enabled":{"enabled":false},"set_advertise_exit_node":{"enabled":false},"delete":{"purge_state":false}}'
+        ;;
+    call)
+        case "$2" in
+            status) cat >/dev/null 2>&1 || true; status_json ;;
+            create) method_create ;;
+            set_enabled) method_set_enabled ;;
+            set_advertise_exit_node) method_set_advertise ;;
+            delete) method_delete ;;
+            *) cat >/dev/null 2>&1 || true; printf '{"ok":false,"reason":"unknown_method"}\n' ;;
+        esac
+        ;;
+    *) exit 1 ;;
+esac

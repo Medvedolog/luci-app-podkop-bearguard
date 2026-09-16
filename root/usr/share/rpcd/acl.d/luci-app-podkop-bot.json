@@ -10,7 +10,8 @@
         "podkop_bot_warpscout_runtime": ["status", "log", "telegram_test"],
         "podkop_bot_warpscout_tgscan": ["telegram_scan_status", "telegram_scan_plan", "telegram_scan_results", "telegram_scan_log"],
         "podkop_bot_warpscout_rescue": ["status", "magazine", "log"],
-        "podkop_bot_bearhole": ["status", "results", "log"]
+        "podkop_bot_bearhole": ["status", "results", "log"],
+        "podkop_bot_tailscale": ["status"]
       },
       "uci": ["podkop_bot", "podkop_bearhole"]
     },
@@ -23,7 +24,8 @@
         "podkop_bot_warpscout_runtime": ["start", "stop"],
         "podkop_bot_warpscout_tgscan": ["telegram_scan_start", "telegram_scan_cancel"],
         "podkop_bot_warpscout_rescue": ["set", "trigger", "next", "fire", "reload", "stop"],
-        "podkop_bot_bearhole": ["start", "set_enabled", "set_port", "set_proxy", "qualify_start", "refresh_routes"]
+        "podkop_bot_bearhole": ["start", "set_enabled", "set_port", "set_proxy", "qualify_start", "refresh_routes"],
+        "podkop_bot_tailscale": ["create", "set_enabled", "set_advertise_exit_node", "delete"]
       },
       "uci": ["podkop_bot", "podkop_bearhole"]
     }

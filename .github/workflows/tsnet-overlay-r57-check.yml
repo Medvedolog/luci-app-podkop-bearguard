@@ -1,0 +1,21 @@
+name: tsnet-overlay-r57-check
+on:
+  push:
+    branches: [dev/0.19.18-tailscale-multiprovider]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate overlay
+        run: |
+          set -eu
+          sh -n root/usr/lib/podkop_bot/tsnet-overlay-watch.sh
+          sh -n root/usr/lib/podkop_bot/tsnet-provider.sh
+          sh -n root/usr/libexec/rpcd/podkop_bot_tailscale
+          ! grep -F 'sing-box check' root/usr/lib/podkop_bot/tsnet-overlay-watch.sh
+          grep -F "stat -c '%i:%Y:%s'" root/usr/lib/podkop_bot/tsnet-overlay-watch.sh
+          grep -F '/var/run/forkop.reload.lock' root/usr/lib/podkop_bot/tsnet-overlay-watch.sh
+          grep -F 'PKG_RELEASE:=57' Makefile

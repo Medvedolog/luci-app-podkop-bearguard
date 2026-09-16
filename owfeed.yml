@@ -31,7 +31,7 @@ packages:
     version-from: file:./dist/VERSION
     files: ./dist/root
 
-    description: "LuCI web interface for full life-cycle management of podkop_bot on OpenWrt, with resilient proxy fallback, WARP Rescue and Bearhole multi-proxies rescue bootstrap."
+    description: "LuCI control panel and Telegram-bot integration for Podkop, Forkop and Forkop X on OpenWrt, with resilient proxy fallback, built-in sing-box Tailscale/tsnet multiprovider support, WARP Rescue, Warpscout and Bearhole multi-proxy rescue bootstrap."
     # Bearhole engine modules are intentionally not hard dependencies. A broken
     # feed must never block installation/repair of luci-app-podkop-bot itself;
     # RPC/LuCI gate the Bearhole switch until the optional engine is available.

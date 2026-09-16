@@ -126,7 +126,7 @@ tsnet_state_get() {
 }
 
 tsnet_state_write() {
-    _enabled="$1"; _host="$2"; _url="$3"; _key="$4"; _adv="$5"
+    _enabled="$1"; _host="$2"; _url="$3"; _key="$4"; _adv="$5"; _accept="${6:-false}"
     mkdir -p "$TSNET_STATE_DIR" "$TSNET_IDENTITY_DIR" || return 1
     umask 077
     _tmp="$TSNET_STATE_FILE.$$"
@@ -137,9 +137,10 @@ tsnet_state_write() {
         --arg control_url "$_url" \
         --arg auth_key "$_key" \
         --argjson advertise_exit_node "$_adv" \
+        --argjson accept_routes "$_accept" \
         --arg tag "$TSNET_ENDPOINT_TAG" \
         --arg state_directory "$TSNET_IDENTITY_DIR" \
-        '{provider:$provider,enabled:$enabled,hostname:$hostname,control_url:$control_url,auth_key:$auth_key,advertise_exit_node:$advertise_exit_node,tag:$tag,state_directory:$state_directory}' > "$_tmp" || { rm -f "$_tmp"; return 1; }
+        '{provider:$provider,enabled:$enabled,hostname:$hostname,control_url:$control_url,auth_key:$auth_key,accept_routes:$accept_routes,advertise_exit_node:$advertise_exit_node,tag:$tag,state_directory:$state_directory}' > "$_tmp" || { rm -f "$_tmp"; return 1; }
     chmod 600 "$_tmp" 2>/dev/null || true
     mv -f "$_tmp" "$TSNET_STATE_FILE"
 }

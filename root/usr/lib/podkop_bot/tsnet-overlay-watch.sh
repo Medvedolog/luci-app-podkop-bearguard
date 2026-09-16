@@ -58,6 +58,8 @@ render_endpoint() {
     _url=$(tsnet_state_get control_url)
     _key=$(tsnet_state_get auth_key)
     _adv=$(tsnet_state_get advertise_exit_node)
+    _accept=$(tsnet_state_get accept_routes)
+    [ "$_accept" = true ] || _accept=false
     _state=$(tsnet_state_get state_directory)
     [ -n "$_state" ] || _state="$TSNET_IDENTITY_DIR"
 
@@ -68,7 +70,8 @@ render_endpoint() {
         --arg auth_key "$_key" \
         --arg state_directory "$_state" \
         --argjson advertise_exit_node "${_adv:-false}" \
-        '{type:"tailscale",tag:$tag,state_directory:$state_directory}
+        --argjson accept_routes "${_accept:-false}" \
+        '{type:"tailscale",tag:$tag,state_directory:$state_directory,accept_routes:$accept_routes}
          + (if $hostname != "" then {hostname:$hostname} else {} end)
          + (if $control_url != "" then {control_url:$control_url} else {} end)
          + (if $auth_key != "" then {auth_key:$auth_key} else {} end)

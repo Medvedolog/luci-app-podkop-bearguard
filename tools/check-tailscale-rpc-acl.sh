@@ -44,7 +44,7 @@ if missing_backend:
 if missing_frontend_acl:
     errors.append(f'Tailscale frontend methods missing from ACL: {sorted(missing_frontend_acl)}')
 
-required = {'status', 'create', 'set_enabled', 'set_advertise_exit_node', 'set_accept_routes', 'delete'}
+required = {'status', 'create', 'set_enabled', 'set_advertise_exit_node', 'set_accept_routes', 'reapply', 'delete'}
 missing_required = required - listed
 if missing_required:
     errors.append(f'Tailscale required RPC methods missing: {sorted(missing_required)}')

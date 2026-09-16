@@ -17,13 +17,24 @@ uci -q get podkop_bearhole.main.auth_enabled >/dev/null 2>&1 || uci -q set podko
 uci -q commit podkop_bearhole >/dev/null 2>&1 || true
 rm -f /tmp/podkop_bearhole.preupgrade /etc/config/podkop_bearhole-opkg 2>/dev/null || true
 
+# 0.19.19 development builds briefly shipped a persistent tsnet overlay watcher.
+# It is deliberately retired: Podkop/Forkop keep lifecycle ownership and tsnet
+# runtime changes are now explicit one-shot operations only.
+if [ -x /etc/init.d/podkop-tsnet-overlay ]; then
+	/etc/init.d/podkop-tsnet-overlay stop >/dev/null 2>&1 || true
+	/etc/init.d/podkop-tsnet-overlay disable >/dev/null 2>&1 || true
+fi
+rm -f /etc/rc.d/*podkop-tsnet-overlay /etc/init.d/podkop-tsnet-overlay /usr/lib/podkop_bot/tsnet-overlay-watch.sh 2>/dev/null || true
+
 for _f in \
 	/usr/libexec/rpcd/podkop_bot \
 	/usr/libexec/rpcd/podkop_bot_bearhole \
+	/usr/libexec/rpcd/podkop_bot_tailscale \
 	/usr/lib/podkop_bot/install.sh \
 	/usr/lib/podkop_bot/podkop_bot \
 	/usr/lib/podkop_bot/podkop_bot_init \
 	/usr/lib/podkop_bot/bearhole.sh \
+	/usr/lib/podkop_bot/tsnet-runtime-apply.sh \
 	/usr/lib/podkop_bot/warpscout-rescue-watchdog \
 	/etc/init.d/podkop-bearhole \
 	/etc/init.d/podkop-warp-rescue

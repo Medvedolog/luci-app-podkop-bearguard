@@ -2,6 +2,12 @@
 
 . /usr/lib/podkop_bot/tsnet-provider.sh
 
+RESTART_GUARD_DIR=/tmp/podkop_bot
+RESTART_GUARD_HISTORY="$RESTART_GUARD_DIR/tsnet-overlay.restart-history"
+RESTART_GUARD_LATCH="$RESTART_GUARD_DIR/tsnet-overlay.circuit-open"
+RESTART_GUARD_WINDOW=45
+RESTART_GUARD_LIMIT=1
+
 log() { logger -t podkop-bot-tsnet "$*"; }
 
 endpoint_enabled() {
@@ -22,6 +28,43 @@ config_sig() {
         return 0
     fi
     ls -idln "$_p" 2>/dev/null | awk '{print $1 ":" $5 ":" $6 ":" $7 ":" $8}'
+}
+
+restart_guard_reset() {
+    mkdir -p "$RESTART_GUARD_DIR" 2>/dev/null || true
+    rm -f "$RESTART_GUARD_HISTORY" "$RESTART_GUARD_LATCH" 2>/dev/null || true
+}
+
+restart_guard_prune() {
+    mkdir -p "$RESTART_GUARD_DIR" 2>/dev/null || true
+    [ -s "$RESTART_GUARD_HISTORY" ] || return 0
+    _now=$(date +%s 2>/dev/null || echo 0)
+    _tmp="$RESTART_GUARD_HISTORY.$$"
+    awk -v now="$_now" -v win="$RESTART_GUARD_WINDOW" '
+        $1 ~ /^[0-9]+$/ && now >= $1 && (now - $1) < win { print $1 }
+    ' "$RESTART_GUARD_HISTORY" >"$_tmp" 2>/dev/null || : >"$_tmp"
+    mv -f "$_tmp" "$RESTART_GUARD_HISTORY" 2>/dev/null || rm -f "$_tmp"
+}
+
+restart_guard_allow() {
+    [ -e "$RESTART_GUARD_LATCH" ] && return 1
+    restart_guard_prune
+    _n=$(wc -l <"$RESTART_GUARD_HISTORY" 2>/dev/null | tr -d ' ')
+    case "$_n" in ''|*[!0-9]*) _n=0;; esac
+    if [ "$_n" -ge "$RESTART_GUARD_LIMIT" ] 2>/dev/null; then
+        : >"$RESTART_GUARD_LATCH"
+        chmod 600 "$RESTART_GUARD_LATCH" 2>/dev/null || true
+        log "event=overlay_restart_circuit_open provider=$(tsnet_provider) window=${RESTART_GUARD_WINDOW}s limit=$RESTART_GUARD_LIMIT"
+        return 1
+    fi
+    return 0
+}
+
+restart_guard_note() {
+    mkdir -p "$RESTART_GUARD_DIR" 2>/dev/null || true
+    date +%s >>"$RESTART_GUARD_HISTORY" 2>/dev/null || return 1
+    chmod 600 "$RESTART_GUARD_HISTORY" 2>/dev/null || true
+    return 0
 }
 
 # Do not fight the provider while it owns the sing-box lifecycle.
@@ -140,6 +183,20 @@ apply_overlay() {
         return 0
     fi
 
+    # Circuit breaker: a provider may regenerate its config as a consequence of
+    # our restart (observed with Forkop X). Without this guard the watcher sees
+    # the regenerated file, injects the endpoint again, restarts sing-box again,
+    # and can loop indefinitely. One explicit/automatic restart is enough. If a
+    # second restart is requested inside the guard window, keep the valid overlay
+    # on disk but leave lifecycle ownership to the provider. The latch remains
+    # open until an explicit --once operation resets it.
+    if ! restart_guard_allow; then
+        rm -f "$_bak"
+        log "event=overlay_applied restart=suppressed reason=circuit_open provider=$(tsnet_provider) enabled=$(tsnet_state_get enabled)"
+        return 0
+    fi
+    restart_guard_note || true
+
     # A normal init.d restart is sequential: the existing process is stopped
     # before the new one is started, so this does not create a second sing-box
     # in parallel like `sing-box check` did.
@@ -163,8 +220,12 @@ apply_overlay() {
     return 1
 }
 
-# One-shot mode is used by rpcd for immediate apply/remove.
+# One-shot mode is an explicit rpcd operation (create/toggle/update). Reset the
+# circuit here so one deliberate apply may restart sing-box. The long-running
+# watcher never resets it, which prevents provider feedback from becoming a
+# restart storm.
 if [ "$1" = "--once" ]; then
+    restart_guard_reset
     apply_overlay
     exit $?
 fi

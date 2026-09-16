@@ -1,8 +1,29 @@
 # Development changelog — 0.19.18
 
-Branch: `dev/0.19.18-warpscout-luci`
+Branch: `dev/0.19.18-tailscale-luci`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.18 is promoted.
+
+## 0.19.18-r55 — Tailscale / tsnet standalone conflict preflight
+
+### Tailscale / Forkop
+
+- Added LuCI management for the same Forkop `config server` / `protocol=tailscale` UCI entity already used by the Telegram bot, so both interfaces operate on one endpoint instead of maintaining parallel state.
+- Before creating or enabling sing-box `tsnet`, LuCI and the Telegram bot now detect a classic standalone Tailscale installation and whether `tailscaled` is currently running.
+- An installed but stopped standalone Tailscale is reported as information only. A running standalone daemon triggers an explicit warning and requires a one-time confirmation before the second Tailscale node may be created or enabled.
+- The backend repeats the running-daemon check at mutation time; the LuCI browser warning is not the only safety gate, so a daemon started after page load still cannot silently bypass confirmation.
+- Creation remains config-only and disabled. Enabling the endpoint is a separate action and performs the conflict check again immediately before the Forkop/sing-box restart.
+- No standalone Tailscale service is stopped, disabled, reconfigured or removed automatically.
+
+### Telegram bot synchronization
+
+- Standalone source branch: `Medvedolog/podkop_bot`, `dev/0.19.18-tailscale-preflight`, commit `90771c26e1c56c37f6c4a54a8b461baa0eedd715`.
+- The vendored bot is synchronized byte-for-byte with standalone and keeps the existing Forkop/Tailscale wizard, UCI contract and one-managed-endpoint behavior.
+- Standalone patch validation includes `sh -n` before commit; the LuCI synchronization validates the downloaded bot again before replacing the vendored copy.
+
+### Packaging
+
+- Package revision bumped to **0.19.18-r55** because both the LuCI Tailscale control path and the vendored bot changed.
 
 ## 0.19.18-r17 — bot pending-state navigation regression fix
 

@@ -5,8 +5,7 @@
 
 UCI_PKG="forkop"
 FORKOP_INIT="/etc/init.d/forkop"
-OVERLAY_INIT="/etc/init.d/podkop-tsnet-overlay"
-OVERLAY_HELPER="/usr/lib/podkop_bot/tsnet-overlay-watch.sh"
+RUNTIME_APPLY="/usr/lib/podkop_bot/tsnet-runtime-apply.sh"
 LOCK="/tmp/podkop_uci.lock"
 NATIVE_STATE_BASE="/etc/forkop/tailscale"
 
@@ -48,10 +47,6 @@ valid_hostname() {
 native_find_section() {
     uci -q show "$UCI_PKG" 2>/dev/null | sed -n "s/^${UCI_PKG}\.\([^.=]*\)\.protocol='tailscale'$/\1/p" | head -n 1
 }
-legacy_native_section() {
-    [ "$(tsnet_provider)" != forkop-native ] || return 1
-    native_find_section
-}
 native_gen_section() {
     _i=1
     while [ "$_i" -lt 100 ]; do
@@ -64,6 +59,11 @@ native_gen_section() {
 native_restart() { [ -x "$FORKOP_INIT" ] && "$FORKOP_INIT" restart >/dev/null 2>&1; }
 native_backup() { _b="/tmp/forkop.tailscale.$$.bak"; cp -p /etc/config/forkop "$_b" 2>/dev/null || : >"$_b"; printf '%s' "$_b"; }
 native_restore() { [ -f "$1" ] || return 1; cp -p "$1" /etc/config/forkop 2>/dev/null || return 1; rm -f "$1"; uci -q revert forkop >/dev/null 2>&1 || true; }
+
+runtime_apply() {
+    [ -x "$RUNTIME_APPLY" ] || return 1
+    "$RUNTIME_APPLY" >/dev/null 2>&1
+}
 
 auth_url() {
     _auth=$(logread 2>/dev/null | grep -F 'Waiting for authentication:' | tail -n 1 | sed 's/.*Waiting for authentication:[[:space:]]*//')
@@ -93,7 +93,8 @@ status_json() {
     _sp=false; standalone_tailscale_present && _sp=true
     _sr=false; standalone_tailscale_running && _sr=true
     _ver=$(tsnet_version_hint)
-    _configured=false; _enabled=false; _registered=false; _host=''; _url=''; _adv=false; _accept=false; _section=''; _integration=overlay
+    _configured=false; _enabled=false; _registered=false; _host=''; _url=''; _adv=false; _accept=false; _section=''
+    _integration=runtime
     _legacy_present=false; _legacy_section=''; _legacy_enabled=false; _legacy_host=''; _legacy_url=''
 
     if [ "$_provider" = forkop-native ]; then
@@ -130,14 +131,15 @@ status_json() {
     _sb=false; singbox_running && _sb=true
     _applied=false
     if [ "$_configured" = true ]; then
-        if [ "$_integration" = overlay ]; then runtime_endpoint_applied "$TSNET_ENDPOINT_TAG" && _applied=true
+        if [ "$_integration" = runtime ]; then runtime_endpoint_applied "$TSNET_ENDPOINT_TAG" && _applied=true
         else runtime_endpoint_applied "" && _applied=true; fi
     fi
+
     _active=0; _peers='[]'
     if [ "$_enabled" = true ] && [ "$_sb" = true ]; then
         _cj=$(clash_connections 2>/dev/null || true)
         if [ -n "$_cj" ]; then
-            if [ "$_integration" = overlay ]; then
+            if [ "$_integration" = runtime ]; then
                 _match="tailscale/$TSNET_ENDPOINT_TAG"
                 _active=$(printf '%s' "$_cj" | jq -r --arg t "$_match" '[.connections[]? | select(.metadata.type==$t)] | length' 2>/dev/null || echo 0)
                 _peers=$(printf '%s' "$_cj" | jq -c --arg t "$_match" '[.connections[]? | select(.metadata.type==$t) | .metadata.sourceIP] | map(select(. != "")) | unique' 2>/dev/null || echo '[]')
@@ -148,6 +150,7 @@ status_json() {
         fi
     fi
     case "$_active" in ''|*[!0-9]*) _active=0 ;; esac
+
     if [ "$_configured" != true ]; then _runtime_state=unconfigured
     elif [ "$_enabled" != true ]; then _runtime_state=disabled
     elif [ "$_sb" != true ]; then _runtime_state=failed
@@ -187,7 +190,14 @@ method_create() {
     tsnet_capable || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }
     standalone_guard || return
     parse_create_fields; _rc=$?
-    case $_rc in 1) printf '{"ok":false,"reason":"bad_control_url"}\n'; return ;; 2) printf '{"ok":false,"reason":"bad_hostname"}\n'; return ;; 3) printf '{"ok":false,"reason":"auth_key_required"}\n'; return ;; 4) printf '{"ok":false,"reason":"bad_auth_key"}\n'; return ;; 5) printf '{"ok":false,"reason":"bad_advertise_value"}\n'; return ;; 6) printf '{"ok":false,"reason":"bad_accept_routes_value"}\n'; return ;; esac
+    case $_rc in
+        1) printf '{"ok":false,"reason":"bad_control_url"}\n'; return ;;
+        2) printf '{"ok":false,"reason":"bad_hostname"}\n'; return ;;
+        3) printf '{"ok":false,"reason":"auth_key_required"}\n'; return ;;
+        4) printf '{"ok":false,"reason":"bad_auth_key"}\n'; return ;;
+        5) printf '{"ok":false,"reason":"bad_advertise_value"}\n'; return ;;
+        6) printf '{"ok":false,"reason":"bad_accept_routes_value"}\n'; return ;;
+    esac
 
     if [ "$_provider" = forkop-native ]; then
         [ -z "$(native_find_section)" ] || { printf '{"ok":false,"reason":"already_configured"}\n'; return; }
@@ -217,19 +227,22 @@ method_create() {
     jq -cn --arg provider "$_provider" --arg section "$TSNET_ENDPOINT_TAG" '{ok:true,provider:$provider,section:$section,enabled:false}'
 }
 
-overlay_apply() { [ -x "$OVERLAY_HELPER" ] && "$OVERLAY_HELPER" --once >/dev/null 2>&1; }
-overlay_service_start() { [ -x "$OVERLAY_INIT" ] || return 1; "$OVERLAY_INIT" enable >/dev/null 2>&1 || true; "$OVERLAY_INIT" restart >/dev/null 2>&1 || true; }
-overlay_service_stop() { [ -x "$OVERLAY_INIT" ] || return 0; "$OVERLAY_INIT" stop >/dev/null 2>&1 || true; "$OVERLAY_INIT" disable >/dev/null 2>&1 || true; }
-
 method_set_enabled() {
     json_in; _provider=$(tsnet_provider); _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
-    case "$_v" in true|1) _want=true; tsnet_capable || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }; standalone_guard || return ;; false|0) _want=false ;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return ;; esac
+    case "$_v" in
+        true|1) _want=true; tsnet_capable || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }; standalone_guard || return ;;
+        false|0) _want=false ;;
+        *) printf '{"ok":false,"reason":"bad_value"}\n'; return ;;
+    esac
 
     if [ "$_provider" = forkop-native ]; then
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
         _vi=0; [ "$_want" = true ] && _vi=1
         lock_begin; _bak=$(native_backup)
-        if ! uci -q set "forkop.${_sec}.enabled=$_vi" || ! uci -q commit forkop || ! native_restart; then native_restore "$_bak" >/dev/null 2>&1 || true; native_restart >/dev/null 2>&1 || true; lock_end; printf '{"ok":false,"reason":"restart_failed","rolled_back":true}\n'; return; fi
+        if ! uci -q set "forkop.${_sec}.enabled=$_vi" || ! uci -q commit forkop || ! native_restart; then
+            native_restore "$_bak" >/dev/null 2>&1 || true; native_restart >/dev/null 2>&1 || true; lock_end
+            printf '{"ok":false,"reason":"restart_failed","rolled_back":true}\n'; return
+        fi
         rm -f "$_bak"; lock_end
         jq -cn --argjson enabled "$_want" '{ok:true,enabled:$enabled}'
         return
@@ -237,14 +250,11 @@ method_set_enabled() {
 
     [ -r "$TSNET_STATE_FILE" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
     tsnet_state_set_enabled "$_want" || { printf '{"ok":false,"reason":"state_write_failed"}\n'; return; }
-    if [ "$_want" = true ]; then
-        overlay_apply || true
-        overlay_service_start || true
-    else
-        overlay_service_stop
-        overlay_apply || true
+    if ! runtime_apply; then
+        tsnet_state_set_enabled "$([ "$_want" = true ] && echo false || echo true)" >/dev/null 2>&1 || true
+        printf '{"ok":false,"reason":"runtime_apply_failed"}\n'; return
     fi
-    jq -cn --argjson enabled "$_want" --arg provider "$_provider" '{ok:true,provider:$provider,enabled:$enabled,fail_open:true}'
+    jq -cn --argjson enabled "$_want" --arg provider "$_provider" '{ok:true,provider:$provider,enabled:$enabled,volatile_runtime:true}'
 }
 
 method_set_accept_routes() {
@@ -257,8 +267,13 @@ method_set_accept_routes() {
         [ "$(uci -q get forkop.${_sec}.enabled 2>/dev/null)" = 1 ] && native_restart >/dev/null 2>&1 || true
     else
         [ -r "$TSNET_STATE_FILE" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
-        _tmp="$TSNET_STATE_FILE.$$"; jq --argjson v "$_want" '.accept_routes=$v' "$TSNET_STATE_FILE" >"$_tmp" && chmod 600 "$_tmp" && mv -f "$_tmp" "$TSNET_STATE_FILE" || { rm -f "$_tmp"; printf '{"ok":false,"reason":"state_write_failed"}\n'; return; }
-        [ "$(tsnet_state_get enabled)" = true ] && overlay_apply >/dev/null 2>&1 || true
+        _old=$(tsnet_state_get accept_routes); [ "$_old" = true ] || _old=false
+        _tmp="$TSNET_STATE_FILE.$$"
+        jq --argjson v "$_want" '.accept_routes=$v' "$TSNET_STATE_FILE" >"$_tmp" && chmod 600 "$_tmp" && mv -f "$_tmp" "$TSNET_STATE_FILE" || { rm -f "$_tmp"; printf '{"ok":false,"reason":"state_write_failed"}\n'; return; }
+        if [ "$(tsnet_state_get enabled)" = true ] && ! runtime_apply; then
+            _tmp="$TSNET_STATE_FILE.$$"; jq --argjson v "$_old" '.accept_routes=$v' "$TSNET_STATE_FILE" >"$_tmp" && chmod 600 "$_tmp" && mv -f "$_tmp" "$TSNET_STATE_FILE" >/dev/null 2>&1 || true
+            printf '{"ok":false,"reason":"runtime_apply_failed"}\n'; return
+        fi
     fi
     jq -cn --argjson accept_routes "$_want" '{ok:true,accept_routes:$accept_routes}'
 }
@@ -273,8 +288,13 @@ method_set_advertise() {
         [ "$(uci -q get forkop.${_sec}.enabled 2>/dev/null)" = 1 ] && native_restart >/dev/null 2>&1 || true
     else
         [ -r "$TSNET_STATE_FILE" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
-        _tmp="$TSNET_STATE_FILE.$$"; jq --argjson v "$_want" '.advertise_exit_node=$v' "$TSNET_STATE_FILE" >"$_tmp" && chmod 600 "$_tmp" && mv -f "$_tmp" "$TSNET_STATE_FILE" || { rm -f "$_tmp"; printf '{"ok":false,"reason":"state_write_failed"}\n'; return; }
-        [ "$(tsnet_state_get enabled)" = true ] && overlay_apply >/dev/null 2>&1 || true
+        _old=$(tsnet_state_get advertise_exit_node); [ "$_old" = true ] || _old=false
+        _tmp="$TSNET_STATE_FILE.$$"
+        jq --argjson v "$_want" '.advertise_exit_node=$v' "$TSNET_STATE_FILE" >"$_tmp" && chmod 600 "$_tmp" && mv -f "$_tmp" "$TSNET_STATE_FILE" || { rm -f "$_tmp"; printf '{"ok":false,"reason":"state_write_failed"}\n'; return; }
+        if [ "$(tsnet_state_get enabled)" = true ] && ! runtime_apply; then
+            _tmp="$TSNET_STATE_FILE.$$"; jq --argjson v "$_old" '.advertise_exit_node=$v' "$TSNET_STATE_FILE" >"$_tmp" && chmod 600 "$_tmp" && mv -f "$_tmp" "$TSNET_STATE_FILE" >/dev/null 2>&1 || true
+            printf '{"ok":false,"reason":"runtime_apply_failed"}\n'; return
+        fi
     fi
     jq -cn --argjson advertise_exit_node "$_want" '{ok:true,advertise_exit_node:$advertise_exit_node}'
 }
@@ -285,10 +305,6 @@ method_delete() {
     case "$_purge" in true|1) _purge=true ;; *) _purge=false ;; esac
     case "$_legacy" in true|1) _legacy=true ;; *) _legacy=false ;; esac
 
-    # Migration cleanup: a native Forkop `config server` may survive a switch to
-    # Forkop X. Forkop X cannot service that section. Delete it as inert UCI only:
-    # never restart Forkop/sing-box, because doing so can disrupt the active X
-    # dataplane for an object it does not understand.
     if [ "$_legacy" = true ]; then
         [ "$_provider" != forkop-native ] || { printf '{"ok":false,"reason":"legacy_delete_not_allowed_on_native"}\n'; return; }
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
@@ -306,14 +322,20 @@ method_delete() {
     if [ "$_provider" = forkop-native ]; then
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
         lock_begin; _bak=$(native_backup); _was=$(uci -q get "forkop.${_sec}.enabled" 2>/dev/null)
-        if [ "$_was" = 1 ]; then uci -q set "forkop.${_sec}.enabled=0" && uci -q commit forkop && native_restart || { native_restore "$_bak" >/dev/null 2>&1 || true; lock_end; printf '{"ok":false,"reason":"disable_failed","rolled_back":true}\n'; return; }; fi
+        if [ "$_was" = 1 ]; then
+            uci -q set "forkop.${_sec}.enabled=0" && uci -q commit forkop && native_restart || { native_restore "$_bak" >/dev/null 2>&1 || true; lock_end; printf '{"ok":false,"reason":"disable_failed","rolled_back":true}\n'; return; }
+        fi
         uci -q delete "forkop.${_sec}" && uci -q commit forkop || { native_restore "$_bak" >/dev/null 2>&1 || true; lock_end; printf '{"ok":false,"reason":"uci_write_failed","rolled_back":true}\n'; return; }
         rm -f "$_bak"; lock_end
         [ "$_purge" = true ] && rm -rf "${NATIVE_STATE_BASE:?}/${_sec}" 2>/dev/null || true
     else
         [ -r "$TSNET_STATE_FILE" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
+        _was_enabled=$(tsnet_state_get enabled); [ "$_was_enabled" = true ] || _was_enabled=false
         tsnet_state_set_enabled false >/dev/null 2>&1 || true
-        overlay_service_stop; overlay_apply >/dev/null 2>&1 || true
+        if ! runtime_apply; then
+            tsnet_state_set_enabled "$_was_enabled" >/dev/null 2>&1 || true
+            printf '{"ok":false,"reason":"runtime_apply_failed"}\n'; return
+        fi
         rm -f "$TSNET_STATE_FILE"
         [ "$_purge" = true ] && rm -rf "$TSNET_IDENTITY_DIR" 2>/dev/null || true
     fi

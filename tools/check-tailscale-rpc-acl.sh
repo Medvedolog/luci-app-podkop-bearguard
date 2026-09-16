@@ -17,11 +17,11 @@ rpc = rpc_path.read_text()
 js = js_path.read_text()
 acl = json.loads(acl_path.read_text())['luci-app-podkop-bot']
 
-# rpcd shell backend advertises methods from its list action.
+# rpcd shell backend advertises methods from its list action; api_version is metadata.
 m = re.search(r"list\)\s*echo '(\{.*?\})'", rpc, re.S)
 if not m:
     raise SystemExit('Tailscale RPC list JSON not found')
-listed = set(json.loads(m.group(1)))
+listed = set(json.loads(m.group(1))) - {'api_version'}
 
 allowed = set(acl['read']['ubus'].get('podkop_bot_tailscale', []))
 allowed |= set(acl['write']['ubus'].get('podkop_bot_tailscale', []))

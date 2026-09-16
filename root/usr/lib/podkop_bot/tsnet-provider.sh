@@ -22,7 +22,8 @@ _ts_pkg_installed() {
 
 tsnet_provider() {
     if [ -f /etc/config/forkop ]; then
-        if [ -r /usr/lib/forkop/singbox/servers.uc ]; then
+        # Upstream/full Forkop ships the native server generator here.
+        if [ -r /usr/lib/singbox/servers.uc ]; then
             printf '%s\n' forkop-native
         else
             printf '%s\n' forkop-x
@@ -37,23 +38,35 @@ tsnet_provider() {
 }
 
 tsnet_config_path() {
-    case "$(tsnet_provider)" in
+    _provider=$(tsnet_provider)
+
+    # Prefer the actual sing-box service conffile when a package exposes it.
+    _p=$(uci -q get sing-box.main.conffile 2>/dev/null)
+    if [ -n "$_p" ]; then
+        printf '%s\n' "$_p"
+        return 0
+    fi
+
+    case "$_provider" in
         podkop)
             _p=$(uci -q get podkop.settings.config_path 2>/dev/null)
             [ -n "$_p" ] || _p=/etc/sing-box/config.json
-            printf '%s\n' "$_p"
             ;;
         forkop-x)
             _p=$(uci -q get forkop.settings.config_path 2>/dev/null)
             if [ -z "$_p" ]; then
-                [ -f /tmp/sing-box/config.json ] && _p=/tmp/sing-box/config.json || _p=/etc/sing-box/config.json
+                if [ -f /tmp/sing-box/config.json ]; then
+                    _p=/tmp/sing-box/config.json
+                else
+                    _p=/etc/sing-box/config.json
+                fi
             fi
-            printf '%s\n' "$_p"
             ;;
         *)
-            printf '%s\n' /etc/sing-box/config.json
+            _p=/etc/sing-box/config.json
             ;;
     esac
+    printf '%s\n' "$_p"
 }
 
 tsnet_capable() {
@@ -86,6 +99,18 @@ tsnet_capable() {
     fi
     printf '%s 0\n' "$_key" > "$TSNET_CAP_CACHE"
     return 1
+}
+
+tsnet_version_hint() {
+    # Never spawn sing-box just to paint a status page.
+    [ -r /etc/forkop/sing-box-version ] && { head -n 1 /etc/forkop/sing-box-version; return 0; }
+    if command -v apk >/dev/null 2>&1; then
+        apk info -v sing-box 2>/dev/null | head -n 1
+        return 0
+    fi
+    if command -v opkg >/dev/null 2>&1; then
+        opkg status sing-box 2>/dev/null | sed -n 's/^Version: /sing-box /p' | head -n 1
+    fi
 }
 
 tsnet_state_get() {

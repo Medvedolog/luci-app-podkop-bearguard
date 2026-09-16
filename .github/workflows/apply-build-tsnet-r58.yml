@@ -1,0 +1,67 @@
+name: apply-build-tsnet-r58
+
+on:
+  push:
+    branches: [dev/0.19.18-tailscale-multiprovider]
+    paths: ['.github/workflows/apply-build-tsnet-r58.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: dev/0.19.18-tailscale-multiprovider
+      - uses: owfeed/owfeed/setup@v0.5.1
+        with:
+          version: v0.5.1
+      - name: Apply r58 source patch
+        run: |
+          set -eu
+          git apply --check .github/patches/tsnet-r58.patch
+          git apply .github/patches/tsnet-r58.patch
+      - name: Sync standalone bot
+        run: |
+          set -eu
+          curl -fsSL 'https://raw.githubusercontent.com/Medvedolog/podkop_bot/dev/0.19.18-tailscale-multiprovider/podkop_bot.sh' -o root/usr/lib/podkop_bot/podkop_bot
+          chmod 0755 root/usr/lib/podkop_bot/podkop_bot
+          (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
+      - name: Validate r58
+        run: |
+          set -eu
+          sh -n root/usr/lib/podkop_bot/podkop_bot
+          sh -n root/usr/lib/podkop_bot/tsnet-provider.sh
+          sh -n root/usr/libexec/rpcd/podkop_bot_tailscale
+          ! grep -E '^[[:space:]]*sing-box[[:space:]]+version' root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/tsnet-provider.sh
+          grep -Fq "LC_ALL=C grep -aFq 'with_tailscale'" root/usr/lib/podkop_bot/tsnet-provider.sh
+          grep -Fq 'legacy_native_present' root/usr/libexec/rpcd/podkop_bot_tailscale
+          grep -Fq 'ts_ldc_' root/usr/lib/podkop_bot/podkop_bot
+          grep -q '^PKG_RELEASE:=58$' Makefile
+          sh tools/check-sources.sh
+      - name: Commit r58 sources
+        run: |
+          set -eu
+          git config user.name medvedolog
+          git config user.email tenkayyy8@gmail.com
+          git add Makefile root/usr/lib/podkop_bot/tsnet-provider.sh root/usr/libexec/rpcd/podkop_bot_tailscale root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/vendor.sha256
+          git commit -m 'fix: clean legacy native Tailscale on Forkop X'
+          git push origin HEAD:dev/0.19.18-tailscale-multiprovider
+      - name: Build packages
+        run: |
+          set -eu
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          ./tools/stage.sh
+          owfeed plan
+          owfeed build
+          sh tools/check-package.sh
+          test -n "$(find dist/all -maxdepth 1 -type f -name 'luci-app-podkop-bot_*.ipk' -print -quit)"
+          test -n "$(find dist/noarch -maxdepth 1 -type f -name 'luci-app-podkop-bot-*.apk' -print -quit)"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: luci-app-podkop-bot-0.19.18-r58
+          path: dist/
+          if-no-files-found: error

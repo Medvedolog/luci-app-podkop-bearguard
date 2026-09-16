@@ -6,8 +6,8 @@ BOT="root/usr/lib/podkop_bot/podkop_bot"
 [ -f "$BOT" ] || { echo "bot transport: source missing" >&2; exit 1; }
 sh -n "$BOT"
 
-grep -Fq 'BOT_VERSION="0.19.18"' "$BOT" || {
-    echo "bot transport: expected 0.19.18 vendor" >&2; exit 1;
+grep -Fq 'BOT_VERSION="0.19.19"' "$BOT" || {
+    echo "bot transport: expected 0.19.19 vendor" >&2; exit 1;
 }
 grep -Fq 'PODKOP_TRANSPORT_PATCH_V2' "$BOT" || {
     echo "bot transport: POLL/WARP transport generation marker missing" >&2; exit 1;

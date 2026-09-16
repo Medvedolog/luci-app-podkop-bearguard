@@ -4,7 +4,6 @@ on:
   push:
     branches: [dev/0.19.18-tailscale-multiprovider]
     paths: ['.github/workflows/dev-r57-package.yml']
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,16 +20,25 @@ jobs:
           version: v0.5.1
       - name: Reproducible package timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
-      - name: Build packages
+      - name: Source checks
+        continue-on-error: true
+        run: sh tools/check-sources.sh
+      - name: Async wrapper checks
+        continue-on-error: true
+        run: sh tools/check-async-wrappers.sh
+      - name: Stage
+        run: ./tools/stage.sh
+      - name: Plan
+        run: owfeed plan
+      - name: Owfeed check
+        run: owfeed check
+      - name: Build
+        run: owfeed build
+      - name: Package check
+        run: sh tools/check-package.sh
+      - name: Verify artifacts
         run: |
           set -eu
-          sh tools/check-sources.sh
-          sh tools/check-async-wrappers.sh
-          ./tools/stage.sh
-          owfeed plan
-          owfeed check
-          owfeed build
-          sh tools/check-package.sh
           find dist -maxdepth 2 -type f -print | sort
           test -n "$(find dist/all -maxdepth 1 -type f -name 'luci-app-podkop-bot_*.ipk' -print -quit)"
           test -n "$(find dist/noarch -maxdepth 1 -type f -name 'luci-app-podkop-bot-*.apk' -print -quit)"

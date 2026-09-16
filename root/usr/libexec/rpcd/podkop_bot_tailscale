@@ -29,6 +29,41 @@ singbox_supports_tailscale() {
     printf '%s' "$_v" | grep -q 'with_tailscale'
 }
 
+# Detect a classic standalone Tailscale installation. We intentionally detect
+# installation and liveness independently: an installed-but-stopped daemon is
+# informative, while a running daemon is a conflict that requires explicit
+# operator confirmation before creating or enabling sing-box tsnet.
+standalone_tailscale_present() {
+    [ -x /etc/init.d/tailscale ] || command -v tailscaled >/dev/null 2>&1 || command -v tailscale >/dev/null 2>&1
+}
+
+standalone_tailscale_running() {
+    if [ -x /etc/init.d/tailscale ]; then
+        /etc/init.d/tailscale running >/dev/null 2>&1 && return 0
+        /etc/init.d/tailscale status >/dev/null 2>&1 && return 0
+    fi
+    for _c in /proc/[0-9]*/cmdline; do
+        [ -r "$_c" ] || continue
+        _cl=$(tr '\0' ' ' <"$_c" 2>/dev/null) || continue
+        case "$_cl" in
+            *tailscaled*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+standalone_confirmed() {
+    _v=$(printf '%s' "$_IN" | jq -r '.confirm_standalone // false' 2>/dev/null)
+    case "$_v" in true|1) return 0 ;; *) return 1 ;; esac
+}
+
+standalone_guard() {
+    standalone_tailscale_running || return 0
+    standalone_confirmed && return 0
+    printf '{"ok":false,"reason":"standalone_tailscale_running","requires_confirmation":true}\n'
+    return 1
+}
+
 valid_url() {
     case "$1" in
         http://?*|https://?*) return 0 ;;
@@ -81,11 +116,14 @@ restore_cfg() {
 status_json() {
     _present=false; forkop_present && _present=true
     _cap=false; singbox_supports_tailscale && _cap=true
+    _standalone_present=false; standalone_tailscale_present && _standalone_present=true
+    _standalone_running=false; standalone_tailscale_running && _standalone_running=true
     _sec=$(find_section)
     _ver=$(sing-box version 2>/dev/null | head -n 1)
     if [ -z "$_sec" ]; then
         jq -cn --argjson present "$_present" --argjson cap "$_cap" --arg ver "$_ver" \
-            '{ok:true,forkop_present:$present,tailscale_supported:$cap,singbox_version:$ver,configured:false}'
+            --argjson standalone_present "$_standalone_present" --argjson standalone_running "$_standalone_running" \
+            '{ok:true,forkop_present:$present,tailscale_supported:$cap,singbox_version:$ver,configured:false,standalone_tailscale_present:$standalone_present,standalone_tailscale_running:$standalone_running}'
         return
     fi
     _en=$(uci -q get "${UCI_PKG}.${_sec}.enabled" 2>/dev/null); [ "$_en" = 1 ] && _enabled=true || _enabled=false
@@ -99,7 +137,8 @@ status_json() {
     jq -cn --argjson present "$_present" --argjson cap "$_cap" --arg ver "$_ver" \
         --arg sec "$_sec" --arg host "$_host" --arg url "$_url" --argjson enabled "$_enabled" \
         --argjson advertise "$_advertise" --argjson registered "$_registered" --arg auth_url "$_auth" \
-        '{ok:true,forkop_present:$present,tailscale_supported:$cap,singbox_version:$ver,configured:true,section:$sec,hostname:$host,control_url:$url,enabled:$enabled,advertise_exit_node:$advertise,registered:$registered,auth_url:$auth_url}'
+        --argjson standalone_present "$_standalone_present" --argjson standalone_running "$_standalone_running" \
+        '{ok:true,forkop_present:$present,tailscale_supported:$cap,singbox_version:$ver,configured:true,section:$sec,hostname:$host,control_url:$url,enabled:$enabled,advertise_exit_node:$advertise,registered:$registered,auth_url:$auth_url,standalone_tailscale_present:$standalone_present,standalone_tailscale_running:$standalone_running}'
 }
 
 method_create() {
@@ -107,6 +146,7 @@ method_create() {
     forkop_present || { printf '{"ok":false,"reason":"forkop_missing"}\n'; return; }
     singbox_supports_tailscale || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }
     [ -z "$(find_section)" ] || { printf '{"ok":false,"reason":"already_configured"}\n'; return; }
+    standalone_guard || return
     _url=$(printf '%s' "$_IN" | jq -r '.control_url // "https://controlplane.tailscale.com"')
     _key=$(printf '%s' "$_IN" | jq -r '.auth_key // ""')
     _host=$(printf '%s' "$_IN" | jq -r '.hostname // ""')
@@ -136,7 +176,7 @@ method_create() {
         printf '{"ok":false,"reason":"uci_write_failed"}\n'; return
     fi
     rm -f "$_bak"; lock_end
-    logger -t podkop-bot-rpcd "event=tailscale_create section=$_sec enabled=0"
+    logger -t podkop-bot-rpcd "event=tailscale_create section=$_sec enabled=0 standalone_confirmed=$([ "$_standalone_running" = true ] && echo 1 || echo 0)"
     jq -cn --arg section "$_sec" '{ok:true,section:$section,enabled:false}'
 }
 
@@ -144,7 +184,15 @@ method_set_enabled() {
     json_in
     _sec=$(find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
     _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
-    case "$_v" in true|1) _v=1; singbox_supports_tailscale || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; } ;; false|0) _v=0 ;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return ;; esac
+    case "$_v" in
+        true|1)
+            _v=1
+            singbox_supports_tailscale || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }
+            standalone_guard || return
+            ;;
+        false|0) _v=0 ;;
+        *) printf '{"ok":false,"reason":"bad_value"}\n'; return ;;
+    esac
     _old=$(uci -q get "${UCI_PKG}.${_sec}.enabled" 2>/dev/null); [ -n "$_old" ] || _old=0
     lock_begin; _bak=$(backup_cfg)
     if ! uci -q set "${UCI_PKG}.${_sec}.enabled=$_v" || ! uci -q commit "$UCI_PKG" || ! restart_forkop; then
@@ -203,7 +251,7 @@ method_delete() {
 
 case "$1" in
     list)
-        echo '{"status":{},"create":{"control_url":"","auth_key":"","hostname":"","advertise_exit_node":false},"set_enabled":{"enabled":false},"set_advertise_exit_node":{"enabled":false},"delete":{"purge_state":false}}'
+        echo '{"status":{},"create":{"control_url":"","auth_key":"","hostname":"","advertise_exit_node":false,"confirm_standalone":false},"set_enabled":{"enabled":false,"confirm_standalone":false},"set_advertise_exit_node":{"enabled":false},"delete":{"purge_state":false}}'
         ;;
     call)
         case "$2" in

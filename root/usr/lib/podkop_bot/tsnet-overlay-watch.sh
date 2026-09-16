@@ -13,6 +13,46 @@ config_has_endpoint() {
     jq -e --arg tag "$TSNET_ENDPOINT_TAG" '(.endpoints // []) | any(.tag == $tag and .type == "tailscale")' "$_cfg" >/dev/null 2>&1
 }
 
+config_sig() {
+    _p="$1"
+    [ -e "$_p" ] || return 1
+    _s=$(stat -c '%i:%Y:%s' "$_p" 2>/dev/null)
+    if [ -n "$_s" ]; then
+        printf '%s' "$_s"
+        return 0
+    fi
+    ls -idln "$_p" 2>/dev/null | awk '{print $1 ":" $5 ":" $6 ":" $7 ":" $8}'
+}
+
+# Do not fight the provider while it owns the sing-box lifecycle.
+# Forkop X exposes an explicit reload lock. Classic Podkop has no public lock,
+# so conservatively defer while its lifecycle script is executing.
+provider_busy() {
+    _provider=$(tsnet_provider)
+    case "$_provider" in
+        forkop-x)
+            [ -d /var/run/forkop.reload.lock ] && return 0
+            ;;
+        podkop)
+            for _c in /proc/[0-9]*/cmdline; do
+                [ -r "$_c" ] || continue
+                _cl=$(tr '\0' ' ' <"$_c" 2>/dev/null) || continue
+                case "$_cl" in
+                    *'/usr/bin/podkop '*|*'/usr/bin/podkop') return 0 ;;
+                esac
+            done
+            ;;
+    esac
+    return 1
+}
+
+singbox_running() {
+    if [ -x /etc/init.d/sing-box ]; then
+        /etc/init.d/sing-box running >/dev/null 2>&1 && return 0
+    fi
+    pidof sing-box >/dev/null 2>&1
+}
+
 render_endpoint() {
     _host=$(tsnet_state_get hostname)
     _url=$(tsnet_state_get control_url)
@@ -36,13 +76,19 @@ render_endpoint() {
 }
 
 apply_overlay() {
+    provider_busy && return 3
+
     _cfg=$(tsnet_config_path)
     [ -r "$_cfg" ] || return 2
     jq -e . "$_cfg" >/dev/null 2>&1 || return 2
 
+    # Snapshot the exact provider-generated revision we are about to transform.
+    # This signature is checked again immediately before the atomic swap.
+    _src_sig=$(config_sig "$_cfg") || return 2
     _endpoint=$(render_endpoint) || return 1
     _dir=${_cfg%/*}; [ "$_dir" = "$_cfg" ] && _dir=.
     _tmp="$_dir/.podkop-bot-tsnet.$$"
+    _bak="$_dir/.podkop-bot-tsnet.bak.$$"
 
     if endpoint_enabled; then
         jq --arg tag "$TSNET_ENDPOINT_TAG" --argjson ep "$_endpoint" \
@@ -54,29 +100,64 @@ apply_overlay() {
             "$_cfg" > "$_tmp" || { rm -f "$_tmp"; return 1; }
     fi
 
-    if command -v sing-box >/dev/null 2>&1; then
-        sing-box check -c "$_tmp" >/dev/null 2>&1 || {
-            rm -f "$_tmp"
-            log "event=overlay_rejected reason=singbox_check_failed provider=$(tsnet_provider)"
-            return 1
-        }
-    fi
+    # JSON validation is intentionally jq-only. Never spawn a second Go
+    # sing-box process on low-memory routers just to validate the overlay.
+    jq -e . "$_tmp" >/dev/null 2>&1 || { rm -f "$_tmp"; return 1; }
 
     if cmp -s "$_cfg" "$_tmp"; then
         rm -f "$_tmp"
         return 0
     fi
 
+    # CAS/TOCTOU guard: if Podkop/Forkop X regenerated the config while jq was
+    # building the overlay, discard our candidate instead of overwriting it.
+    _cur_sig=$(config_sig "$_cfg") || { rm -f "$_tmp"; return 2; }
+    if [ "$_cur_sig" != "$_src_sig" ] || provider_busy; then
+        rm -f "$_tmp"
+        log "event=overlay_deferred reason=provider_changed provider=$(tsnet_provider)"
+        return 3
+    fi
+
+    cp -p "$_cfg" "$_bak" 2>/dev/null || { rm -f "$_tmp" "$_bak"; return 1; }
     chmod --reference="$_cfg" "$_tmp" 2>/dev/null || chmod 600 "$_tmp" 2>/dev/null || true
     chown --reference="$_cfg" "$_tmp" 2>/dev/null || true
-    mv -f "$_tmp" "$_cfg" || { rm -f "$_tmp"; return 1; }
 
-    /etc/init.d/sing-box restart >/dev/null 2>&1 || {
-        log "event=overlay_applied restart=failed provider=$(tsnet_provider)"
-        return 1
-    }
-    log "event=overlay_applied restart=ok provider=$(tsnet_provider) enabled=$(tsnet_state_get enabled)"
-    return 0
+    _was_running=false
+    singbox_running && _was_running=true
+
+    mv -f "$_tmp" "$_cfg" || { rm -f "$_tmp" "$_bak"; return 1; }
+    _applied_sig=$(config_sig "$_cfg")
+
+    # If the provider had sing-box stopped (normal during some reload paths),
+    # do not steal lifecycle ownership. Its forthcoming start will consume the
+    # already-overlaid config. Restart only an instance that was already alive.
+    if [ "$_was_running" != true ] || provider_busy; then
+        rm -f "$_bak"
+        log "event=overlay_applied restart=deferred provider=$(tsnet_provider) enabled=$(tsnet_state_get enabled)"
+        return 0
+    fi
+
+    # A normal init.d restart is sequential: the existing process is stopped
+    # before the new one is started, so this does not create a second sing-box
+    # in parallel like `sing-box check` did.
+    if /etc/init.d/sing-box restart >/dev/null 2>&1; then
+        rm -f "$_bak"
+        log "event=overlay_applied restart=ok provider=$(tsnet_provider) enabled=$(tsnet_state_get enabled)"
+        return 0
+    fi
+
+    # Fail open. Restore only if nobody replaced the config after our swap;
+    # otherwise the provider's newer config wins and must never be overwritten.
+    _now_sig=$(config_sig "$_cfg" 2>/dev/null)
+    if [ -n "$_applied_sig" ] && [ "$_now_sig" = "$_applied_sig" ] && [ -s "$_bak" ]; then
+        mv -f "$_bak" "$_cfg" >/dev/null 2>&1 || true
+        /etc/init.d/sing-box restart >/dev/null 2>&1 || true
+        log "event=overlay_rollback reason=singbox_restart_failed provider=$(tsnet_provider)"
+    else
+        rm -f "$_bak"
+        log "event=overlay_rollback_skipped reason=provider_config_changed provider=$(tsnet_provider)"
+    fi
+    return 1
 }
 
 # One-shot mode is used by rpcd for immediate apply/remove.
@@ -88,17 +169,16 @@ fi
 last_sig=""
 while endpoint_enabled; do
     cfg=$(tsnet_config_path)
-    if [ -r "$cfg" ]; then
-        sig=$(stat -c '%Y:%s' "$cfg" 2>/dev/null)
-        [ -n "$sig" ] || sig=$(ls -ln "$cfg" 2>/dev/null | awk '{print $5":"$6":"$7":"$8}')
-        if [ "$sig" != "$last_sig" ]; then
-            # Do not race the provider while it is still replacing its generated JSON.
+    if [ -r "$cfg" ] && ! provider_busy; then
+        sig=$(config_sig "$cfg" 2>/dev/null)
+        if [ -n "$sig" ] && [ "$sig" != "$last_sig" ]; then
+            # Debounce provider generation. A stable stat tuple for one second is
+            # only the first gate; apply_overlay performs a second CAS just before mv.
             sleep 1
-            sig2=$(stat -c '%Y:%s' "$cfg" 2>/dev/null)
-            [ -n "$sig2" ] || sig2=$(ls -ln "$cfg" 2>/dev/null | awk '{print $5":"$6":"$7":"$8}')
-            if [ "$sig" = "$sig2" ]; then
+            sig2=$(config_sig "$cfg" 2>/dev/null)
+            if [ -n "$sig2" ] && [ "$sig" = "$sig2" ] && ! provider_busy; then
                 apply_overlay >/dev/null 2>&1 || true
-                last_sig=$(stat -c '%Y:%s' "$cfg" 2>/dev/null)
+                last_sig=$(config_sig "$cfg" 2>/dev/null)
             fi
         fi
     fi

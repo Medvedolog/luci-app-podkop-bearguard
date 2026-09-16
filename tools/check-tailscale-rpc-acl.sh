@@ -18,7 +18,7 @@ js = js_path.read_text()
 acl = json.loads(acl_path.read_text())['luci-app-podkop-bot']
 
 # rpcd shell backend advertises methods from its list action.
-m = re.search(r"list\)\s*\n\s*echo '(\{.*?\})'", rpc, re.S)
+m = re.search(r"list\)\s*echo '(\{.*?\})'", rpc, re.S)
 if not m:
     raise SystemExit('Tailscale RPC list JSON not found')
 listed = set(json.loads(m.group(1)))

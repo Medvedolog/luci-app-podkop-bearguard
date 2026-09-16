@@ -145,7 +145,7 @@ status_json() {
                 _peers=$(printf '%s' "$_cj" | jq -c --arg t "$_match" '[.connections[]? | select(.metadata.type==$t) | .metadata.sourceIP] | map(select(. != "")) | unique' 2>/dev/null || echo '[]')
             else
                 _active=$(printf '%s' "$_cj" | jq -r '[.connections[]? | select(.metadata.type|startswith("tailscale/"))] | length' 2>/dev/null || echo 0)
-                _peers=$(printf '%s' "$_cj" | jq -c '[.connections[]? | select(.metadata.type|startswith("tailscale/")) | .metadata.sourceIP] | map(select(. != "")) | unique' 2>/dev/null || echo '[]')
+                _peers=$(printf '%s' "$_cj" | jq -c '[.connections[]? | select(.metadata.type|startswith("tailscale/"))] | map(.metadata.sourceIP) | map(select(. != "")) | unique' 2>/dev/null || echo '[]')
             fi
         fi
     fi
@@ -299,6 +299,20 @@ method_set_advertise() {
     jq -cn --argjson advertise_exit_node "$_want" '{ok:true,advertise_exit_node:$advertise_exit_node}'
 }
 
+method_reapply() {
+    json_in; _provider=$(tsnet_provider)
+    [ "$_provider" != none ] || { printf '{"ok":false,"reason":"provider_missing"}\n'; return; }
+    [ "$_provider" != forkop-native ] || { printf '{"ok":false,"reason":"native_managed"}\n'; return; }
+    [ -r "$TSNET_STATE_FILE" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
+    [ "$(tsnet_state_get enabled)" = true ] || { printf '{"ok":false,"reason":"not_enabled"}\n'; return; }
+    tsnet_capable || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }
+    if ! runtime_apply; then
+        printf '{"ok":false,"reason":"runtime_apply_failed"}\n'; return
+    fi
+    runtime_endpoint_applied "$TSNET_ENDPOINT_TAG" || { printf '{"ok":false,"reason":"runtime_apply_not_visible"}\n'; return; }
+    jq -cn --arg provider "$_provider" '{ok:true,provider:$provider,reapplied:true,volatile_runtime:true}'
+}
+
 method_delete() {
     json_in; _provider=$(tsnet_provider); _purge=$(printf '%s' "$_IN" | jq -r '.purge_state // false')
     _legacy=$(printf '%s' "$_IN" | jq -r '.legacy_native // false')
@@ -343,7 +357,7 @@ method_delete() {
 }
 
 case "$1" in
-    list) echo '{"api_version":1,"status":{},"create":{"control_url":"","auth_key":"","hostname":"","accept_routes":false,"advertise_exit_node":false,"confirm_standalone":false},"set_enabled":{"enabled":false,"confirm_standalone":false},"set_accept_routes":{"enabled":false},"set_advertise_exit_node":{"enabled":false},"delete":{"purge_state":false,"legacy_native":false}}' ;;
+    list) echo '{"api_version":1,"status":{},"create":{"control_url":"","auth_key":"","hostname":"","accept_routes":false,"advertise_exit_node":false,"confirm_standalone":false},"set_enabled":{"enabled":false,"confirm_standalone":false},"set_accept_routes":{"enabled":false},"set_advertise_exit_node":{"enabled":false},"reapply":{},"delete":{"purge_state":false,"legacy_native":false}}' ;;
     call)
         case "$2" in
             status) cat >/dev/null 2>&1 || true; status_json ;;
@@ -351,6 +365,7 @@ case "$1" in
             set_enabled) method_set_enabled ;;
             set_accept_routes) method_set_accept_routes ;;
             set_advertise_exit_node) method_set_advertise ;;
+            reapply) method_reapply ;;
             delete) method_delete ;;
             *) cat >/dev/null 2>&1 || true; printf '{"ok":false,"reason":"unknown_method"}\n' ;;
         esac

@@ -48,6 +48,10 @@ valid_hostname() {
 native_find_section() {
     uci -q show "$UCI_PKG" 2>/dev/null | sed -n "s/^${UCI_PKG}\.\([^.=]*\)\.protocol='tailscale'$/\1/p" | head -n 1
 }
+legacy_native_section() {
+    [ "$(tsnet_provider)" != forkop-native ] || return 1
+    native_find_section
+}
 native_gen_section() {
     _i=1
     while [ "$_i" -lt 100 ]; do
@@ -73,6 +77,7 @@ status_json() {
     _sr=false; standalone_tailscale_running && _sr=true
     _ver=$(tsnet_version_hint)
     _configured=false; _enabled=false; _registered=false; _host=''; _url=''; _adv=false; _section=''; _integration=overlay
+    _legacy_present=false; _legacy_section=''; _legacy_enabled=false; _legacy_host=''; _legacy_url=''
 
     if [ "$_provider" = forkop-native ]; then
         _integration=native
@@ -93,11 +98,23 @@ status_json() {
         [ -d "$TSNET_IDENTITY_DIR" ] && find "$TSNET_IDENTITY_DIR" -type f -size +0c -print -quit 2>/dev/null | grep -q . && _registered=true
     fi
 
+    if [ "$_provider" != forkop-native ]; then
+        _legacy_section=$(native_find_section)
+        if [ -n "$_legacy_section" ]; then
+            _legacy_present=true
+            [ "$(uci -q get forkop.${_legacy_section}.enabled 2>/dev/null)" = 1 ] && _legacy_enabled=true
+            _legacy_host=$(uci -q get "forkop.${_legacy_section}.tailscale_hostname" 2>/dev/null)
+            _legacy_url=$(uci -q get "forkop.${_legacy_section}.tailscale_control_url" 2>/dev/null)
+        fi
+    fi
+
     jq -cn --arg provider "$_provider" --arg integration "$_integration" --arg ver "$_ver" \
         --argjson cap "$_cap" --argjson configured "$_configured" --argjson enabled "$_enabled" \
         --argjson registered "$_registered" --argjson adv "$_adv" --arg host "$_host" --arg url "$_url" \
         --arg section "$_section" --arg auth_url "$(auth_url)" --argjson sp "$_sp" --argjson sr "$_sr" \
-        '{ok:true,provider:$provider,integration:$integration,forkop_present:($provider!="none"),tailscale_supported:$cap,singbox_version:$ver,configured:$configured,section:$section,hostname:$host,control_url:$url,enabled:$enabled,advertise_exit_node:$adv,registered:$registered,auth_url:$auth_url,standalone_tailscale_present:$sp,standalone_tailscale_running:$sr}'
+        --argjson legacy_present "$_legacy_present" --arg legacy_section "$_legacy_section" \
+        --argjson legacy_enabled "$_legacy_enabled" --arg legacy_host "$_legacy_host" --arg legacy_url "$_legacy_url" \
+        '{ok:true,provider:$provider,integration:$integration,forkop_present:($provider!="none"),tailscale_supported:$cap,singbox_version:$ver,configured:$configured,section:$section,hostname:$host,control_url:$url,enabled:$enabled,advertise_exit_node:$adv,registered:$registered,auth_url:$auth_url,standalone_tailscale_present:$sp,standalone_tailscale_running:$sr,legacy_native_present:$legacy_present,legacy_native_section:$legacy_section,legacy_native_enabled:$legacy_enabled,legacy_native_hostname:$legacy_host,legacy_native_control_url:$legacy_url}'
 }
 
 parse_create_fields() {
@@ -195,7 +212,28 @@ method_set_advertise() {
 
 method_delete() {
     json_in; _provider=$(tsnet_provider); _purge=$(printf '%s' "$_IN" | jq -r '.purge_state // false')
+    _legacy=$(printf '%s' "$_IN" | jq -r '.legacy_native // false')
     case "$_purge" in true|1) _purge=true ;; *) _purge=false ;; esac
+    case "$_legacy" in true|1) _legacy=true ;; *) _legacy=false ;; esac
+
+    # Migration cleanup: a native Forkop `config server` may survive a switch to
+    # Forkop X. Forkop X cannot service that section. Delete it as inert UCI only:
+    # never restart Forkop/sing-box, because doing so can disrupt the active X
+    # dataplane for an object it does not understand.
+    if [ "$_legacy" = true ]; then
+        [ "$_provider" != forkop-native ] || { printf '{"ok":false,"reason":"legacy_delete_not_allowed_on_native"}\n'; return; }
+        _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
+        lock_begin; _bak=$(native_backup)
+        if ! uci -q delete "forkop.${_sec}" || ! uci -q commit forkop; then
+            native_restore "$_bak" >/dev/null 2>&1 || true; lock_end
+            printf '{"ok":false,"reason":"uci_write_failed","rolled_back":true}\n'; return
+        fi
+        rm -f "$_bak"; lock_end
+        [ "$_purge" = true ] && rm -rf "${NATIVE_STATE_BASE:?}/${_sec}" 2>/dev/null || true
+        jq -cn --arg section "$_sec" --argjson purged "$_purge" '{ok:true,configured:false,legacy_native_deleted:true,section:$section,purged_state:$purged,restarted:false}'
+        return
+    fi
+
     if [ "$_provider" = forkop-native ]; then
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
         lock_begin; _bak=$(native_backup); _was=$(uci -q get "forkop.${_sec}.enabled" 2>/dev/null)
@@ -214,7 +252,7 @@ method_delete() {
 }
 
 case "$1" in
-    list) echo '{"status":{},"create":{"control_url":"","auth_key":"","hostname":"","advertise_exit_node":false,"confirm_standalone":false},"set_enabled":{"enabled":false,"confirm_standalone":false},"set_advertise_exit_node":{"enabled":false},"delete":{"purge_state":false}}' ;;
+    list) echo '{"status":{},"create":{"control_url":"","auth_key":"","hostname":"","advertise_exit_node":false,"confirm_standalone":false},"set_enabled":{"enabled":false,"confirm_standalone":false},"set_advertise_exit_node":{"enabled":false},"delete":{"purge_state":false,"legacy_native":false}}' ;;
     call)
         case "$2" in
             status) cat >/dev/null 2>&1 || true; status_json ;;

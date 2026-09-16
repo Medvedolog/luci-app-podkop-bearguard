@@ -72,17 +72,20 @@ tsnet_config_path() {
 tsnet_capable() {
     command -v sing-box >/dev/null 2>&1 || return 1
 
-    # Tiny is a hard NO by policy: never execute the Go binary for probing.
+    # Capability probing must never execute sing-box. On 256 MB routers a second
+    # Go process can create enough RSS pressure to stall or OOM the already-running
+    # dataplane. Package/variant markers are authoritative when available; for an
+    # ordinary package we stream-scan the binary for the build tag and cache it.
     _ts_pkg_installed sing-box-tiny && return 1
-
-    # Extended is a hard YES by project policy: avoid spawning sing-box.
     _ts_pkg_installed sing-box-extended && return 0
-    if [ -r /etc/forkop/sing-box-variant ] && grep -qi 'extended' /etc/forkop/sing-box-variant 2>/dev/null; then
-        return 0
+
+    if [ -r /etc/forkop/sing-box-variant ]; then
+        grep -qiE 'extended|with_tailscale|tailscale' /etc/forkop/sing-box-variant 2>/dev/null && return 0
+        grep -qi 'tiny' /etc/forkop/sing-box-variant 2>/dev/null && return 1
     fi
 
     _bin=$(command -v sing-box)
-    _key=$(stat -c '%Y:%s' "$_bin" 2>/dev/null)
+    _key=$(stat -c '%i:%Y:%s' "$_bin" 2>/dev/null)
     [ -n "$_key" ] || _key=$(ls -ln "$_bin" 2>/dev/null | awk '{print $5":"$6":"$7":"$8}')
 
     if [ -r "$TSNET_CAP_CACHE" ]; then
@@ -93,7 +96,10 @@ tsnet_capable() {
         fi
     fi
 
-    if sing-box version 2>/dev/null | grep -q 'with_tailscale'; then
+    # BusyBox grep reads the executable as a stream; it does not map/start the
+    # sing-box runtime. `with_tailscale` is embedded in builds that advertise the
+    # corresponding sing-box build tag. Unknown builds fail closed.
+    if LC_ALL=C grep -aFq 'with_tailscale' "$_bin" 2>/dev/null; then
         printf '%s 1\n' "$_key" > "$TSNET_CAP_CACHE"
         return 0
     fi

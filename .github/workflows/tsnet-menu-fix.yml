@@ -15,21 +15,12 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p=Path('root/usr/lib/podkop_bot/podkop_bot')
           s=p.read_text(); old=s
-          s=s.replace('''            case "$PODKOP_VARIANT" in
-                plus|forkop)
-                    kb="${kb}[{\\"text\\":\\"${E_SRV} Службы\\",\\"callback_data\\":\\"cmd_server_instances\\"}],"
-                    ;;
-            esac''','''            case "$PODKOP_VARIANT" in
-                original|plus|forkop)
-                    kb="${kb}[{\\"text\\":\\"${E_SRV} Службы\\",\\"callback_data\\":\\"cmd_server_instances\\"}],"
-                    ;;
-            esac''',1)
-          s=s.replace('''            case "$PODKOP_VARIANT" in
-                plus|forkop) : ;;''','''            case "$PODKOP_VARIANT" in
-                original|plus|forkop) : ;;''',1)
-          if s==old: raise SystemExit('menu gate patterns not found')
+          s,n1=re.subn(r'(case "\$PODKOP_VARIANT" in\s*\n\s*)plus\|forkop\)(\s*\n\s*kb=.*?cmd_server_instances)',r'\1original|plus|forkop)\2',s,count=1)
+          s,n2=re.subn(r'("cmd_server_instances"\)\s*\n(?:.*\n){0,5}?\s*case "\$PODKOP_VARIANT" in\s*\n\s*)plus\|forkop\) : ;;',r'\1original|plus|forkop) : ;;',s,count=1)
+          if n1 != 1 or n2 != 1: raise SystemExit(f'menu patch counts: {n1},{n2}')
           p.write_text(s)
           PY
           sh -n root/usr/lib/podkop_bot/podkop_bot

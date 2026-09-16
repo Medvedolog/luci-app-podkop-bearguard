@@ -16,7 +16,12 @@ function yesno(v){return E('span',{'style':'font-weight:600;'},v?_('да'):_('н
 function providerName(p){return ({'forkop-native':'Forkop (native Servers)','forkop-x':'Forkop X (safe overlay)','podkop':'Podkop (safe overlay)'})[p]||p||'—';}
 function errText(r){var m={provider_missing:_('Podkop/Forkop не найден'),tailscale_unsupported:_('этот sing-box не поддерживает Tailscale/tsnet'),already_configured:_('Tailscale уже настроен'),not_configured:_('Tailscale не настроен'),bad_control_url:_('некорректный URL контрол-сервера'),bad_hostname:_('некорректное имя узла'),auth_key_required:_('нужен pre-auth key'),bad_auth_key:_('некорректный ключ'),bad_accept_routes_value:_('некорректное значение accept routes'),standalone_tailscale_running:_('уже работает standalone Tailscale/tailscaled'),uci_write_failed:_('не удалось сохранить UCI'),state_write_failed:_('не удалось сохранить состояние tsnet'),restart_failed:_('не удалось применить native Forkop endpoint; изменение отменено'),disable_failed:_('не удалось безопасно выключить endpoint')};return m[r]||r||'?';}
 function standaloneConfirm(){return confirm(_('На роутере уже работает отдельный Tailscale (tailscaled). Встроенный tsnet sing-box создаст второй самостоятельный узел. Продолжить?'));}
-function runtimeLabel(st){var m={unconfigured:_('не настроен'),disabled:_('выключен'),starting:_('endpoint запущен, регистрация пока не подтверждена'),ready:_('работает'),active:_('работает — сейчас есть Tailscale-трафик'),degraded:_('endpoint не применён'),failed:_('sing-box не работает')};return m[st.runtime_state]||st.runtime_state||_('неизвестно');}
+function runtimeLabel(st){
+	var m={unconfigured:_('не настроен'),disabled:_('выключен'),ready:_('работает'),active:_('работает — сейчас есть Tailscale-трафик'),degraded:_('endpoint не применён'),failed:_('sing-box не работает')};
+	if(st.runtime_state==='starting' && st.runtime_applied && st.singbox_running)
+		return _('работает — endpoint запущен; identity ещё не подтверждена диагностикой');
+	return m[st.runtime_state]||st.runtime_state||_('неизвестно');
+}
 
 return view.extend({
 	load:function(){return callStatus().catch(function(){return {ok:false,rpc_error:true};});},

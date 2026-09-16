@@ -3,7 +3,9 @@ name: dev-r57-package
 on:
   push:
     branches: [dev/0.19.18-tailscale-multiprovider]
-    paths: ['.github/workflows/dev-r57-package.yml']
+    paths:
+      - '.github/workflows/dev-r57-package.yml'
+      - 'root/usr/lib/podkop_bot/vendor.sha256'
 
 permissions:
   contents: read
@@ -21,7 +23,6 @@ jobs:
       - name: Reproducible package timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
       - name: Source checks
-        continue-on-error: true
         run: sh tools/check-sources.sh
       - name: Async wrapper checks
         continue-on-error: true

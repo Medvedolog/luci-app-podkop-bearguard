@@ -19,7 +19,7 @@ rm -f /tmp/podkop_bearhole.preupgrade /etc/config/podkop_bearhole-opkg 2>/dev/nu
 
 # 0.19.19 development builds briefly shipped a persistent tsnet overlay watcher.
 # It is deliberately retired: Podkop/Forkop keep lifecycle ownership and tsnet
-# runtime changes are now explicit one-shot operations only.
+# runtime changes are explicit one-shot operations only.
 if [ -x /etc/init.d/podkop-tsnet-overlay ]; then
 	/etc/init.d/podkop-tsnet-overlay stop >/dev/null 2>&1 || true
 	/etc/init.d/podkop-tsnet-overlay disable >/dev/null 2>&1 || true
@@ -30,17 +30,34 @@ for _f in \
 	/usr/libexec/rpcd/podkop_bot \
 	/usr/libexec/rpcd/podkop_bot_bearhole \
 	/usr/libexec/rpcd/podkop_bot_tailscale \
+	/usr/libexec/rpcd/podkop_bot_tsnet_repair \
 	/usr/lib/podkop_bot/install.sh \
 	/usr/lib/podkop_bot/podkop_bot \
 	/usr/lib/podkop_bot/podkop_bot_init \
 	/usr/lib/podkop_bot/bearhole.sh \
 	/usr/lib/podkop_bot/tsnet-runtime-apply.sh \
+	/usr/lib/podkop_bot/tsnet-auto-repair.sh \
 	/usr/lib/podkop_bot/warpscout-rescue-watchdog \
 	/etc/init.d/podkop-bearhole \
 	/etc/init.d/podkop-warp-rescue
 do
 	chmod +x "$_f" 2>/dev/null || true
 done
+
+# A single cron tick is the only scheduler for optional tsnet auto-repair. The
+# helper exits immediately unless the user enabled auto-repair in LuCI. Keeping
+# one marked line here avoids a resident watcher and makes install/upgrade
+# idempotent without owning the user's whole root crontab.
+_CRON_MARKER='# podkop-bot-tsnet-auto-repair'
+_CRON_FILE=/etc/crontabs/root
+mkdir -p /etc/crontabs 2>/dev/null || true
+[ -f "$_CRON_FILE" ] || : > "$_CRON_FILE"
+_CRON_TMP="/tmp/podkop-tsnet-cron.$$"
+grep -vF "$_CRON_MARKER" "$_CRON_FILE" >"$_CRON_TMP" 2>/dev/null || true
+cat "$_CRON_TMP" >"$_CRON_FILE" 2>/dev/null || true
+rm -f "$_CRON_TMP" 2>/dev/null || true
+printf '%s\n' "* * * * * /usr/lib/podkop_bot/tsnet-auto-repair.sh >/dev/null 2>&1 $_CRON_MARKER" >>"$_CRON_FILE"
+/etc/init.d/cron restart >/dev/null 2>&1 || true
 
 /etc/init.d/rpcd restart >/dev/null 2>&1 || true
 

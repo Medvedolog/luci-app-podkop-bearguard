@@ -17,7 +17,7 @@ done
 [ ! -e root/etc/init.d/podkop-tsnet-overlay ] || { echo "FAIL  retired tsnet overlay service returned" >&2; exit 1; }
 [ ! -e root/usr/lib/podkop_bot/tsnet-overlay-watch.sh ] || { echo "FAIL  retired tsnet watcher returned" >&2; exit 1; }
 
-if grep -Eq '(^|[[:space:]])while[[:space:]]' "$APPLY" "$REPAIR"; then
+if grep -Eq '^[[:space:]]*while[[:space:]]' "$APPLY" "$REPAIR"; then
     echo "FAIL  tsnet helpers must be bounded one-shot operations, not watchers" >&2
     exit 1
 fi

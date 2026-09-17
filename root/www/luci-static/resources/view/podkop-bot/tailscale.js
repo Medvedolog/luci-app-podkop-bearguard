@@ -14,6 +14,13 @@ var callDelete = rpc.declare({ object:'podkop_bot_tailscale', method:'delete', p
 
 function row(k,v){return E('div',{'style':'display:grid;grid-template-columns:minmax(190px,34%) 1fr;gap:.7em;padding:.32em 0;'},[E('strong',{},k),E('span',{},[v])]);}
 function yesno(v){return E('span',{'style':'font-weight:600;'},v?_('да'):_('нет'));}
+function lamp(ok,label,bad){
+	var color=ok?'#22c55e':(bad?'#ef4444':'#7b8794');
+	return E('span',{'style':'display:inline-flex;align-items:center;gap:.42em;font-weight:600;white-space:nowrap;'},[
+		E('span',{'style':'display:inline-block;width:.72em;height:.72em;border-radius:50%;background:'+color+';box-shadow:0 0 0 2px rgba(255,255,255,.06),0 0 7px '+color+';'}),
+		label
+	]);
+}
 function providerName(p){return ({'forkop-native':'Forkop (штатная интеграция)','forkop-x':'Forkop X (одноразовое применение)','podkop':'Podkop (одноразовое применение)'})[p]||p||'—';}
 function errText(r){var m={provider_missing:_('Podkop/Forkop не найден'),tailscale_unsupported:_('этот sing-box не поддерживает Tailscale/tsnet'),already_configured:_('Tailscale уже настроен'),not_configured:_('Tailscale не настроен'),not_enabled:_('Tailscale выключен'),native_managed:_('штатная интеграция Forkop не требует ручного повторного применения'),bad_control_url:_('некорректный URL контрол-сервера'),bad_hostname:_('некорректное имя узла'),auth_key_required:_('нужен pre-auth key'),bad_auth_key:_('некорректный ключ'),bad_accept_routes_value:_('некорректное значение accept routes'),standalone_tailscale_running:_('уже работает standalone Tailscale/tailscaled'),uci_write_failed:_('не удалось сохранить UCI'),state_write_failed:_('не удалось сохранить состояние tsnet'),runtime_apply_failed:_('не удалось применить Tailscale к текущей конфигурации sing-box'),runtime_apply_not_visible:_('после применения endpoint не найден в текущей конфигурации sing-box'),restart_failed:_('не удалось применить native Forkop endpoint; изменение отменено'),disable_failed:_('не удалось безопасно выключить endpoint')};return m[r]||r||'?';}
 function standaloneConfirm(){return confirm(_('На роутере уже работает отдельный Tailscale (tailscaled). Встроенный tsnet sing-box создаст второй самостоятельный узел. Продолжить?'));}
@@ -22,6 +29,15 @@ function runtimeLabel(st){
 	if(st.runtime_state==='starting' && st.runtime_applied && st.singbox_running)
 		return _('работает — endpoint запущен; identity ещё не подтверждена диагностикой');
 	return m[st.runtime_state]||st.runtime_state||_('неизвестно');
+}
+function runtimeHealthy(st){return !!(st.enabled&&st.singbox_running&&st.runtime_applied);}
+function healthStrip(st){
+	return E('div',{'style':'display:flex;gap:.65em;flex-wrap:wrap;margin:.35em 0 1em;'},[
+		E('span',{'style':'padding:.35em .6em;border:1px solid rgba(127,127,127,.28);border-radius:999px;'},[lamp(!!st.singbox_running,_('sing-box'),!st.singbox_running)]),
+		E('span',{'style':'padding:.35em .6em;border:1px solid rgba(127,127,127,.28);border-radius:999px;'},[lamp(!!st.runtime_applied,_('endpoint'),st.enabled&&!st.runtime_applied)]),
+		E('span',{'style':'padding:.35em .6em;border:1px solid rgba(127,127,127,.28);border-radius:999px;'},[lamp(!!st.registered,_('identity'),false)]),
+		E('span',{'style':'padding:.35em .6em;border:1px solid rgba(127,127,127,.28);border-radius:999px;'},[lamp((st.active_connections||0)>0,_('трафик '+String(st.active_connections||0)),false)])
+	]);
 }
 
 return view.extend({
@@ -32,7 +48,7 @@ return view.extend({
 		if(!st.standalone_tailscale_present)return null;
 		return E('div',{'class':'cbi-section','style':'max-width:850px;'},[
 			E('h3',{},_('Отдельный Tailscale')),
-			row(_('Служба tailscaled'),E('strong',{},st.standalone_tailscale_running?_('работает'):_('установлена, но остановлена'))),
+			row(_('Служба tailscaled'),lamp(!!st.standalone_tailscale_running,st.standalone_tailscale_running?_('работает'):_('остановлена'),false)),
 			E('p',{'class':'description'},_('Это отдельный системный Tailscale, не встроенный tsnet sing-box. Он может существовать одновременно со встроенным узлом; это будут две независимые identity.'))
 		]);
 	},
@@ -67,7 +83,8 @@ return view.extend({
 		var del=E('button',{'class':'cbi-button cbi-button-negative','click':ui.createHandlerFn(this,function(){if(!confirm(_('Удалить встроенное Tailscale-подключение? Настройки Forkop X / Podkop и остальные прокси не изменятся.')))return;del.disabled=true;return callDelete(purge.checked).then(function(r){if(!r||!r.ok)throw new Error(errText(r&&r.reason));return self.refresh();}).catch(function(e){dom.content(status,E('span',{'style':'color:#b00;'},_('Ошибка: ')+(e.message||e)));del.disabled=false;});})},_('Удалить подключение'));
 		var auth=st.auth_url?E('a',{'href':st.auth_url,'target':'_blank','rel':'noreferrer noopener'},_('Открыть авторизацию')):E('span',{},'—');
 		var peers=(st.active_peers&&st.active_peers.length)?st.active_peers.join(', '):'—';
-		var details=[row(_('Интеграция'),providerName(st.provider)),row(_('Endpoint'),E('code',{},st.section||'—')),row(_('Endpoint в текущем конфиге'),yesno(!!st.runtime_applied)),row(_('sing-box работает'),yesno(!!st.singbox_running)),row(_('Identity сохранена'),yesno(!!st.registered)),row(_('Текущих соединений'),String(st.active_connections||0)),row(_('Текущие peer'),E('code',{},peers))];
-		return E('div',{'class':'cbi-section','style':'max-width:850px;'},[E('h3',{},_('Узел Tailscale')),row(_('Состояние'),E('strong',{},runtimeLabel(st))),row(_('Hostname'),E('code',{},st.hostname||'—')),row(_('Контрол-сервер'),E('code',{},st.control_url||'—')),row(_('Принимать маршруты'),yesno(!!st.accept_routes)),row(_('Анонсировать exit node'),yesno(!!st.advertise_exit_node)),row(_('URL авторизации'),auth),recovery,E('div',{'style':'margin:.8em 0 1.1em;display:flex;gap:.6em;flex-wrap:wrap;'},[power,acceptBtn,advBtn]),E('details',{},[E('summary',{},_('Технические детали'))].concat(details)),E('hr'),E('h4',{},_('Удаление')),E('p',{'class':'description'},_('Удалит встроенное Tailscale-подключение из текущей конфигурации sing-box. Настройки Forkop X / Podkop и остальные прокси не изменяются. По умолчанию локальная identity сохраняется, поэтому при повторной настройке роутер сможет вернуться как тот же узел.')),E('label',{},[purge,' ',_('Также забыть этот Tailscale-узел на роутере. При следующем подключении будет создана новая identity.')]),E('div',{'style':'margin-top:.8em;'},[del]),status]);
+		var stateLamp=lamp(runtimeHealthy(st),runtimeLabel(st),st.runtime_state==='degraded'||st.runtime_state==='failed');
+		var details=[row(_('Интеграция'),providerName(st.provider)),row(_('Endpoint'),E('code',{},st.section||'—')),row(_('Endpoint в текущем конфиге'),lamp(!!st.runtime_applied,st.runtime_applied?_('есть'):_('нет'),st.enabled&&!st.runtime_applied)),row(_('sing-box работает'),lamp(!!st.singbox_running,st.singbox_running?_('да'):_('нет'),!st.singbox_running)),row(_('Identity сохранена'),lamp(!!st.registered,st.registered?_('да'):_('ещё нет'),false)),row(_('Текущих соединений'),lamp((st.active_connections||0)>0,String(st.active_connections||0),false)),row(_('Текущие peer'),E('code',{},peers))];
+		return E('div',{'class':'cbi-section','style':'max-width:850px;'},[E('h3',{},_('Узел Tailscale')),healthStrip(st),row(_('Состояние'),stateLamp),row(_('Hostname'),E('code',{},st.hostname||'—')),row(_('Контрол-сервер'),E('code',{},st.control_url||'—')),row(_('Принимать маршруты'),yesno(!!st.accept_routes)),row(_('Анонсировать exit node'),yesno(!!st.advertise_exit_node)),row(_('URL авторизации'),auth),recovery,E('div',{'style':'margin:.8em 0 1.1em;display:flex;gap:.6em;flex-wrap:wrap;'},[power,acceptBtn,advBtn]),E('details',{},[E('summary',{},_('Технические детали'))].concat(details)),E('hr'),E('h4',{},_('Удаление')),E('p',{'class':'description'},_('Удалит встроенное Tailscale-подключение из текущей конфигурации sing-box. Настройки Forkop X / Podkop и остальные прокси не изменяются. По умолчанию локальная identity сохраняется, поэтому при повторной настройке роутер сможет вернуться как тот же узел.')),E('label',{},[purge,' ',_('Также забыть этот Tailscale-узел на роутере. При следующем подключении будет создана новая identity.')]),E('div',{'style':'margin-top:.8em;'},[del]),status]);
 	}
 });

@@ -29,18 +29,10 @@ function standaloneConfirm(){return confirm(_('На роутере уже раб
 function runtimeLabel(st){
 	var m={unconfigured:_('не настроен'),disabled:_('выключен'),ready:_('работает'),active:_('работает — сейчас есть Tailscale-трафик'),degraded:_('endpoint отсутствует в текущем конфиге'),failed:_('sing-box не работает')};
 	if(st.runtime_state==='starting' && st.runtime_applied && st.singbox_running)
-		return _('работает — endpoint запущен; identity ещё не подтверждена диагностикой');
+		return _('работает — endpoint запущен');
 	return m[st.runtime_state]||st.runtime_state||_('неизвестно');
 }
 function runtimeHealthy(st){return !!(st.enabled&&st.singbox_running&&st.runtime_applied);}
-function healthStrip(st){
-	return E('div',{'style':'display:flex;gap:.65em;flex-wrap:wrap;margin:.35em 0 1em;'},[
-		E('span',{'style':'padding:.35em .6em;border:1px solid rgba(127,127,127,.28);border-radius:999px;'},[lamp(!!st.singbox_running,_('sing-box'),!st.singbox_running)]),
-		E('span',{'style':'padding:.35em .6em;border:1px solid rgba(127,127,127,.28);border-radius:999px;'},[lamp(!!st.runtime_applied,_('endpoint'),st.enabled&&!st.runtime_applied)]),
-		E('span',{'style':'padding:.35em .6em;border:1px solid rgba(127,127,127,.28);border-radius:999px;'},[lamp(!!st.registered,_('identity'),false)]),
-		E('span',{'style':'padding:.35em .6em;border:1px solid rgba(127,127,127,.28);border-radius:999px;'},[lamp((st.active_connections||0)>0,_('трафик '+String(st.active_connections||0)),false)])
-	]);
-}
 
 return view.extend({
 	load:function(){return Promise.all([callStatus().catch(function(){return {ok:false,rpc_error:true};}),callRepairStatus().catch(function(){return {ok:false,enabled:false,supported:false};})]);},
@@ -51,12 +43,12 @@ return view.extend({
 		return E('div',{'class':'cbi-section','style':'max-width:850px;'},[
 			E('h3',{},_('Отдельный Tailscale')),
 			row(_('Служба tailscaled'),lamp(!!st.standalone_tailscale_running,st.standalone_tailscale_running?_('работает'):_('остановлена'),false)),
-			E('p',{'class':'description'},_('Это отдельный системный Tailscale, не встроенный tsnet sing-box. Он может существовать одновременно со встроенным узлом; это будут две независимые identity.'))
+			E('p',{'class':'description'},_('Это отдельный системный Tailscale, не встроенный tsnet sing-box. Он может существовать одновременно со встроенным узлом; это будут два независимых Tailscale-узла.'))
 		]);
 	},
 	body:function(st){
 		if(!st||st.rpc_error)return E('div',{},[E('h2',{},_('Tailscale')),E('div',{'class':'alert-message error'},_('Backend Tailscale недоступен.'))]);
-		var head=[E('h2',{},_('Tailscale / tsnet')),E('div',{'class':'cbi-section','style':'max-width:850px;'},[E('p',{},_('Встроенное Tailscale-подключение работает внутри sing-box без отдельного tailscaled.')),E('p',{'class':'description'},_('Полный Forkop хранит endpoint штатно. Для Forkop X и Podkop приложение меняет только текущий runtime-конфиг sing-box по явному действию пользователя. Фонового наблюдателя и автоматических перезапусков нет; штатная перегенерация Podkop/Forkop может удалить endpoint, и тогда его можно применить снова одной кнопкой или включить осторожное автовосстановление.'))])];
+		var head=[E('h2',{},_('Tailscale / tsnet')),E('div',{'class':'cbi-section','style':'max-width:850px;'},[E('p',{},_('Встроенное Tailscale-подключение работает внутри sing-box без отдельного tailscaled.')),E('p',{'class':'description'},_('Полный Forkop хранит endpoint штатно. Для Forkop X и Podkop приложение меняет только текущий runtime-конфиг sing-box. После перегенерации endpoint можно применить снова вручную или включить автовосстановление: cron раз в минуту проверяет состояние и вмешивается только после фактического восстановления Main/Backup Mixed Proxy. Постоянного watcher-процесса нет.'))])];
 		if(st.provider&&st.provider!=='none')head.push(E('p',{'style':'max-width:850px;'},[E('strong',{},_('Интеграция: ')),providerName(st.provider)]));
 		var standalone=this.standaloneCard(st);if(standalone)head.push(standalone);
 		if(st.standalone_tailscale_running)head.push(E('div',{'class':'alert-message warning','style':'max-width:850px;'},_('Отдельный tailscaled уже работает. Включение встроенного tsnet создаст второй самостоятельный Tailscale-узел и потребует подтверждения.')));
@@ -85,13 +77,11 @@ return view.extend({
 		var autoRepair=null;
 		if(st.integration==='runtime'&&repair.supported){
 			var autoCb=E('input',{'type':'checkbox','checked':repair.enabled?'checked':null,'change':ui.createHandlerFn(this,function(){autoCb.disabled=true;return callRepairSet(!!autoCb.checked).then(function(r){if(!r||!r.ok)throw new Error(errText(r&&r.reason));return self.refresh();}).catch(function(e){autoCb.checked=!autoCb.checked;autoCb.disabled=false;dom.content(status,E('span',{'style':'color:#b00;'},_('Ошибка: ')+(e.message||e)));});})});
-			autoRepair=E('div',{'style':'margin:.9em 0 1em;padding:.8em 1em;border:1px solid rgba(127,127,127,.25);border-radius:8px;'},[E('label',{'style':'display:flex;gap:.55em;align-items:flex-start;'},[autoCb,E('span',{},[E('strong',{},_('Автовосстановление после перегенерации Forkop/Podkop')),E('div',{'class':'description','style':'margin-top:.25em;'},_('Раз в минуту выполняется короткая проверка. Endpoint применяется заново только если он исчез, Forkop не держит reload-lock и Main либо Backup Mixed Proxy реально проводит трафик. После попытки действует пауза 5 минут. Фонового watcher-процесса нет.'))])])]);
+			autoRepair=E('div',{'style':'margin:.9em 0 1em;padding:.8em 1em;border:1px solid rgba(127,127,127,.25);border-radius:8px;'},[E('label',{'style':'display:flex;gap:.55em;align-items:flex-start;'},[autoCb,E('span',{},[E('strong',{},_('Автовосстановление после перегенерации Forkop/Podkop')),E('div',{'class':'description','style':'margin-top:.25em;'},_('Раз в минуту cron проверяет, не исчез ли endpoint. Повторное применение разрешается только когда Forkop не держит reload-lock и Main либо Backup Mixed Proxy реально проводит трафик. После попытки действует пауза 5 минут.'))])])]);
 		}
 		var del=E('button',{'class':'cbi-button cbi-button-negative','click':ui.createHandlerFn(this,function(){if(!confirm(_('Удалить встроенное Tailscale-подключение? Настройки Forkop X / Podkop и остальные прокси не изменятся.')))return;del.disabled=true;return callDelete(purge.checked).then(function(r){if(!r||!r.ok)throw new Error(errText(r&&r.reason));return self.refresh();}).catch(function(e){dom.content(status,E('span',{'style':'color:#b00;'},_('Ошибка: ')+(e.message||e)));del.disabled=false;});})},_('Удалить подключение'));
 		var auth=st.auth_url?E('a',{'href':st.auth_url,'target':'_blank','rel':'noreferrer noopener'},_('Открыть авторизацию')):E('span',{},'—');
-		var peers=(st.active_peers&&st.active_peers.length)?st.active_peers.join(', '):'—';
 		var stateLamp=lamp(runtimeHealthy(st),runtimeLabel(st),st.runtime_state==='degraded'||st.runtime_state==='failed');
-		var details=[row(_('Интеграция'),providerName(st.provider)),row(_('Endpoint'),E('code',{},st.section||'—')),row(_('Endpoint в текущем конфиге'),lamp(!!st.runtime_applied,st.runtime_applied?_('есть'):_('нет'),st.enabled&&!st.runtime_applied)),row(_('sing-box работает'),lamp(!!st.singbox_running,st.singbox_running?_('да'):_('нет'),!st.singbox_running)),row(_('Identity сохранена'),lamp(!!st.registered,st.registered?_('да'):_('ещё нет'),false)),row(_('Текущих соединений'),lamp((st.active_connections||0)>0,String(st.active_connections||0),false)),row(_('Текущие peer'),E('code',{},peers))];
-		return E('div',{'class':'cbi-section','style':'max-width:850px;'},[E('h3',{},_('Узел Tailscale')),healthStrip(st),row(_('Состояние'),stateLamp),row(_('Hostname'),E('code',{},st.hostname||'—')),row(_('Контрол-сервер'),E('code',{},st.control_url||'—')),row(_('Принимать маршруты'),yesno(!!st.accept_routes)),row(_('Анонсировать exit node'),yesno(!!st.advertise_exit_node)),row(_('URL авторизации'),auth),recovery,E('div',{'style':'margin:.8em 0 1.1em;display:flex;gap:.6em;flex-wrap:wrap;'},[power,acceptBtn,advBtn]),autoRepair,E('details',{},[E('summary',{},_('Технические детали'))].concat(details)),E('hr'),E('h4',{},_('Удаление')),E('p',{'class':'description'},_('Удалит встроенное Tailscale-подключение из текущей конфигурации sing-box. Настройки Forkop X / Podkop и остальные прокси не изменяются. По умолчанию локальная identity сохраняется, поэтому при повторной настройке роутер сможет вернуться как тот же узел.')),E('label',{},[purge,' ',_('Также забыть этот Tailscale-узел на роутере. При следующем подключении будет создана новая identity.')]),E('div',{'style':'margin-top:.8em;'},[del]),status]);
+		return E('div',{'class':'cbi-section','style':'max-width:850px;'},[E('h3',{},_('Узел Tailscale')),row(_('Состояние'),stateLamp),row(_('Hostname'),E('code',{},st.hostname||'—')),row(_('Контрол-сервер'),E('code',{},st.control_url||'—')),row(_('Принимать маршруты'),yesno(!!st.accept_routes)),row(_('Анонсировать exit node'),yesno(!!st.advertise_exit_node)),row(_('URL авторизации'),auth),recovery,E('div',{'style':'margin:.8em 0 1.1em;display:flex;gap:.6em;flex-wrap:wrap;'},[power,acceptBtn,advBtn]),autoRepair,E('hr'),E('h4',{},_('Удаление')),E('p',{'class':'description'},_('Удалит встроенное Tailscale-подключение из текущей конфигурации sing-box. Настройки Forkop X / Podkop и остальные прокси не изменяются. По умолчанию локальное состояние узла сохраняется, поэтому при повторной настройке роутер сможет вернуться как тот же Tailscale-узел.')),E('label',{},[purge,' ',_('Также забыть этот Tailscale-узел на роутере. При следующем подключении будет создан новый локальный узел.')]),E('div',{'style':'margin-top:.8em;'},[del]),status]);
 	}
 });

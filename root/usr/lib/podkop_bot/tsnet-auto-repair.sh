@@ -1,6 +1,6 @@
 #!/bin/sh
 # Opt-in, cron-driven tsnet runtime recovery for Podkop/Forkop X.
-# No daemon, no polling loop: one cheap check per cron invocation.
+# No daemon and no polling loop: one bounded check per cron invocation.
 
 . /usr/lib/podkop_bot/tsnet-provider.sh
 
@@ -25,15 +25,35 @@ esac
 _cfg=$(tsnet_config_path)
 [ -r "$_cfg" ] || exit 0
 
-# Nothing to repair when our endpoint survived the provider regeneration.
+# Nothing to repair when our endpoint survived provider regeneration.
 jq -e --arg t "$TSNET_ENDPOINT_TAG" '(.endpoints // []) | any(.type=="tailscale" and .tag==$t)' "$_cfg" >/dev/null 2>&1 && exit 0
 
-# Do not attempt recovery while the dataplane is down for unrelated reasons.
-if [ -x /etc/init.d/sing-box ]; then
-    /etc/init.d/sing-box running >/dev/null 2>&1 || exit 0
-else
-    pidof sing-box >/dev/null 2>&1 || exit 0
-fi
+# Forkop may have already spawned sing-box while its generated dataplane is not
+# usable yet. Readiness is therefore a real Mixed Proxy transaction, not pidof.
+# Prefer the primary section (main/tier1 source), then one additional runtime
+# section as backup. A single successful path is sufficient.
+_sections=$(ubus call podkop_bot runtime_sections '{}' 2>/dev/null || true)
+[ -n "$_sections" ] || exit 0
+
+_primary=$(printf '%s' "$_sections" | jq -r '.primary_section // empty' 2>/dev/null)
+_candidates=$(printf '%s' "$_sections" | jq -r --arg p "$_primary" '
+    [.sections[]? | select(.enabled_for_runtime==true and ((.endpoint // "")|length)>0)] as $s |
+    (($s | map(select(.name==$p))) + ($s | map(select(.name!=$p))))[:2][]? |
+    .endpoint
+' 2>/dev/null)
+[ -n "$_candidates" ] || exit 0
+
+_ready=0
+_ready_target=''
+for _target in $_candidates; do
+    _probe=$(ubus call podkop_bot transport_probe "$(jq -cn --arg target "$_target" '{target:$target}')" 2>/dev/null || true)
+    if printf '%s' "$_probe" | jq -e '.available==true and .telegram_reached==true' >/dev/null 2>&1; then
+        _ready=1
+        _ready_target="$_target"
+        break
+    fi
+done
+[ "$_ready" = 1 ] || exit 0
 
 _now=$(date +%s 2>/dev/null || echo 0)
 _last=0
@@ -47,9 +67,9 @@ mkdir -p "$STAMP_DIR" 2>/dev/null || exit 0
 printf '%s\n' "$_now" > "$STAMP_FILE"
 
 if [ -x "$RUNTIME_APPLY" ] && "$RUNTIME_APPLY" >/dev/null 2>&1; then
-    logger -t podkop-bot-tsnet "event=auto_repair result=applied provider=$_provider" 2>/dev/null || true
+    logger -t podkop-bot-tsnet "event=auto_repair result=applied provider=$_provider readiness=mixed_proxy" 2>/dev/null || true
     exit 0
 fi
 
-logger -t podkop-bot-tsnet "event=auto_repair result=failed provider=$_provider cooldown=${COOLDOWN}s" 2>/dev/null || true
+logger -t podkop-bot-tsnet "event=auto_repair result=failed provider=$_provider readiness=mixed_proxy cooldown=${COOLDOWN}s" 2>/dev/null || true
 exit 0

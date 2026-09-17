@@ -88,7 +88,7 @@ return view.extend({
 		}, _('Обновить'));
 
 		return E('div', {}, [
-			E('h2', {}, _('Логи Podkop BearGuard')),
+			E('h2', {}, _('Логи Podkop Bot')),
 			E('p', { 'style':'color:#888;' }, [
 				_('Системный лог бота (logread -e podkop-bot). Токен в логах не отображается.'),
 				statusSpan

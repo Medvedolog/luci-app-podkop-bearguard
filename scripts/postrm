@@ -61,6 +61,18 @@ ubus call service delete '{"name":"podkop-bearhole"}' >/dev/null 2>&1 || true
 ubus call service delete '{"name":"podkop-warp-rescue"}' >/dev/null 2>&1 || true
 rm -f /etc/rc.d/*podkop-bearhole /etc/rc.d/*podkop-warp-rescue 2>/dev/null || true
 
+# Remove the one marked cron line owned by optional tsnet auto-repair without
+# touching any other root crontab entries.
+_CRON_MARKER='# podkop-bot-tsnet-auto-repair'
+_CRON_FILE=/etc/crontabs/root
+if [ -f "$_CRON_FILE" ]; then
+	_CRON_TMP="/tmp/podkop-tsnet-cron.$$"
+	grep -vF "$_CRON_MARKER" "$_CRON_FILE" >"$_CRON_TMP" 2>/dev/null || true
+	cat "$_CRON_TMP" >"$_CRON_FILE" 2>/dev/null || true
+	rm -f "$_CRON_TMP" 2>/dev/null || true
+	/etc/init.d/cron restart >/dev/null 2>&1 || true
+fi
+
 # WARPSCOUT can have several detached workers. Kill only PIDs that belong to
 # files owned by this integration; avoid racy /proc/*/cmdline scans entirely.
 for _pf in \

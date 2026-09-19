@@ -1,8 +1,36 @@
-# Development changelog — 0.19.18
+# Development changelog — 0.19.19
 
-Branch: `dev/0.19.18-tailscale-luci`
+Branch: `dev/0.19.19-tailscale-multiprovider`
 
-This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.18 is promoted.
+This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
+
+## 0.19.19-r1 — Tailscale/tsnet goes multiprovider; overlay watcher retired; opt-in auto-repair; partial rebrand
+
+### Tailscale / tsnet architecture
+
+- Split Tailscale support by sing-box "provider": `forkop-native` (unchanged — real Forkop `config server`/`protocol=tailscale` UCI section, same entity the Telegram bot's wizard already manages), `forkop-x` and classic `podkop` (new — no native UCI concept; config lives in `/etc/podkop-bot/tsnet.json`, endpoint is injected directly into the live sing-box JSON config).
+- New rpcd backend `podkop_bot_tailscale` (`api_version: 1`): `status`, `create`, `set_enabled`, `set_accept_routes`, `set_advertise_exit_node`, `reapply`, `delete`. New LuCI view `tailscale.js` under `Транспорт → Tailscale`.
+- Capability probing (`tsnet_capable()`/`singbox_supports_tailscale()`) never executes `sing-box` — package-manager/variant-file checks first, then a cached `grep -aF with_tailscale` stream-scan of the binary, keyed by an inode:mtime:size signature. Avoids spawning a second Go process on low-RAM routers.
+- Standalone `tailscaled` conflict detection (installed-vs-running) is checked by both LuCI and the bot, with the backend repeating the running-daemon check immediately before any mutation — a daemon started after page load still can't bypass confirmation.
+- **Background overlay watcher added, then fully retired within this line.** It briefly existed as `podkop-tsnet-overlay` (procd service) + `tsnet-overlay-watch.sh` (continuous 3s-poll loop that re-injected the endpoint whenever Podkop/Forkop regenerated its sing-box config). It had a real restart-feedback-loop bug that was fixed first, then the whole approach was replaced: `tsnet-runtime-apply.sh` is now a **one-shot** apply (CAS/TOCTOU-guarded by a config-file signature, deferred while the provider holds its reload lock), invoked synchronously on every `podkop_bot_tailscale` mutation. `postinst` stops/disables any leftover watcher service from earlier 0.19.19 dev builds.
+- Added an explicit **Reapply** action/button (`method_reapply`) as the manual recovery path now that there is no background watcher to silently retry.
+- Added **opt-in cron auto-repair**: `tsnet-auto-repair.sh` + control object `podkop_bot_tsnet_repair`, a `* * * * *` cron entry installed unconditionally (near-zero cost when unused/disabled). When enabled, it only acts if the endpoint is actually missing from the live config *and* a Mixed-Proxy transport-readiness probe (`podkop_bot runtime_sections` + `transport_probe`, not just `pidof sing-box`) succeeds; the actual repair is rate-limited to once per 300s. **Known gap, not yet fixed:** the 300s cooldown only bounds the repair step, not the readiness probe itself, so a persistently-missing endpoint causes live network probes every cron tick (60s) — see `TODO.md`.
+- Visual Tailscale health indicators added to the status card, then the card was simplified again (`1430140`) once the indicators proved noisy.
+- Fixed missing `set_accept_routes` in the LuCI RPC ACL (`feb57ec`) — the button existed and worked in the backend but every call was rejected under the standard ACL-scoped LuCI session.
+- Classic `podkop` variant gained a Tailscale/Services menu entry it didn't have before (multiprovider MVP simplification, `4bbead7`).
+- Forkop X migration: a native Forkop `config server`/`protocol=tailscale` section left over from switching to Forkop X is now detected as "legacy" and can be deleted as inert UCI only (never restarts Forkop/sing-box for a section it can't service) — fixed after an initial version routed the cleanup callback incorrectly (`f010de6`, `cceb1e3`).
+
+### Branding
+
+- Partially rebranded the LuCI app as **"Podkop BearGuard"** (menu title, Overview `h2`, Overview/Logs footer). Deliberately kept **"Podkop Bot"** as the name of the Telegram bot component specifically (Logs `h2`, Settings, Setup Wizard, onboarding message) — commit `2cb934b` explicitly reverted an over-eager rename of the Logs heading.
+- **Not finished:** the footer rollout only reached `overview.js`/`logs.js`; `help.js`, `settings.js`, `update.js`, `wizard.js` still show the raw `luci-app-podkop-bot` package-name literal. See `TODO.md`.
+- README, owfeed package description and CI metadata updated for 0.19.19/multiprovider features; `HANDOFF.md`/`TODO.md`/this file were not — that gap is what this refresh closes.
+
+### Packaging
+
+- Version bumped to `0.19.19` (`7b49515`), standalone bot synchronized (`993dbcb`/`09132f7`), package revision `0.19.19-r1`.
+- Runtime menu tab split into `Тест сервисов` (`runtime-services-only.js`) and `Telegram` (`runtime-telegram.js`) — was one `Проверка маршрутов` page.
+- `tools/check-tailscale-rpc-acl.sh` and `tools/check-tsnet-runtime-integration.sh` added as CI guards for the RPC/ACL contract and the watcher-free runtime model, so both classes of bug above (missing ACL entry, resurrecting the watcher) now fail CI instead of shipping silently.
 
 ## 0.19.18-r55 — Tailscale / tsnet standalone conflict preflight
 

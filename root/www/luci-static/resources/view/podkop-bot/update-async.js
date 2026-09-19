@@ -19,10 +19,23 @@ function row(label,value){return E('div',{'class':'pb-row pb-row--plain'},[E('sp
 return base.constructor.extend({
 	render:function(data){
 		var root=base.render.call(this,data),local=this.localComponentsCard();
-		/* Local/package sources are deliberately shown before any online update
-		 * source. A router behind filtering must be repairable without GitHub. */
-		if(root&&root.children&&root.children.length>=2)root.insertBefore(local,root.children[2]||null);
-		else root=E('div',{},[local,root]);
+		/* Order matches the intro paragraph: LuCI, Telegram-bot, Podkop, WARPSCOUT
+		 * are the four modules, in that order, so a reader can find any of them
+		 * without scrolling past the others. Local/package sources are a fallback
+		 * for a blocked GitHub, not one of "the modules" — shown after them,
+		 * right before the danger zone. base.render()'s array is
+		 * [h2, p, luciCard, botCard, podkopCard, warpscoutCard, dangerZone, footer];
+		 * index 6 is dangerZone. */
+		if(root&&root.children&&root.children.length>=7)root.insertBefore(local,root.children[6]||null);
+		else root=E('div',{},[root,local]);
+		/* A direct link (e.g. "Установка / удаление WARPSCOUT" on the WARP Rescue
+		 * settings page) sets location.hash before this view's async load()
+		 * resolves, so the browser's own scroll-to-fragment never finds the
+		 * target element in time. Do it ourselves once the DOM exists. */
+		if(location.hash){
+			var id=location.hash.slice(1);
+			window.setTimeout(function(){var el=document.getElementById(id);if(el)el.scrollIntoView({block:'start'});},0);
+		}
 		return root;
 	},
 
@@ -33,7 +46,7 @@ return base.constructor.extend({
 		var card=E('div',{'class':'cbi-section','style':'max-width:760px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[
 			E('h3',{'style':'margin-top:0;'},_('Локальные компоненты пакета')),
 			E('p',{'style':'color:#888;font-size:90%;margin:.2em 0 .8em;'},_('Сначала используются копии и пакеты, доступные локально или через owfeed. GitHub остаётся вторичным источником обновления — это позволяет восстановить компоненты при его блокировке.')),
-			E('strong',{},_('Telegram-бот из luci-app-podkop-bot')),
+			E('strong',{},_('Telegram-бот')),
 			vendoredLine,vendoredActions,
 			E('div',{'style':'border-top:1px solid rgba(127,127,127,.15);margin:1em 0 .8em;'}),
 			E('strong',{},'hwelp proxy'),
@@ -75,13 +88,13 @@ return base.constructor.extend({
 	fillPodkop:function(holder,force){
 		var self=this;
 		callPodkopUpdate(force).then(function(d){
-			var recheck=E('button',{'class':'cbi-button','style':'display:inline-flex;align-items:center;','click':function(){dom.content(holder,E('div',{'class':'cbi-section','style':'max-width:760px;margin-top:1em;'},[E('h3',{},_('Обновление Podkop')),dot('grey',_('Проверка…'))]));self.fillPodkop(holder,'true');}},_('Проверить версию'));
+			var recheck=E('button',{'class':'cbi-button','style':'display:inline-flex;align-items:center;','click':function(){dom.content(holder,E('div',{'class':'cbi-section','style':'max-width:760px;margin-top:1em;'},[E('h3',{},_('Podkop')),dot('grey',_('Проверка…'))]));self.fillPodkop(holder,'true');}},_('Проверить версию'));
 			var inner;
 			if(!d||!d.ok||d.available===false){
-				inner=[E('h3',{'style':'margin-top:0;'},_('Обновление Podkop')),dot('grey',_('Не удалось проверить (GitHub недоступен напрямую и через прокси).')),(d&&d.releases_url)?E('div',{'style':'margin-top:.5em;'},[E('a',{'href':d.releases_url,'target':'_blank','rel':'noopener'},_('Открыть релизы'))]):E('span',{}),recheck];
+				inner=[E('h3',{'style':'margin-top:0;'},_('Podkop')),dot('grey',_('Не удалось проверить (GitHub недоступен напрямую и через прокси).')),(d&&d.releases_url)?E('div',{'style':'margin-top:.5em;'},[E('a',{'href':d.releases_url,'target':'_blank','rel':'noopener'},_('Открыть релизы'))]):E('span',{}),recheck];
 			}else{
 				var upd=d.update_available;
-				inner=[E('h3',{'style':'margin-top:0;'},_('Обновление ')+(d.name||'Podkop')),
+				inner=[E('h3',{'style':'margin-top:0;'},d.name||'Podkop'),
 					E('div',{'class':'pb-row pb-row--plain'},[E('span',{'class':'pb-row-label'},_('Вариант')),E('span',{'class':'pb-row-val'},d.variant||'—')]),
 					E('div',{'class':'pb-row pb-row--plain'},[E('span',{'class':'pb-row-label'},_('Установлено')),E('span',{'class':'pb-row-val'},d.current||'—')]),
 					E('div',{'class':'pb-row pb-row--plain'},[E('span',{'class':'pb-row-label'},_('В репозитории')),E('span',{'class':'pb-row-val'},[upd?dot('yellow',(d.latest||'—')+_(' — доступно')):dot('green',(d.latest||'—')+_(' — актуально'))])]),

@@ -42,7 +42,7 @@ function pbFooter() {
 	callAppInfo().then(function(a) {
 		if (a && a.ok) {
 			dom.content(span, [
-				E('span', {}, 'luci-app-podkop-bot v' + (a.luci_app_version || '?') + ' · '),
+				E('span', {}, 'Podkop BearGuard v' + (a.luci_app_version || '?') + ' · '),
 				E('a', { 'href': a.repo || 'https://github.com/Medvedolog/luci-app-podkop-bot', 'target': '_blank', 'rel': 'noopener' }, _('репозиторий'))
 			]);
 		}

@@ -19,7 +19,7 @@
 BOT_PATH="/usr/bin/podkop_bot"
 INIT_PATH="/etc/init.d/podkop_bot"
 INSTALLER_PATH="/usr/lib/podkop_bot/install.sh"
-LUCI_APP_VERSION="0.19.18"   # UI/version.txt use the clean X.Y.Z; the packaging -N suffix (control) is stripped before comparison
+LUCI_APP_VERSION="0.19.19"   # UI/version.txt use the clean X.Y.Z; the packaging -N suffix (control) is stripped before comparison
 
 # -- shared UCI lock ---------------------------------------------------------
 # The bot writes the same package from two processes (its command loop and the
@@ -851,7 +851,7 @@ _RESOLV_STATE="/tmp/podkop_bot_resolv.state"
 # later ubus calls. apk-tools consumes HTTP(S)_PROXY from its process environment.
 _bearhole_export_env() {
 	[ "$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)" = "1" ] || return 1
-	_bh_gateway="http://127.0.0.1:1066"
+	_bh_gateway="http://127.0.0.1:$(uci -q get podkop_bearhole.main.port 2>/dev/null || printf 1066)"
 	export http_proxy="$_bh_gateway" https_proxy="$_bh_gateway"
 	export HTTP_PROXY="$_bh_gateway" HTTPS_PROXY="$_bh_gateway"
 	export all_proxy="$_bh_gateway" ALL_PROXY="$_bh_gateway"
@@ -874,7 +874,7 @@ _core_fetch() {
 
 	_bh_enabled=$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)
 	if [ "$_bh_enabled" = "1" ]; then
-		_bh_gateway="http://127.0.0.1:1066"
+		_bh_gateway="http://127.0.0.1:$(uci -q get podkop_bearhole.main.port 2>/dev/null || printf 1066)"
 		if curl -q -4 -fsSL --proxy "$_bh_gateway" --connect-timeout 8 --max-time 90 -o "$_dest" "$_url" 2>/dev/null; then
 			_bh_route=$(cut -d'|' -f1 /tmp/podkop_bot/bearhole/current 2>/dev/null | head -n1)
 			[ -n "$_bh_route" ] || _bh_route="gateway"

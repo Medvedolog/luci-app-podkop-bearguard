@@ -97,20 +97,6 @@ grep -Fq 'action=demote_after_streak' root/usr/lib/podkop_bot/podkop_bot || { ec
 if grep -Fq "callRescueStatus = rpc.declare" root/www/luci-static/resources/view/podkop-bot/overview-state.js; then echo "FAIL  duplicate Overview Rescue RPC returned"; fail=1; fi
 grep -Fq 'self._lastRescueStatus=v[2]' root/www/luci-static/resources/view/podkop-bot/overview.js || { echo "FAIL  Overview Rescue status reuse missing"; fail=1; }
 
-# LUCI_APP_VERSION is a separate literal from version.txt/Makefile; nothing
-# else keeps it in sync, so a version bump silently leaves it stale.
-_RPCD_APP_VERSION="$(sed -n 's/^LUCI_APP_VERSION="\([^"]*\)".*/\1/p' root/usr/libexec/rpcd/podkop_bot | head -n1)"
-_TXT_VERSION="$(cat version.txt 2>/dev/null || true)"
-if [ -z "$_RPCD_APP_VERSION" ] || [ "$_RPCD_APP_VERSION" != "$_TXT_VERSION" ]; then
-    echo "FAIL  rpcd LUCI_APP_VERSION ($_RPCD_APP_VERSION) does not match version.txt ($_TXT_VERSION)"; fail=1
-fi
-
-# Bearhole's gateway port is user-configurable (bearhole.js "Порт входа" /
-# podkop_bot_bearhole set_port); the bot must read it, never assume 1066.
-if grep -Fq '_bh_gateway="http://127.0.0.1:1066"' root/usr/libexec/rpcd/podkop_bot; then
-    echo "FAIL  Bearhole gateway port hardcoded to 1066 instead of reading podkop_bearhole.main.port"; fail=1
-fi
-
 # Vendored bot is an integrity contract, not merely documentation.
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
     :

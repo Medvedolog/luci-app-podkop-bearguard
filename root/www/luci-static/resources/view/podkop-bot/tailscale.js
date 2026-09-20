@@ -10,7 +10,7 @@ var callSetEnabled = rpc.declare({ object:'podkop_bot_tailscale', method:'set_en
 var callSetAccept = rpc.declare({ object:'podkop_bot_tailscale', method:'set_accept_routes', params:['enabled'] });
 var callSetAdvertise = rpc.declare({ object:'podkop_bot_tailscale', method:'set_advertise_exit_node', params:['enabled'] });
 var callReapply = rpc.declare({ object:'podkop_bot_tailscale', method:'reapply' });
-var callDelete = rpc.declare({ object:'podkop_bot_tailscale', method:'delete', params:['purge_state'] });
+var callDelete = rpc.declare({ object:'podkop_bot_tailscale', method:'delete', params:['purge_state','legacy_native'] });
 var callRepairStatus = rpc.declare({ object:'podkop_bot_tsnet_repair', method:'status' });
 var callRepairSet = rpc.declare({ object:'podkop_bot_tsnet_repair', method:'set_enabled', params:['enabled'] });
 
@@ -54,9 +54,38 @@ return view.extend({
 		if(st.standalone_tailscale_running)head.push(E('div',{'class':'alert-message warning','style':'max-width:850px;'},_('Отдельный tailscaled уже работает. Включение встроенного tsnet создаст второй самостоятельный Tailscale-узел и потребует подтверждения.')));
 		if(!st.provider||st.provider==='none'){head.push(E('div',{'class':'alert-message notice','style':'max-width:850px;'},_('Управляемая интеграция tsnet для этого варианта Podkop/Forkop недоступна. Существующий standalone Tailscale выше остаётся доступен только для наблюдения.')));return E('div',{},head);}
 		if(!st.tailscale_supported){head.push(E('div',{'class':'alert-message warning','style':'max-width:850px;'},_('Установленный sing-box не поддерживает Tailscale.')));return E('div',{},head);}
+		if(st.legacy_native_present)head.push(this.legacyCard(st));
 		head.push(st.configured?this.statusCard(st):this.createCard(st));return E('div',{},head);
 	},
+	/* status_json() always scans UCI for a native `config server` /
+	 * protocol=tailscale section, even when the detected provider is not
+	 * forkop-native (podkop_bot_tailscale, native_find_section()). Surface
+	 * that instead of silently letting "Создать" build a second, conflicting
+	 * Tailscale identity next to one that may already be live — this is
+	 * exactly what the Telegram bot's own "Службы" card already does. */
+	legacyCard:function(st){
+		var self=this,status=E('div',{'style':'margin-top:.7em;'}),purge=E('input',{'type':'checkbox'});
+		var del=E('button',{'class':'cbi-button cbi-button-negative','click':ui.createHandlerFn(this,function(){
+			if(!confirm(_('Удалить эту секцию? Если провайдер определён верно (Forkop X/Podkop) — это безопасная уборка старого хвоста от полного Forkop. Если детект провайдера ошибся и на самом деле это обычный штатный Forkop — секция настоящая, и удаление отключит реальный Tailscale-узел. Продолжайте только если уверены, что это хвост, а не рабочий узел.')))return;
+			del.disabled=true;
+			return callDelete(purge.checked,true).then(function(r){if(!r||!r.ok)throw new Error(errText(r&&r.reason));return self.refresh();}).catch(function(e){dom.content(status,E('span',{'style':'color:#b00;'},_('Ошибка: ')+(e.message||e)));del.disabled=false;});
+		})},_('Удалить старую секцию'));
+		return E('div',{'class':'cbi-section','style':'max-width:850px;border:1px solid #e8a33d;'},[
+			E('h3',{},_('Найдена секция Tailscale от штатного Forkop')),
+			E('p',{'class':'description'},_('В UCI Forkop уже есть узел Tailscale (секция «')+(st.legacy_native_section||'?')+_('»), но текущая интеграция определена как «')+providerName(st.provider)+_('» и эту секцию не обслуживает.')),
+			row(_('Hostname'),E('code',{},st.legacy_native_hostname||'—')),
+			row(_('Контрол-сервер'),E('code',{},st.legacy_native_control_url||'—')),
+			row(_('Включена в UCI'),yesno(!!st.legacy_native_enabled)),
+			E('div',{'class':'alert-message warning','style':'margin:.8em 0;'},_('Если это настоящий рабочий узел штатного Forkop, а не забытый хвост после перехода на Forkop X — не удаляйте его. Вместо этого стоит проверить, почему интеграция определилась не как «Forkop (штатная интеграция)».')),
+			E('label',{},[purge,' ',_('Также стереть сохранённое состояние узла на роутере (Identity будет создана заново при следующей настройке).')]),
+			E('div',{'style':'margin-top:.8em;'},[del]),
+			status
+		]);
+	},
 	createCard:function(st){
+		if(st.legacy_native_present){
+			return E('div',{'class':'cbi-section','style':'max-width:850px;'},[E('h3',{},_('Новое подключение')),E('p',{'class':'description'},_('Заблокировано, пока не разобрана найденная выше секция от штатного Forkop — иначе получится два независимых Tailscale-узла.'))]);
+		}
 		var self=this,status=E('div',{'style':'margin-top:.7em;'}),host=E('input',{'class':'cbi-input-text','type':'text','placeholder':'router-home','style':'width:100%;max-width:480px;'}),url=E('input',{'class':'cbi-input-text','type':'url','value':'https://controlplane.tailscale.com','style':'width:100%;max-width:620px;'}),key=E('input',{'class':'cbi-input-password','type':'password','autocomplete':'new-password','style':'width:100%;max-width:620px;'}),accept=E('input',{'type':'checkbox'}),adv=E('input',{'type':'checkbox'});
 		function runCreate(confirmStandalone){btn.disabled=true;dom.content(status,E('em',{},_('Сохраняю узел…')));return callCreate(url.value,key.value,host.value,accept.checked,adv.checked,!!confirmStandalone).then(function(r){if(r&&r.reason==='standalone_tailscale_running'&&r.requires_confirmation){btn.disabled=false;if(!standaloneConfirm())return;return runCreate(true);}if(!r||!r.ok)throw new Error(errText(r&&r.reason));return self.refresh();}).catch(function(e){dom.content(status,E('span',{'style':'color:#b00;'},_('Ошибка: ')+(e.message||e)));btn.disabled=false;});}
 		var btn=E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(this,function(){if(st&&st.standalone_tailscale_running){if(!standaloneConfirm())return;return runCreate(true);}return runCreate(false);})},_('Создать Tailscale-подключение'));

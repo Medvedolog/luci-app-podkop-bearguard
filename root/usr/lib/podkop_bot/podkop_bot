@@ -10873,7 +10873,14 @@ _ts_provider_kind() {
     _p=$(_ts_backend_provider 2>/dev/null)
     case "$_p" in forkop-native|forkop-x|podkop) printf '%s' "$_p"; return 0 ;; esac
     if [ "$PODKOP_VARIANT" = "forkop" ]; then
-        [ -r /usr/lib/singbox/servers.uc ] && printf '%s' forkop-native || printf '%s' forkop-x
+        # See tsnet-provider.sh:tsnet_provider() for why this checks
+        # usr/lib/forkop/singbox/servers.uc (the real installed path) and a
+        # live protocol='tailscale' UCI section, not usr/lib/singbox/servers.uc.
+        if [ -r /usr/lib/forkop/singbox/servers.uc ] || uci -q show forkop 2>/dev/null | grep -q "\.protocol='tailscale'\$"; then
+            printf '%s' forkop-native
+        else
+            printf '%s' forkop-x
+        fi
         return 0
     fi
     [ "$PODKOP_VARIANT" = "original" ] && { printf '%s' podkop; return 0; }

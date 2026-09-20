@@ -22,8 +22,16 @@ _ts_pkg_installed() {
 
 tsnet_provider() {
     if [ -f /etc/config/forkop ]; then
-        # Upstream/full Forkop ships the native server generator here.
-        if [ -r /usr/lib/singbox/servers.uc ]; then
+        # Upstream/full Forkop (ushan0v/forkop) ships its native server
+        # generator at usr/lib/forkop/singbox/servers.uc on the router --
+        # Package/forkop/install in that project's Makefile installs
+        # files/usr/lib/. under usr/lib/forkop/, not directly under usr/lib/.
+        # A live UCI section (protocol='tailscale') is checked too, so an
+        # already-configured native node is still detected even if a future
+        # Forkop release moves the generator again; router-confirmed on a
+        # build where the generator path was reachable but had no marker
+        # file at the old (wrong) location.
+        if [ -r /usr/lib/forkop/singbox/servers.uc ] || uci -q show forkop 2>/dev/null | grep -q "\.protocol='tailscale'\$"; then
             printf '%s\n' forkop-native
         else
             printf '%s\n' forkop-x

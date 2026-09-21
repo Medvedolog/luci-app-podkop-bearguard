@@ -14,6 +14,8 @@ BH_BEGIN="# BEGIN PODKOP BEARHOLE"
 BH_END="# END PODKOP BEARHOLE"
 HWELP=/usr/bin/hwelp-proxy
 OWFEED_SUBSCRIBE=https://repo.owfeed.org/subscribe.sh
+HWELP_GITHUB_API=https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest
+HWELP_SOURCE="$BH_DIR/hwelp.install_source"
 
 mkdir -p "$BH_DIR" 2>/dev/null
 
@@ -138,26 +140,75 @@ bh_pkg_run(){ _proxy=$1; shift; if [ "$_proxy" = direct:// ]; then (unset http_p
 
 bh_owfeed_subscribed(){ grep -qs 'repo\.owfeed\.org' /etc/opkg/*.conf /etc/opkg/*feeds.conf 2>/dev/null&&return 0; grep -Rqs 'repo\.owfeed\.org' /etc/apk/repositories /etc/apk/repositories.d 2>/dev/null&&return 0; return 1; }
 
-bh_install_hwelp(){
-    bh_hwelp_ready&&return 0
-    bh_state_write starting installing_hwelp; bh_log 'event=hwelp_install stage=begin source=owfeed'; _sub="$BH_DIR/owfeed-subscribe.sh"; _opkg_tmp=/etc/opkg/99-hwelp-bootstrap.conf
+bh_hwelp_arch(){
+    . /etc/openwrt_release 2>/dev/null || true
+    if [ -n "${DISTRIB_ARCH:-}" ]; then printf '%s' "$DISTRIB_ARCH"; return; fi
+    case "$(uname -m 2>/dev/null)" in aarch64) printf 'aarch64_generic';; x86_64) printf 'x86_64';; *) uname -m 2>/dev/null;; esac
+}
+
+bh_hwelp_format(){ command -v apk >/dev/null 2>&1 && { printf 'apk'; return; }; command -v opkg >/dev/null 2>&1 && { printf 'ipk'; return; }; printf 'none'; }
+
+bh_install_hwelp_owfeed(){
+    bh_log 'event=hwelp_install stage=source_try source=owfeed'
+    _sub="$BH_DIR/owfeed-subscribe.sh"; _opkg_tmp=/etc/opkg/99-hwelp-bootstrap.conf
     for _proxy in $(bh_bootstrap_http_candidates); do
         rm -f "$_sub" "$_opkg_tmp" 2>/dev/null
         bh_curl "$_proxy" -o "$_sub" "$OWFEED_SUBSCRIBE" >/dev/null 2>&1||continue
         if ! bh_owfeed_subscribed; then bh_pkg_run "$_proxy" sh "$_sub" >/dev/null 2>&1||continue; fi
         if command -v apk >/dev/null 2>&1; then
             bh_pkg_run "$_proxy" apk update >/dev/null 2>&1||continue
-            bh_pkg_run "$_proxy" apk add hwelp-proxy >/dev/null 2>&1||continue
+            bh_pkg_run "$_proxy" apk add --upgrade hwelp-proxy >/dev/null 2>&1||continue
         elif command -v opkg >/dev/null 2>&1; then
             if [ "$_proxy" != direct:// ]; then mkdir -p /etc/opkg; { printf 'option http_proxy %s\n' "$_proxy"; printf 'option https_proxy %s\n' "$_proxy"; } >"$_opkg_tmp"; fi
             bh_pkg_run "$_proxy" opkg update >/dev/null 2>&1||{ rm -f "$_opkg_tmp"; continue; }
             bh_pkg_run "$_proxy" opkg install hwelp-proxy >/dev/null 2>&1||{ rm -f "$_opkg_tmp"; continue; }
             rm -f "$_opkg_tmp"
-        else rm -f "$_sub"; bh_state_write failed package_manager_missing; return 1; fi
+        else rm -f "$_sub"; return 1; fi
         rm -f "$_sub" "$_opkg_tmp" 2>/dev/null
-        if bh_hwelp_ready; then bh_log "event=hwelp_install result=ok version=$(bh_hwelp_version)"; return 0; fi
+        if bh_hwelp_ready; then printf 'owfeed\n' >"$HWELP_SOURCE"; bh_log "event=hwelp_install source=owfeed result=ok version=$(bh_hwelp_version)"; return 0; fi
     done
-    rm -f "$_sub" "$_opkg_tmp" 2>/dev/null; bh_log 'event=hwelp_install result=fail'; bh_state_write failed hwelp_install_failed; return 1
+    rm -f "$_sub" "$_opkg_tmp" 2>/dev/null
+    bh_log 'event=hwelp_install source=owfeed result=fail'
+    return 1
+}
+
+bh_install_hwelp_github(){
+    _arch=$(bh_hwelp_arch); _fmt=$(bh_hwelp_format)
+    [ -n "$_arch" ] && [ "$_fmt" != none ] || return 1
+    _api="$BH_DIR/hwelp-release.$$.json"; _pkg="$BH_DIR/hwelp-package.$$.$_fmt"
+    bh_log "event=hwelp_install stage=source_try source=github arch=$_arch format=$_fmt"
+    for _proxy in $(bh_bootstrap_http_candidates); do
+        rm -f "$_api" "$_pkg" 2>/dev/null
+        bh_curl "$_proxy" -H 'Accept: application/vnd.github+json' -o "$_api" "$HWELP_GITHUB_API" >/dev/null 2>&1||continue
+        if [ "$_fmt" = ipk ]; then
+            _url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^hwelp-proxy_.*_" + $a + "\\.ipk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+        else
+            _url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^hwelp-proxy-.*_" + $a + "\\.apk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+        fi
+        [ -n "$_url" ] || continue
+        bh_curl "$_proxy" -o "$_pkg" "$_url" >/dev/null 2>&1||continue
+        if [ "$_fmt" = ipk ]; then
+            bh_pkg_run "$_proxy" opkg install "$_pkg" >/dev/null 2>&1||continue
+        else
+            bh_pkg_run "$_proxy" apk add --allow-untrusted "$_pkg" >/dev/null 2>&1||continue
+        fi
+        rm -f "$_api" "$_pkg" 2>/dev/null
+        if bh_hwelp_ready; then printf 'github\n' >"$HWELP_SOURCE"; bh_log "event=hwelp_install source=github result=ok version=$(bh_hwelp_version) arch=$_arch format=$_fmt"; return 0; fi
+    done
+    rm -f "$_api" "$_pkg" 2>/dev/null
+    bh_log "event=hwelp_install source=github result=fail arch=$_arch format=$_fmt"
+    return 1
+}
+
+bh_install_hwelp(){
+    bh_state_write starting installing_hwelp
+    bh_log 'event=hwelp_install stage=begin priority=owfeed,github'
+    rm -f "$HWELP_SOURCE" 2>/dev/null
+    if bh_install_hwelp_owfeed; then return 0; fi
+    if bh_install_hwelp_github; then return 0; fi
+    bh_log 'event=hwelp_install result=fail'
+    bh_state_write failed hwelp_install_failed
+    return 1
 }
 
 bh_strip_block(){ _file=$1; [ -f "$_file" ]||return 0; _tmp="$_file.bearhole.$$"; awk -v b="$BH_BEGIN" -v e="$BH_END" '$0==b{skip=1;next}$0==e{skip=0;next}!skip{print}' "$_file" >"$_tmp"&&mv "$_tmp" "$_file"; }

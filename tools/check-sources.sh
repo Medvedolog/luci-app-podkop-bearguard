@@ -111,6 +111,7 @@ grep -Fq 'action=demote_after_streak' root/usr/lib/podkop_bot/podkop_bot || { ec
 if grep -Fq "callRescueStatus = rpc.declare" root/www/luci-static/resources/view/podkop-bot/overview-state.js; then echo "FAIL  duplicate Overview Rescue RPC returned"; fail=1; fi
 grep -Fq 'self._lastRescueStatus=v[2]' root/www/luci-static/resources/view/podkop-bot/overview.js || { echo "FAIL  Overview Rescue status reuse missing"; fail=1; }
 
+BOT_SRC="root/usr/lib/podkop_bot/podkop_bot"
 # Hot-path subprocess regression guards. These do not benchmark CI; they protect
 # the structural wins that matter on small ARM routers.
 grep -Fq 'forkop_child_counts()' "$BOT_SRC" || { echo "perf: one-pass Forkop child classification missing" >&2; fail=1; }

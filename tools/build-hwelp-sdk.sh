@@ -36,5 +36,15 @@ PKG=$(find "$SDK_DIR/bin" -type f \( -name 'hwelp-proxy_*.ipk' -o -name 'hwelp-p
 [ -n "$PKG" ] || { echo "hwelp-proxy package not found after SDK build" >&2; exit 1; }
 
 mkdir -p "$OUT/$ARCH"
-cp -f "$PKG" "$OUT/$ARCH/"
-echo "Built $OUT/$ARCH/$(basename "$PKG")"
+BASE=$(basename "$PKG")
+case "$BASE" in
+    *.apk)
+        STEM=${BASE%.apk}
+        DEST="$OUT/$ARCH/${STEM}_${ARCH}.apk"
+        ;;
+    *)
+        DEST="$OUT/$ARCH/$BASE"
+        ;;
+esac
+cp -f "$PKG" "$DEST"
+echo "Built $DEST"

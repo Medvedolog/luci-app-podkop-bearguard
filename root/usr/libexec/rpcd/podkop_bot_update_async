@@ -99,9 +99,22 @@ method_vendored_install(){
   case "$out" in \{*\}) printf '%s\n' "$out";; *) printf '{"ok":false,"reason":"installer_error"}\n';; esac
 }
 
+method_hwelp_arch(){
+  . /etc/openwrt_release 2>/dev/null || true
+  if [ -n "${DISTRIB_ARCH:-}" ]; then printf '%s' "$DISTRIB_ARCH"; return; fi
+  case "$(uname -m 2>/dev/null)" in aarch64) printf 'aarch64_generic';; x86_64) printf 'x86_64';; *) uname -m 2>/dev/null;; esac
+}
+
+method_hwelp_format(){
+  command -v apk >/dev/null 2>&1 && { printf 'apk'; return; }
+  command -v opkg >/dev/null 2>&1 && { printf 'ipk'; return; }
+  printf 'none'
+}
+
 method_hwelp_status(){
   read -r _in 2>/dev/null || true
   installed=false; ready=false; version=unknown; running=false; pid=0
+  arch=$(method_hwelp_arch); format=$(method_hwelp_format)
   if [ -x "$HWELP" ]; then
     installed=true
     "$HWELP" --check >/dev/null 2>&1 && ready=true
@@ -109,21 +122,18 @@ method_hwelp_status(){
   fi
   hwelp_install_alive && running=true
   [ "$running" = true ] && pid=$(cat "$HWELP_PID" 2>/dev/null)
-  result=null
+  result=null; last_source=unknown; last_version=unknown
   if [ -s "$HWELP_RESULT" ]; then
-    rc=$(cat "$HWELP_RESULT" 2>/dev/null | tr -dc '0-9'); [ -n "$rc" ] || rc=1
+    rc=$(sed -n 's/^rc=//p' "$HWELP_RESULT" | head -n1); case "$rc" in ''|*[!0-9]*) rc=1;; esac
+    last_source=$(sed -n 's/^source=//p' "$HWELP_RESULT" | head -n1); [ -n "$last_source" ] || last_source=unknown
+    last_version=$(sed -n 's/^version=//p' "$HWELP_RESULT" | head -n1); [ -n "$last_version" ] || last_version=unknown
     result=$rc
   fi
-  printf '{"ok":true,"installed":%s,"ready":%s,"version":"%s","installing":%s,"pid":%s,"result":%s}\n' "$installed" "$ready" "$version" "$running" "$pid" "$result"
+  printf '{"ok":true,"installed":%s,"ready":%s,"version":"%s","arch":"%s","format":"%s","installing":%s,"pid":%s,"result":%s,"last_source":"%s","last_version":"%s","sources":["owfeed","github"]}\n' "$installed" "$ready" "$version" "$arch" "$format" "$running" "$pid" "$result" "$last_source" "$last_version"
 }
 
 method_hwelp_install(){
   read -r _in 2>/dev/null || true
-  if [ -x "$HWELP" ] && "$HWELP" --check >/dev/null 2>&1; then
-    v=$("$HWELP" --version 2>/dev/null | awk '{print $2;exit}')
-    printf '{"ok":true,"started":false,"reason":"already_installed","version":"%s"}\n' "${v:-unknown}"
-    return
-  fi
   [ -x "$BEARHOLE_CTL" ] || { printf '{"ok":false,"reason":"bearhole_control_missing"}\n'; return; }
   if hwelp_install_alive; then
     printf '{"ok":true,"started":false,"reason":"already_running"}\n'; return
@@ -132,7 +142,16 @@ method_hwelp_install(){
   (
     "$BEARHOLE_CTL" install-hwelp >/dev/null 2>&1
     rc=$?
-    printf '%s\n' "$rc" > "$HWELP_RESULT"
+    source=unknown
+    [ -s /tmp/podkop_bot/bearhole/hwelp.install_source ] && source=$(cat /tmp/podkop_bot/bearhole/hwelp.install_source 2>/dev/null)
+    version=unknown
+    [ -x "$HWELP" ] && version=$("$HWELP" --version 2>/dev/null | awk '{print $2;exit}')
+    [ -n "$version" ] || version=unknown
+    {
+      printf 'rc=%s\n' "$rc"
+      printf 'source=%s\n' "$source"
+      printf 'version=%s\n' "$version"
+    } > "$HWELP_RESULT"
     rm -f "$HWELP_PID" 2>/dev/null
   ) >/dev/null 2>&1 &
   p=$!; printf '%s\n' "$p" > "$HWELP_PID"

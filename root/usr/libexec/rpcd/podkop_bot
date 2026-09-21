@@ -82,6 +82,25 @@ podkop_uci_pkg() {
 	esac
 }
 
+podkop_variant_display() {
+	_variant="$1"
+	if [ "$_variant" = "forkop" ] && [ -r /usr/lib/podkop_bot/tsnet-provider.sh ]; then
+		. /usr/lib/podkop_bot/tsnet-provider.sh
+		case "$(tsnet_provider 2>/dev/null)" in
+			forkop-x) printf 'Forkop X'; return ;;
+			forkop-native) printf 'Forkop'; return ;;
+		esac
+	fi
+	case "$_variant" in
+		forkop) printf 'Forkop' ;;
+		plus) printf 'Podkop Plus' ;;
+		netshift) printf 'NetShift' ;;
+		evolution) printf 'Podkop Evolution' ;;
+		original|podkop) printf 'Podkop' ;;
+		*) printf '%s' "$_variant" ;;
+	esac
+}
+
 # -- cached install.sh status. Each `install.sh --action status` re-parses the
 # whole installer and runs ~12 `opkg list-installed` scans, which is slow on
 # opkg systems (noticeable Wizard/Overview lag). Multiple rpc methods call it on
@@ -214,6 +233,7 @@ method_status() {
 
 	_variant=$(printf '%s' "$_out" | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	[ -z "$_variant" ] && _variant="unknown"
+	_variant_display=$(podkop_variant_display "$_variant")
 	_pkver=$(printf '%s' "$_out" | sed -n 's/.*"podkop_version":"\([^"]*\)".*/\1/p')
 
 	if bot_is_running; then _running="true"; else _running="false"; fi
@@ -234,7 +254,7 @@ method_status() {
 
 	# _body = installer JSON with BOTH braces stripped, so we control the wrapper.
 	_body=$(printf '%s' "$_out" | sed -e 's/^{//' -e 's/}$//')
-	printf '{"available":true,"service_running":%s,"autostart":%s,%s,%s,%s}\n' "$_running" "$_autostart" "$_mixed" "$_deprecated" "$_body"
+	printf '{"available":true,"service_running":%s,"autostart":%s,"podkop_variant_display":"%s",%s,%s,%s}\n' "$_running" "$_autostart" "$_variant_display" "$_mixed" "$_deprecated" "$_body"
 }
 
 # -- service method ----------------------------------------------------------

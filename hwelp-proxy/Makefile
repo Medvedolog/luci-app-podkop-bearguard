@@ -12,7 +12,7 @@ define Package/hwelp-proxy
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Small HTTP to SOCKS/HTTP/direct failover proxy for Bearhole
-  URL:=https://github.com/Medvedolog/luci-app-podkop-bot
+  URL:=https://github.com/Medvedolog/luci-app-podkop-bearguard
   DEPENDS:=+libc
 endef
 

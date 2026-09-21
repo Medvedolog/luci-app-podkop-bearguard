@@ -45,7 +45,7 @@ return base.constructor.extend({
 		var hwelpLine=E('div',{},dot('grey',_('проверяю…'))),hwelpActions=E('div',{'style':'margin-top:.5em;'});
 		var card=E('div',{'class':'cbi-section','style':'max-width:760px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[
 			E('h3',{'style':'margin-top:0;'},_('Локальные компоненты пакета')),
-			E('p',{'style':'color:#888;font-size:90%;margin:.2em 0 .8em;'},_('Сначала используются копии и пакеты, доступные локально или через owfeed. GitHub остаётся вторичным источником обновления — это позволяет восстановить компоненты при его блокировке.')),
+			E('p',{'style':'color:#888;font-size:90%;margin:.2em 0 .8em;'},_('Для встроенного бота используется локальная копия пакета. HWELP обновляется автоматически: сначала через owfeed, а при недоступности — из подходящего asset GitHub Releases.')),
 			E('strong',{},_('Telegram-бот')),
 			vendoredLine,vendoredActions,
 			E('div',{'style':'border-top:1px solid rgba(127,127,127,.15);margin:1em 0 .8em;'}),
@@ -76,13 +76,25 @@ return base.constructor.extend({
 	fillHwelp:function(line,actions){
 		var self=this;
 		callHwelpStatus().then(function(d){
-			if(!d||!d.ok){dom.content(line,dot('grey',_('Статус hwelp proxy недоступен')));return;}
-			if(d.installing){dom.content(line,dot('yellow',_('Установка hwelp proxy…')));dom.content(actions,[]);window.setTimeout(function(){self.fillHwelp(line,actions);},1200);return;}
-			if(d.installed&&d.ready){dom.content(line,dot('green',_('Установлен')+(d.version&&d.version!=='unknown'?(' · v'+d.version):'')));dom.content(actions,[]);return;}
-			if(d.installed&&!d.ready)dom.content(line,dot('red',_('Установлен, но самопроверка не пройдена')));else dom.content(line,dot('grey',_('Не установлен')));
-			var status=E('span',{'style':'margin-left:.6em;'}),btn=E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(self,function(){btn.disabled=true;dom.content(status,dot('yellow',_('Запускаю установку из owfeed…')));return callHwelpInstall().then(function(r){if(!r||r.ok===false){dom.content(status,dot('red',_('Не удалось запустить установку')+((r&&r.reason)?(': '+r.reason):'')));btn.disabled=false;return;}self.fillHwelp(line,actions);}).catch(function(){dom.content(status,dot('red',_('Ошибка запуска установки')));btn.disabled=false;});})},d.installed?_('Переустановить hwelp proxy'):_('Установить hwelp proxy'));
+			if(!d||!d.ok){dom.content(line,dot('grey',_('Статус hwelp proxy недоступен')));dom.content(actions,[]);return;}
+			if(d.installing){dom.content(line,dot('yellow',_('Проверяю источники и устанавливаю hwelp proxy…')));dom.content(actions,[]);window.setTimeout(function(){self.fillHwelp(line,actions);},1200);return;}
+			var state=d.installed?(d.ready?dot('green',_('Готов')+(d.version&&d.version!=='unknown'?(' · v'+d.version):'')):dot('red',_('Установлен, но самопроверка не пройдена'))):dot('grey',_('Не установлен'));
+			var meta=E('div',{'style':'margin-top:.35em;'},[
+				row(_('Архитектура'),d.arch||'—'),
+				row(_('Формат пакета'),String(d.format||'—').toUpperCase()),
+				row(_('Источники'),_('owfeed → GitHub Releases'))
+			]);
+			if(d.last_source&&d.last_source!=='unknown')meta.appendChild(row(_('Последняя установка'),d.last_source+(d.last_version&&d.last_version!=='unknown'?(' · v'+d.last_version):'')));
+			dom.content(line,[state,meta]);
+			var status=E('span',{'style':'margin-left:.6em;'}),btn=E('button',{'class':'cbi-button cbi-button-action','click':ui.createHandlerFn(self,function(){
+				btn.disabled=true;dom.content(status,dot('yellow',_('Сначала пробую owfeed, затем GitHub Releases…')));
+				return callHwelpInstall().then(function(r){
+					if(!r||r.ok===false){dom.content(status,dot('red',_('Не удалось запустить установку')+((r&&r.reason)?(': '+r.reason):'')));btn.disabled=false;return;}
+					self.fillHwelp(line,actions);
+				}).catch(function(){dom.content(status,dot('red',_('Ошибка запуска установки')));btn.disabled=false;});
+			})},d.installed?_('Проверить и обновить HWELP'):_('Установить HWELP'));
 			dom.content(actions,[btn,status]);
-		}).catch(function(){dom.content(line,dot('grey',_('Статус hwelp proxy недоступен')));});
+		}).catch(function(){dom.content(line,dot('grey',_('Статус hwelp proxy недоступен')));dom.content(actions,[]);});
 	},
 
 	fillPodkop:function(holder,force){

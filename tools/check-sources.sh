@@ -111,6 +111,17 @@ grep -Fq 'action=demote_after_streak' root/usr/lib/podkop_bot/podkop_bot || { ec
 if grep -Fq "callRescueStatus = rpc.declare" root/www/luci-static/resources/view/podkop-bot/overview-state.js; then echo "FAIL  duplicate Overview Rescue RPC returned"; fail=1; fi
 grep -Fq 'self._lastRescueStatus=v[2]' root/www/luci-static/resources/view/podkop-bot/overview.js || { echo "FAIL  Overview Rescue status reuse missing"; fail=1; }
 
+# Hot-path subprocess regression guards. These do not benchmark CI; they protect
+# the structural wins that matter on small ARM routers.
+grep -Fq 'forkop_child_counts()' "$BOT_SRC" || { echo "perf: one-pass Forkop child classification missing" >&2; fail=1; }
+grep -Fq '_route_request "$args" "65" "5" "6" "LAST_ROUTE_POLL" "$_ctx_loaded"' "$BOT_SRC" || { echo "perf: POLL transport context reuse missing" >&2; fail=1; }
+grep -Fq 'check_health 1' "$BOT_SRC" || { echo "perf: watchdog health context reuse missing" >&2; fail=1; }
+grep -Fq 'HEALTH_TG_DIRECT="$_direct"' "$BOT_SRC" || { echo "perf: health state handoff missing" >&2; fail=1; }
+grep -Fq '(.message.document.file_size // 0)' "$BOT_SRC" || { echo "perf: Telegram update metadata flattening missing" >&2; fail=1; }
+if grep -Fq '_validate_kb "$kb"' "$BOT_SRC"; then
+    echo "perf: duplicate reply_markup validation jq returned" >&2; fail=1
+fi
+
 # Vendored bot is an integrity contract, not merely documentation.
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
     :

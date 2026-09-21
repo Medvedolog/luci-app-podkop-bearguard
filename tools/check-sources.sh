@@ -96,6 +96,15 @@ done
 grep -Fq 'ensure_bearhole_uci()' root/usr/libexec/rpcd/podkop_bot_bearhole || { echo "FAIL  Bearhole rpcd lazy UCI init missing"; fail=1; }
 grep -Fq 'bh_cfg_ensure()' root/usr/lib/podkop_bot/bearhole.sh || { echo "FAIL  Bearhole control lazy UCI init missing"; fail=1; }
 
+# Runtime service matrix contract: the live renderer is the one actually used
+# by runtime-services-only. It must not reintroduce visible HTTP/latency labels.
+RUNTIME_LIVE_JS='root/www/luci-static/resources/view/podkop-bot/runtime-live.js'
+grep -Fq 'serviceLamp(s)' "$RUNTIME_LIVE_JS" || { echo "FAIL  live route matrix lamp renderer missing"; fail=1; }
+if grep -Fq 'serviceLabel(s)' "$RUNTIME_LIVE_JS"; then
+    echo "FAIL  live route matrix visible HTTP/latency labels returned"; fail=1
+fi
+grep -Fq "HTTP-код, задержка и другие детали доступны при наведении" "$RUNTIME_LIVE_JS" || { echo "FAIL  live route matrix tooltip UX contract missing"; fail=1; }
+
 # Transport/UI regression guards.
 if grep -Fq 'while ! _warp_rescue_pid_alive' root/usr/lib/podkop_bot/podkop_bot; then echo "FAIL  blocking WARP Rescue wait returned"; fail=1; fi
 grep -Fq 'action=demote_after_streak' root/usr/lib/podkop_bot/podkop_bot || { echo "FAIL  bounded POLL demotion missing"; fail=1; }

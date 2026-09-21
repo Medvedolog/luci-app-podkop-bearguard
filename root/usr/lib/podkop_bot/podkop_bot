@@ -1095,10 +1095,22 @@ SB_RESTART_LOG="${BOT_DIR}/sb_restart_log"
 # an upstream DNS-failover storm no longer reads as sing-box dying repeatedly.
 SB_RELOAD_LOG="${BOT_DIR}/sb_reload_log"
 get_singbox_version_display() {
+    # Cache key is the sing-box binary's inode:mtime:size (same signature style
+    # as tsnet_capable() in tsnet-provider.sh) so a package replace/downgrade —
+    # e.g. Forkop switching the installed build from -extended to standard —
+    # invalidates the cache instead of serving a stale version string forever.
+    local _sb_bin _sb_key
+    _sb_bin=$(command -v sing-box 2>/dev/null)
+    if [ -n "$_sb_bin" ]; then
+        _sb_key=$(stat -c '%i:%Y:%s' "$_sb_bin" 2>/dev/null)
+        [ -n "$_sb_key" ] || _sb_key=$(ls -ln "$_sb_bin" 2>/dev/null | awk '{print $5":"$6":"$7":"$8}')
+    fi
+
     # Skip cache if it contains a negative result — unknown must not be persisted.
     if [ -s "$SB_VER_CACHE" ]; then
-        _cached_sbv=$(cat "$SB_VER_CACHE" 2>/dev/null)
-        if [ -n "$_cached_sbv" ] && [ "$_cached_sbv" != "unknown" ]; then
+        local _cached_key _cached_sbv
+        IFS='|' read -r _cached_key _cached_sbv < "$SB_VER_CACHE" 2>/dev/null
+        if [ -n "$_cached_sbv" ] && [ "$_cached_sbv" != "unknown" ] && [ "$_cached_key" = "$_sb_key" ]; then
             printf '%s' "$_cached_sbv"; return
         fi
     fi
@@ -1134,7 +1146,7 @@ get_singbox_version_display() {
     # would hide a valid version on the next call after state-file appears).
     if [ "$ver" != "unknown" ]; then
         mkdir -p "$BOT_DIR" 2>/dev/null
-        printf '%s' "$ver" > "$SB_VER_CACHE" 2>/dev/null
+        printf '%s|%s' "$_sb_key" "$ver" > "$SB_VER_CACHE" 2>/dev/null
     else
         rm -f "$SB_VER_CACHE" 2>/dev/null
     fi

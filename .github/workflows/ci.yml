@@ -69,6 +69,20 @@ jobs:
             ff4a38a397caa2cfe1c39e18f84ddede14878221b3593c3f2c4cfe24e3ec4c25 \
             aarch64_cortex-a53 dist
 
+      - name: Build generic AArch64 HWELP IPK for OpenWrt 24.10.5 armsr
+        run: |
+          sh tools/build-hwelp-sdk.sh \
+            https://downloads.openwrt.org/releases/24.10.5/targets/armsr/armv8/openwrt-sdk-24.10.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst \
+            62871a2598677081555a127c89a9d2fcb8ef8b42bd1f989104365be4f79c32b1 \
+            aarch64_generic dist
+
+      - name: Build generic AArch64 HWELP APK for OpenWrt 25.12.5 armsr
+        run: |
+          sh tools/build-hwelp-sdk.sh \
+            https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-sdk-25.12.5-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst \
+            1b0316604a3e820b2b008a1baff3f9dac6716af942bef800930e58c7de98c98b \
+            aarch64_generic dist
+
       - name: Merge native artifacts into artifact contract
         run: |
           set -eu
@@ -79,8 +93,10 @@ jobs:
             cp -a "$d"/. "dist/$arch/"
           done
           find dist -maxdepth 2 -type f -print | sort
-          test -n "$(find dist/aarch64_cortex-a53 -maxdepth 1 -type f -name 'hwelp-proxy_*.ipk' -print -quit)"
-          test -n "$(find dist/aarch64_cortex-a53 -maxdepth 1 -type f -name 'hwelp-proxy-*.apk' -print -quit)"
+          test -n "$(find dist/aarch64_cortex-a53 -maxdepth 1 -type f -name 'hwelp-proxy_*_aarch64_cortex-a53.ipk' -print -quit)"
+          test -n "$(find dist/aarch64_cortex-a53 -maxdepth 1 -type f -name 'hwelp-proxy-*_aarch64_cortex-a53.apk' -print -quit)"
+          test -n "$(find dist/aarch64_generic -maxdepth 1 -type f -name 'hwelp-proxy_*_aarch64_generic.ipk' -print -quit)"
+          test -n "$(find dist/aarch64_generic -maxdepth 1 -type f -name 'hwelp-proxy-*_aarch64_generic.apk' -print -quit)"
           test -n "$(find dist/x86_64 -maxdepth 1 -type f -name 'hwelp-proxy*' -print -quit)"
 
       - uses: actions/upload-artifact@v7

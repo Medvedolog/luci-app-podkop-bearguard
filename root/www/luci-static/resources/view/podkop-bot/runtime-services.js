@@ -7,7 +7,7 @@ function dot(c,label){return E('span',{'style':'display:inline-flex;align-items:
 function ageText(ts){var n=parseInt(ts||0,10);if(!n)return '—';var s=Math.max(0,Math.floor(Date.now()/1000)-n);if(s<60)return _('только что');if(s<3600)return Math.floor(s/60)+_(' мин назад');if(s<86400)return Math.floor(s/3600)+_(' ч назад');return Math.floor(s/86400)+_(' дн назад');}
 function tgStatusNode(x){var s=x&&x.status||'';if(s==='VALID')return dot('green','VALID');if(s.indexOf('REACHABLE_')===0)return dot('yellow',s.replace('REACHABLE_',''));if(s==='FAIL')return dot('red','FAIL');return dot('grey',_('ОЖИДАЕТ'));}
 function serviceColour(s){if(!s)return 'grey';if(s.status==='ok')return 'green';if(s.status==='blocked')return 'yellow';if(s.status==='fail'||s.status==='error'||s.status==='timeout')return 'red';return 'grey';}
-function serviceLabel(s){if(!s)return '—';var parts=[];if(s.code&&s.code!=='000')parts.push(String(s.code));if(s.ms>0)parts.push(String(s.ms)+' ms');return parts.length?parts.join(' · '):(s.status||'—');}
+function serviceLamp(s){return E('span',{'style':'display:inline-block;width:.78em;height:.78em;border-radius:50%;background:'+(COLOURS[serviceColour(s)]||COLOURS.grey)+';box-shadow:0 0 0 1px rgba(127,127,127,.18);vertical-align:middle;'});}
 
 return base.constructor.extend({
 	renderBatch:function(results){
@@ -16,7 +16,7 @@ return base.constructor.extend({
 			((r.d&&r.d.services)||[]).forEach(function(s){if(s&&s.name&&!seen[s.name]){seen[s.name]=1;names.push(s.name);}});
 		});
 		var head=[E('th',{'style':'text-align:left;position:sticky;left:0;background:var(--background-color-high,var(--background-color,#222));z-index:2;min-width:190px;'},_('Маршрут')),E('th',{'style':'text-align:left;min-width:145px;'},_('Выход'))];
-		names.forEach(function(n){head.push(E('th',{'style':'text-align:center;min-width:105px;white-space:normal;'},n));});
+		names.forEach(function(n){head.push(E('th',{'style':'text-align:center;min-width:68px;max-width:86px;white-space:normal;font-size:90%;line-height:1.15;'},n));});
 		head.push(E('th',{'style':'text-align:right;min-width:85px;'},_('Скорость')));
 		var rows=(results||[]).map(function(r){
 			if(!r.d||r.d.available===false){
@@ -25,13 +25,13 @@ return base.constructor.extend({
 			}
 			var d=r.d,g=d.geo||{},by={};((d.services)||[]).forEach(function(s){if(s&&s.name)by[s.name]=s;});
 			var cells=[E('td',{'style':'position:sticky;left:0;background:var(--background-color-high,var(--background-color,#222));z-index:1;font-weight:600;max-width:260px;overflow-wrap:anywhere;'},r.sec),E('td',{'style':'white-space:normal;'},[(g.country||'—'),g.ip?E('div',{'style':'color:#888;font-size:82%;'},g.ip):E('span',{})])];
-			names.forEach(function(n){var s=by[n],tip='';if(s){tip=[s.status||'',s.code&&s.code!=='000'?('HTTP '+s.code):'',s.ms>0?(s.ms+' ms'):'',s.geo||''].filter(Boolean).join(' · ');}cells.push(E('td',{'style':'text-align:center;vertical-align:middle;','title':tip},dot(serviceColour(s),serviceLabel(s))));});
+			names.forEach(function(n){var s=by[n],tip=s?[n,s.status||'',s.code&&s.code!=='000'?('HTTP '+s.code):'',s.ms>0?(s.ms+' ms'):'',s.geo||''].filter(Boolean).join(' · '):(n+' · '+_('нет данных'));cells.push(E('td',{'style':'text-align:center;vertical-align:middle;padding-left:.35em;padding-right:.35em;','title':tip},serviceLamp(s)));});
 			var sp=d.speed||{},speed=sp.mbps?sp.mbps+' Mbps':(sp.status||'—');cells.push(E('td',{'style':'text-align:right;white-space:nowrap;'},speed));
 			return E('tr',{},cells);
 		});
 		return E('div',{'class':'cbi-section pb-card','style':'max-width:100%;'},[
 			E('h3',{'style':'margin-top:0;'},_('Матрица сервисов по маршрутам')),
-			E('p',{'class':'pb-hint-90','style':'margin-top:0;'},_('Показаны все сервисы полной диагностики. В ячейке — HTTP-код и задержка; полный статус доступен по наведению.')),
+			E('p',{'class':'pb-hint-90','style':'margin-top:0;'},_('Светофор показывает результат проверки сервиса. HTTP-код, задержка и другие детали доступны при наведении на лампочку.')),
 			E('div',{'style':'overflow-x:auto;max-width:100%;'},[E('table',{'class':'table','style':'width:max-content;min-width:100%;border-collapse:collapse;'},[E('thead',{},E('tr',{},head)),E('tbody',{},rows)])])
 		]);
 	},

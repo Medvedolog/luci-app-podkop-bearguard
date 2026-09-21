@@ -53,6 +53,11 @@ grep -Fq 'BH_PROXY=/usr/bin/hwelp-proxy' root/etc/init.d/podkop-bearhole || { ec
 [ ! -e root/usr/bin/podkop-bearhole-proxy ] || { echo "FAIL  retired ucode Bearhole helper returned"; fail=1; }
 grep -Fq 'install-hwelp' root/usr/lib/podkop_bot/bearhole.sh || { echo "FAIL  on-demand HWELP bootstrap missing"; fail=1; }
 grep -Fq 'set_port' root/usr/libexec/rpcd/podkop_bot_bearhole || { echo "FAIL  HWELP configurable port RPC missing"; fail=1; }
+grep -Fq 'priority=owfeed,github' root/usr/lib/podkop_bot/bearhole.sh || { echo "FAIL  HWELP owfeed -> GitHub fallback contract missing"; fail=1; }
+grep -Fq 'luci-app-podkop-bearguard/releases/latest' root/usr/lib/podkop_bot/bearhole.sh || { echo "FAIL  HWELP GitHub release endpoint missing"; fail=1; }
+grep -Fq 'aarch64_generic' .github/workflows/ci.yml || { echo "FAIL  generic AArch64 HWELP CI build missing"; fail=1; }
+grep -Fq 'aarch64_cortex-a53' .github/workflows/ci.yml || { echo "FAIL  Cortex-A53 HWELP CI build missing"; fail=1; }
+grep -Fq "owfeed → GitHub Releases" root/www/luci-static/resources/view/podkop-bot/update-async.js || { echo "FAIL  HWELP source priority missing from Update UI"; fail=1; }
 
 # Bearhole r35 contracts: UCI is user-owned, upgrade hooks are quiet/preserving,
 # HWELP cannot be abandoned after a few crashes, and mobile/manual-probe UX is

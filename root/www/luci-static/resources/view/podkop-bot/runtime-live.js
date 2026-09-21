@@ -5,7 +5,7 @@
 var COLOURS={green:'#33a02c',yellow:'#e8a33d',grey:'#888888',red:'#cc2b2b'};
 function dot(c,label){return E('span',{'style':'display:inline-flex;align-items:center;gap:.35em;min-width:0;'},[E('span',{'style':'width:.65em;height:.65em;border-radius:50%;display:inline-block;flex:none;background:'+(COLOURS[c]||COLOURS.grey)+';'}),E('span',{'style':'min-width:0;overflow-wrap:anywhere;'},label)]);}
 function serviceColour(s){if(!s)return 'grey';if(s.status==='ok')return 'green';if(s.status==='blocked')return 'yellow';if(s.status==='fail'||s.status==='error'||s.status==='timeout')return 'red';return 'grey';}
-function serviceLabel(s){if(!s)return '—';var p=[];if(s.code&&s.code!=='000')p.push(String(s.code));if(s.ms>0)p.push(String(s.ms)+' ms');return p.length?p.join(' · '):(s.status||'—');}
+function serviceLamp(s){return E('span',{'style':'display:inline-block;width:.78em;height:.78em;border-radius:50%;background:'+(COLOURS[serviceColour(s)]||COLOURS.grey)+';box-shadow:0 0 0 1px rgba(127,127,127,.18);vertical-align:middle;'});}
 function normEndpoint(s){return String(s||'').replace(/^socks5h?:\/\//,'').replace(/#.*$/,'').replace(/^[^@]*@/,'');}
 
 return base.constructor.extend({
@@ -44,19 +44,19 @@ return base.constructor.extend({
 			((d.services)||[]).forEach(function(s){if(s&&s.name&&!seenNames[s.name]){seenNames[s.name]=1;names.push(s.name);}});
 		});
 		var head=[E('th',{'style':'text-align:left;position:sticky;left:0;background:var(--background-color-high,var(--background-color,#222));z-index:2;min-width:165px;'},_('Маршрут'))];
-		names.forEach(function(n){head.push(E('th',{'style':'text-align:center;min-width:105px;white-space:normal;'},n));});
+		names.forEach(function(n){head.push(E('th',{'style':'text-align:center;min-width:68px;max-width:86px;white-space:normal;font-size:90%;line-height:1.15;'},n));});
 		head.push(E('th',{'style':'text-align:right;min-width:85px;'},_('Скорость')));
 		var rows=filtered.map(function(r){
 			if(!r.d||r.d.available===false){var why=(r.d&&(r.d.reason||r.d.detail))||r.reason||_('нет результата');return E('tr',{},[E('td',{'style':'position:sticky;left:0;background:var(--background-color-high,var(--background-color,#222));z-index:1;font-weight:600;'},r.sec),E('td',{'colspan':String(names.length+1)},dot(r.d&&r.d.available===false?'yellow':'red',why))]);}
 			var d=r.d,by={};(d.services||[]).forEach(function(s){if(s&&s.name)by[s.name]=s;});
 			var label=r.type==='warp'?_('WARP Rescue'):String(r.sec||'').replace(/\s+—\s+.*$/,'');
 			var cells=[E('td',{'style':'position:sticky;left:0;background:var(--background-color-high,var(--background-color,#222));z-index:1;font-weight:600;max-width:210px;overflow-wrap:anywhere;'},label)];
-			names.forEach(function(n){var s=by[n],tip='';if(s)tip=[s.status||'',s.code&&s.code!=='000'?('HTTP '+s.code):'',s.ms>0?(s.ms+' ms'):'',s.geo||''].filter(Boolean).join(' · ');cells.push(E('td',{'style':'text-align:center;vertical-align:middle;','title':tip},dot(serviceColour(s),serviceLabel(s))));});
+			names.forEach(function(n){var s=by[n],tip=s?[n,s.status||'',s.code&&s.code!=='000'?('HTTP '+s.code):'',s.ms>0?(s.ms+' ms'):'',s.geo||''].filter(Boolean).join(' · '):(n+' · '+_('нет данных'));cells.push(E('td',{'style':'text-align:center;vertical-align:middle;padding-left:.35em;padding-right:.35em;','title':tip},serviceLamp(s)));});
 			var sp=d.speed||{},speed=sp.mbps?sp.mbps+' Mbps':(sp.status||'—');cells.push(E('td',{'style':'text-align:right;white-space:nowrap;'},speed));return E('tr',{},cells);
 		});
 		return E('div',{'class':'cbi-section pb-card','style':'max-width:100%;'},[
 			E('h3',{'style':'margin-top:0;'},_('Матрица сервисов по маршрутам')),
-			E('p',{'class':'pb-hint-90','style':'margin-top:0;'},_('Одна строка — один маршрут. Адреса прокси и IP выхода скрыты; подробности доступны в одиночной проверке.')),
+			E('p',{'class':'pb-hint-90','style':'margin-top:0;'},_('Одна строка — один маршрут. В матрице показаны только светофоры; HTTP-код, задержка и другие детали доступны при наведении. Адреса прокси и IP выхода скрыты.')),
 			E('div',{'style':'overflow-x:auto;max-width:100%;'},[E('table',{'class':'table','style':'width:max-content;min-width:100%;border-collapse:collapse;'},[E('thead',{},E('tr',{},head)),E('tbody',{},rows)])])
 		]);
 	}

@@ -30,13 +30,28 @@ bh_cfg_get(){ _k=$1; _d=$2; _v=$(uci -q get "podkop_bearhole.main.$_k" 2>/dev/nu
 bh_cfg_ensure(){ [ -e /etc/config/podkop_bearhole ]||{ mkdir -p /etc/config||return 1; : >/etc/config/podkop_bearhole||return 1; }; uci -q get podkop_bearhole.main >/dev/null 2>&1||uci -q set podkop_bearhole.main=bearhole; }
 bh_cfg_set(){ _k=$1; _v=$2; bh_cfg_ensure||return 1; uci -q set "podkop_bearhole.main.$_k=$_v"&&uci -q commit podkop_bearhole; }
 bh_port(){ _p=$(bh_cfg_get port 1066); case "$_p" in ''|*[!0-9]*) _p=1066;; esac; [ "$_p" -ge 1024 ] 2>/dev/null&&[ "$_p" -le 65535 ] 2>/dev/null||_p=1066; printf '%s' "$_p"; }
+bh_ip_syntax_valid(){
+    _ip="$1"
+    case "$_ip" in
+        127.0.0.1) return 0;;
+        0.0.0.0|::|fe80:*|FE80:*) return 1;;
+    esac
+    if printf '%s' "$_ip" | grep -q ':'; then
+        printf '%s' "$_ip" | grep -Eq '^[0-9A-Fa-f:]+$'
+        return $?
+    fi
+    printf '%s' "$_ip" | awk -F. '
+        NF!=4{bad=1}
+        {for(i=1;i<=4;i++) if($i !~ /^[0-9]+$/ || $i<0 || $i>255) bad=1}
+        END{exit bad?1:0}' >/dev/null 2>&1
+}
 bh_normalize_listen_ips(){
     _raw="$1"; _out="127.0.0.1"
     for _ip in $(printf '%s' "$_raw" | tr ';' ' '); do
         _ip=$(printf '%s' "$_ip" | tr -d '[:space:]')
         [ -n "$_ip" ] || continue
         [ "$_ip" = 127.0.0.1 ] && continue
-        case "$_ip" in 0.0.0.0|::) continue;; esac
+        bh_ip_syntax_valid "$_ip" || return 1
         case " $_out " in *" $_ip "*) ;; *) _out="$_out $_ip";; esac
     done
     printf '%s' "$(printf '%s' "$_out" | tr ' ' ';')"
@@ -44,7 +59,6 @@ bh_normalize_listen_ips(){
 bh_listen_configured(){ bh_normalize_listen_ips "$(bh_cfg_get listen_ips '')"; }
 bh_ip_assigned(){
     _ip="$1"; [ "$_ip" = 127.0.0.1 ] && return 0
-    case "$_ip" in fe80:*|FE80:*) return 1;; esac
     if printf '%s' "$_ip" | grep -q ':'; then
         ip -6 -o addr show 2>/dev/null | awk -v a="$_ip" '{split($4,x,"/"); if(x[1]==a) ok=1} END{exit !ok}'
     else
@@ -54,26 +68,28 @@ bh_ip_assigned(){
 bh_listen_active(){ [ -s "$BH_LISTEN_ACTIVE" ] && cat "$BH_LISTEN_ACTIVE" || printf '127.0.0.1'; }
 bh_prepare_listeners(){
     _port=$(bh_port); _prev=" $(bh_listen_active | tr ';' ' ') "; _out="127.0.0.1"
-    for _ip in $(bh_listen_configured | tr ';' ' '); do
+    _running=false
+    _pid=$(ubus call service list '{"name":"podkop-bearhole"}' 2>/dev/null | jq -r '.["podkop-bearhole"].instances[]?.pid // 0' 2>/dev/null | head -n1)
+    case "$_pid" in ''|*[!0-9]*) _pid=0;; esac
+    [ "$_pid" -gt 0 ] 2>/dev/null && kill -0 "$_pid" 2>/dev/null && _running=true
+    _configured=$(bh_listen_configured) || _configured="127.0.0.1"
+    for _ip in $(printf '%s' "$_configured" | tr ';' ' '); do
         [ "$_ip" = 127.0.0.1 ] && continue
         if ! bh_ip_assigned "$_ip"; then
             bh_log "event=listener_skip listen=$_ip reason=address_absent"
             continue
         fi
-        case "$_prev" in
-            *" $_ip "*) ;;
-            *)
-                if [ -x "$HWELP" ] && ! "$HWELP" -l "$_ip" -p "$_port" --check-bind >/dev/null 2>&1; then
-                    bh_log "event=listener_skip listen=$_ip reason=bind_unsupported"
-                    continue
-                fi
-                ;;
-        esac
+        _already=0
+        if [ "$_running" = true ]; then case "$_prev" in *" $_ip "*) _already=1;; esac; fi
+        if [ "$_already" != 1 ] && [ -x "$HWELP" ] && ! "$HWELP" -l "$_ip" -p "$_port" --check-bind >/dev/null 2>&1; then
+            bh_log "event=listener_skip listen=$_ip reason=bind_unsupported"
+            continue
+        fi
         case " $_out " in *" $_ip "*) ;; *) _out="$_out $_ip";; esac
     done
     _semi=$(printf '%s' "$_out" | tr ' ' ';')
-    _tmp="$BH_LISTEN_ACTIVE.$"; printf '%s
-' "$_semi" >"$_tmp" && mv "$_tmp" "$BH_LISTEN_ACTIVE"
+    _tmp="${BH_LISTEN_ACTIVE}.$$"
+    printf '%s\n' "$_semi" >"$_tmp" && mv "$_tmp" "$BH_LISTEN_ACTIVE"
     printf '%s' "$_semi"
 }
 bh_refresh_listeners(){

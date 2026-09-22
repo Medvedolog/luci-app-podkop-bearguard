@@ -26,8 +26,7 @@ hwelp_port() {
 
 hwelp_listen_ips() {
     local ips
-    ips="$("$BH_CTL" listen-ips 2>/dev/null)"
-    [ -n "$ips" ] || ips="$("$BH_CTL" prepare-listeners 2>/dev/null)"
+    ips="$("$BH_CTL" prepare-listeners 2>/dev/null)"
     [ -n "$ips" ] || ips="127.0.0.1"
     printf '%s\n' "$(printf '%s' "$ips" | tr ';' ' ')"
 }

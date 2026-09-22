@@ -4,6 +4,15 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r16 — served mobile matrix details; resilient Bearhole listener set
+
+- `runtime-live.js` now implements the same tap/click/keyboard service-detail cell as the base matrix, so the actually served `runtime-services-only` page exposes HTTP/latency details on phones.
+- Bearhole listener parsing is centralized in `bearhole.sh`; rpcd and init.d consume the same normalized configured/effective sets.
+- Additional configured addresses may be temporarily absent. They remain saved but are skipped with `listener_skip reason=address_absent`; interface events recalculate the effective set.
+- Current hwelp builds that reject non-loopback binds are handled safely: unsupported new listeners are skipped with `reason=bind_unsupported` instead of failing the mandatory 127.0.0.1 gateway.
+- Effective listener changes trigger a debounced procd restart; status reports configured and effective sets separately. Link-local IPv6 and wildcard listeners are rejected.
+- Package revision bumped to r16.
+
 ## 0.19.19-r15 — Bearhole explicit multi-address listeners
 
 - Bearhole always binds `127.0.0.1` and may additionally bind explicitly configured local IPv4/IPv6 addresses, separated by semicolons in LuCI.

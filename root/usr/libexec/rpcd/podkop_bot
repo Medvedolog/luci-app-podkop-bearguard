@@ -1004,7 +1004,8 @@ method_podkop_update_run() {
 	printf '%s\n' "$$" > "$_lock/pid" 2>/dev/null
 
 	_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
-	_repo=$(_podkop_repo_for "$_variant")
+	_repo_variant=$(_podkop_repo_variant "$_variant")
+	_repo=$(_podkop_repo_for "$_repo_variant")
 	_url="https://raw.githubusercontent.com/${_repo}/refs/heads/main/install.sh"
 	_tmp="/tmp/podkop_core_install.sh"
 	: > "$PODKOP_UPDATE_LOG" 2>/dev/null
@@ -1069,7 +1070,7 @@ method_podkop_update_run() {
 	_worker=$!
 	printf '%s\n' "$_worker" > "$_lock/pid" 2>/dev/null
 	printf '{"ok":true,"started":true,"variant":"%s","repo":%s,"via":%s,"log":"%s"}\n' \
-		"$_variant" "$(_json_str "$_repo")" "$(_json_str "${_CORE_FETCH_ROUTE:-unknown}")" "$PODKOP_UPDATE_LOG"
+		"$_repo_variant" "$(_json_str "$_repo")" "$(_json_str "${_CORE_FETCH_ROUTE:-unknown}")" "$PODKOP_UPDATE_LOG"
 }
 
 # Stream the podkop-core update log from an offset (mirrors luci_update_log).
@@ -1973,8 +1974,17 @@ method_runtime_sections() {
 # version from install.sh status; latest via GitHub API with direct→SOCKS
 # fallback. Degraded-safe on any network failure. Overview reads this for a
 # compact badge; the Update tab for the full block.
+_podkop_repo_variant() {
+	_variant="$1"
+	if [ "$_variant" = "forkop" ] && [ -r /usr/lib/podkop_bot/tsnet-provider.sh ]; then
+		. /usr/lib/podkop_bot/tsnet-provider.sh
+		[ "$(tsnet_provider 2>/dev/null)" = "forkop-x" ] && { printf 'forkop-x'; return; }
+	fi
+	printf '%s' "$_variant"
+}
 _podkop_repo_for() {
 	case "$1" in
+		forkop-x)  printf 'slayer326/forkop' ;;
 		forkop)    printf 'ushan0v/forkop' ;;
 		plus)      printf 'ushan0v/podkop-plus' ;;
 		netshift)  printf 'yandexru45/netshift' ;;
@@ -1984,6 +1994,7 @@ _podkop_repo_for() {
 }
 _podkop_name_for() {
 	case "$1" in
+		forkop-x)  printf 'Forkop X' ;;
 		forkop)    printf 'Forkop' ;;
 		plus)      printf 'Podkop Plus' ;;
 		netshift)  printf 'NetShift' ;;
@@ -1997,10 +2008,10 @@ method_podkop_update_check() {
 	_now=$(date +%s 2>/dev/null || echo 0)
 	_status=$(_cached_status)
 	_variant=$(printf '%s' "$_status" | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p'); [ -z "$_variant" ] && _variant="podkop"
-	# Per-variant cache: podkop/plus/netshift hit different repos, so keying by
-	# variant avoids a stale answer after the variant changes. Same TTL as the
-	# bot/LuCI update checks, so reopening the tab doesn't hammer the GitHub API.
-	_pc_cache="/tmp/podkop_bot_podkop_update_${_variant}.json"
+	_repo_variant=$(_podkop_repo_variant "$_variant")
+	# Cache by actual update source: Forkop and Forkop X share the generic
+	# install.sh variant `forkop` but use different GitHub repositories.
+	_pc_cache="/tmp/podkop_bot_podkop_update_${_repo_variant}.json"
 	if [ "$_force" != "true" ] && [ -f "$_pc_cache" ]; then
 		_ts=$(sed -n 's/.*"checked_at":\([0-9]*\).*/\1/p' "$_pc_cache")
 		if [ -n "$_ts" ] && [ "$((_now - _ts))" -lt "$UPDATE_CACHE_TTL" ] 2>/dev/null; then
@@ -2008,8 +2019,8 @@ method_podkop_update_check() {
 		fi
 	fi
 	_cur=$(printf '%s' "$_status" | sed -n 's/.*"podkop_version":"\([^"]*\)".*/\1/p')
-	_repo=$(_podkop_repo_for "$_variant")
-	_name=$(_podkop_name_for "$_variant")
+	_repo=$(_podkop_repo_for "$_repo_variant")
+	_name=$(_podkop_name_for "$_repo_variant")
 	_repo_url="https://github.com/$_repo"
 	_rel_url="$_repo_url/releases"
 	_api="https://api.github.com/repos/$_repo/releases/latest"
@@ -2038,7 +2049,7 @@ method_podkop_update_check() {
 	_now=$(date +%s 2>/dev/null || echo 0)
 	if [ -z "$_latest" ]; then
 		printf '{"ok":true,"available":false,"reason":"github_unreachable","detail":"Could not check releases via direct or SOCKS","action":"retry_later","variant":"%s","name":"%s","repo":"%s","repo_url":"%s","releases_url":"%s","current":"%s"}\n' \
-			"$_variant" "$_name" "$_repo" "$_repo_url" "$_rel_url" "$_cur"
+			"$_repo_variant" "$_name" "$_repo" "$_repo_url" "$_rel_url" "$_cur"
 		return
 	fi
 	# normalise for COMPARISON the way the bot does (podkop_bot.sh:3441): strip a
@@ -2056,7 +2067,7 @@ method_podkop_update_check() {
 		_ver_gt "$_latn" "$_curn" && _avail=true
 	fi
 	_out=$(printf '{"ok":true,"available":true,"variant":"%s","name":"%s","repo":"%s","repo_url":"%s","releases_url":"%s","current":"%s","latest":"%s","update_available":%s,"via":"%s","checked_at":%s}' \
-		"$_variant" "$_name" "$_repo" "$_repo_url" "$_rel_url" "$_cur" "$_latest" "$_avail" "$_via" "$_now")
+		"$_repo_variant" "$_name" "$_repo" "$_repo_url" "$_rel_url" "$_cur" "$_latest" "$_avail" "$_via" "$_now")
 	[ "$_latest" != "unknown" ] && [ -n "$_latest" ] && printf '%s' "$_out" > "$_pc_cache" 2>/dev/null
 	printf '%s\n' "$_out"
 }
@@ -2207,7 +2218,7 @@ method_active_probe() {
 	_geo_try() {
 		[ -n "$_g_ip" ] && return 0
 		_gurl="$1"; _gkind="$2"; _ghdr="$3"
-		_gj=$(curl -s -k -x "$_proxy" ${_ghdr:+-H "$_ghdr"} --connect-timeout 5 --max-time 10 "$_gurl" 2>/dev/null)
+		_gj=$(curl -s -k -x "$_proxy" ${_ghdr:+-H "$_ghdr"} --connect-timeout 3 --max-time 5 "$_gurl" 2>/dev/null)
 		[ -z "$_gj" ] && return 1
 		case "$_gkind" in
 			ipinfo)  _g_ip=$(printf '%s' "$_gj" | jq -r '.ip // empty' 2>/dev/null)
@@ -2420,7 +2431,7 @@ method_active_probe() {
 
 	# --- throughput + TSPU block detection (bot's two-stage test, TZ) ---
 	# Stage 1: 32 KB — РКН/ТСПУ drops after ~16 KB. ≤20 KB received = block16k.
-	_raw1=$(curl -s -k -x "$_proxy" --connect-timeout 6 --max-time 15 \
+	_raw1=$(curl -s -k -x "$_proxy" --connect-timeout 4 --max-time 10 \
 		-H "Range: bytes=0-32767" -o /dev/null \
 		-w "%{size_download}" "https://speed.cloudflare.com/__down?bytes=32768" 2>/dev/null)
 	_s1=$(printf '%s' "$_raw1" | grep -oE '^[0-9]+' || echo 0); _s1="${_s1:-0}"
@@ -2435,7 +2446,7 @@ method_active_probe() {
 		# (100+ Mbit/s, where 1 MB completes before the window opens up) aren't
 		# under-reported. curl's %{speed_download} reflects the actual achieved
 		# rate even if --max-time cuts a slow link short, so this stays bounded.
-		_raw2=$(curl -s -k -x "$_proxy" --connect-timeout 6 --max-time 60 \
+		_raw2=$(curl -s -k -x "$_proxy" --connect-timeout 5 --max-time 15 \
 			-H "Range: bytes=0-8388607" -o /dev/null \
 			-w "%{speed_download}" "https://speed.cloudflare.com/__down?bytes=8388608" 2>/dev/null)
 		_bps=$(printf '%s' "$_raw2" | grep -oE '^[0-9]+(\.[0-9]+)?' || echo 0)
@@ -2443,11 +2454,11 @@ method_active_probe() {
 		# tunnel itself works (stage 1 passed), retry against a fast.com CDN URL
 		# so a single provider outage doesn't zero out the speed reading.
 		if [ "$(awk "BEGIN{print (${_bps:-0} <= 0)}")" = "1" ]; then
-			_furl=$(curl -s -k -x "$_proxy" --connect-timeout 5 --max-time 10 \
+			_furl=$(curl -s -k -x "$_proxy" --connect-timeout 3 --max-time 6 \
 				"https://api.fast.com/netflix/speedtest/v2?https=true&token=$_K_NETFLIX&urlCount=1" 2>/dev/null \
 				| jq -r '.targets[0].url // empty' 2>/dev/null)
 			if [ -n "$_furl" ]; then
-				_raw2b=$(curl -s -k -x "$_proxy" --connect-timeout 6 --max-time 60 \
+				_raw2b=$(curl -s -k -x "$_proxy" --connect-timeout 5 --max-time 15 \
 					-r 0-8388607 -o /dev/null -w "%{speed_download}" "$_furl" 2>/dev/null)
 				_bps=$(printf '%s' "$_raw2b" | grep -oE '^[0-9]+(\.[0-9]+)?' || echo 0)
 			fi

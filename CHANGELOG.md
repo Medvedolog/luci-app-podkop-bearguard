@@ -26,6 +26,10 @@
 - **[Telegram multiline]** Многострочный текст update теперь base64-кодируется внутри сводной jq-записи до shell `read`; `user_id` и последующие metadata больше не теряются после первого перевода строки.
 - **[Mobile UI]** В матрице сервисов лампочки остаются компактными, но HTTP-код/latency/details теперь открываются не только hover, а также tap/click и с клавиатуры.
 - **[Packaging]** Новый router-testable срез получает уникальный `PKG_RELEASE=13` вместо повторного использования `r12`.
+- **[Forkop X updater]** LuCI updater теперь различает Forkop и Forkop X при выборе GitHub repo; для X используются `slayer326/forkop` и его releases, для обычного Forkop — `ushan0v/forkop`.
+- **[Branding]** Раздел пакета в Services снова называется `Podkop BearGuard`, а заголовок статусной страницы — `Podkop Bot`.
+- **[Route probe]** Убран ~200-секундный worst-case полной проверки: сетевые таймауты speed/geo сокращены, а detached worker имеет общий предел 90 секунд.
+- **[Packaging]** Исправления собраны как отдельный router-testable `0.19.19-r14`.
 - **[Telegram UI]** Устранены дубли карточек при неопределённом результате `editMessageText`: timeout после уже применённого edit больше не вызывает автоматический `sendMessage`. Вход в список секций также больше не сбрасывает persistent reply keyboard и не плодит сообщения «Кнопки меню обновлены».
 - **[Производительность]** Сокращено число hot-path subprocess: child-секции Forkop разбираются одним проходом `uci show | awk`, Telegram update/document — одним `jq`, mixed/SOCKS inbound — одним `jq`; уже загруженный transport context переиспользуется в FAST recovery, long poll и health-check.
 - **[Транспорт]** Явные fallback SOCKS и автоматически найденные SOCKS других секций разведены до сборки итоговой tier2-цепочки; порядок подключения сохраняется как основной SOCKS → секция Podkop/Forkop → прокси бота → WARP Rescue → Direct → emergency IP.

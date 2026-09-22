@@ -16,6 +16,23 @@
 
 ## luci-app-podkop-bot
 
+### 0.19.19 — Forkop X, Tailscale/tsnet, transport UX and bot performance
+
+- **[Forkop X]** Проверка версии, ссылка на releases и источник обновления для Forkop X теперь используют `slayer326/forkop`; обычный Forkop остаётся на `ushan0v/forkop`.
+- **[Telegram UI]** Устранены дубли карточек при неопределённом результате `editMessageText`: timeout после уже применённого edit больше не вызывает автоматический `sendMessage`. Вход в список секций также больше не сбрасывает persistent reply keyboard и не плодит сообщения «Кнопки меню обновлены».
+- **[Производительность]** Сокращено число hot-path subprocess: child-секции Forkop разбираются одним проходом `uci show | awk`, Telegram update/document — одним `jq`, mixed/SOCKS inbound — одним `jq`; уже загруженный transport context переиспользуется в FAST recovery, long poll и health-check.
+- **[Транспорт]** Явные fallback SOCKS и автоматически найденные SOCKS других секций разведены до сборки итоговой tier2-цепочки; порядок подключения сохраняется как основной SOCKS → секция Podkop/Forkop → прокси бота → WARP Rescue → Direct → emergency IP.
+- **[Tailscale/tsnet]** Ветка включает multiprovider/tsnet-интеграцию, safe overlay для Forkop X, preflight против standalone `tailscaled`, runtime apply/repair и совместимый LuCI RPC/ACL contract.
+- **[WARP/Bearhole]** WARP Rescue встроен в реальную transport-chain; Bearhole/HWELP остаётся отдельным optional native package и проходит runtime smoke в CI.
+- **[Проверка]** CI exact-SHA включает source checks, native APK/IPK build, package assertions и установку на OpenWrt 25.12/24.10 через owlab.
+
+### 0.19.18 — WARP Rescue and tsnet stabilization
+
+- **[Транспорт]** WARP Rescue добавлен между прокси бота и Direct, POLL удерживается на исправных proxy-path, а recovery сделан неблокирующим с ограниченным временем long-poll hold.
+- **[Tailscale/tsnet]** Добавлены preflight/legacy cleanup и синхронизация multiprovider tsnet backend для Forkop/Forkop X.
+- **[Runtime]** Быстрые перезапуски sing-box учитываются по PID без двойного счёта; локальный Clash API исключён из Bearhole/proxy-пути.
+- **[Upload]** Ручная загрузка bot-script не зависит от имени файла при сохранении проверок содержимого и защищённой upload-session.
+
 ### 0.19.17 — anti-flap, security, diagnostics and native OpenWrt packages
 
 - **[0.19.17 / anti-flap]** Исправлен ложный уход POLL на аварийный Direct из-за слишком быстро устаревавшего follower-sample: freshness теперь соответствует реальному циклу follower, а существующий hysteresis сохраняет быстрый recovery без смешивания POLL и FAST.

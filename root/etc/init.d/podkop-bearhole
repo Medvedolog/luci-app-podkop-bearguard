@@ -25,17 +25,11 @@ hwelp_port() {
 }
 
 hwelp_listen_ips() {
-    local raw ip out
-    raw="$(uci -q get podkop_bearhole.main.listen_ips 2>/dev/null)"
-    out="127.0.0.1"
-    for ip in $(printf '%s' "$raw" | tr ';' ' '); do
-        ip="$(printf '%s' "$ip" | tr -d '[:space:]')"
-        [ -n "$ip" ] || continue
-        [ "$ip" = "127.0.0.1" ] && continue
-        case "$ip" in 0.0.0.0|::) continue;; esac
-        case " $out " in *" $ip "*) ;; *) out="$out $ip";; esac
-    done
-    printf '%s\n' "$out"
+    local ips
+    ips="$("$BH_CTL" listen-ips 2>/dev/null)"
+    [ -n "$ips" ] || ips="$("$BH_CTL" prepare-listeners 2>/dev/null)"
+    [ -n "$ips" ] || ips="127.0.0.1"
+    printf '%s\n' "$(printf '%s' "$ips" | tr ';' ' ')"
 }
 
 prepare_auth() {
@@ -108,8 +102,10 @@ stop_service() {
 
 reload_service() {
     "$BH_CTL" bootstrap >/dev/null 2>&1 || true
+    "$BH_CTL" listeners-refresh >/dev/null 2>&1 || true
 }
 
 service_triggers() {
     procd_add_reload_trigger podkop_bearhole
+    procd_add_raw_trigger "interface.*" 1500 "$BH_CTL" listeners-refresh
 }

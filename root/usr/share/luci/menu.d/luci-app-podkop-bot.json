@@ -1,6 +1,6 @@
 {
 	"admin/services/podkop-bot": {
-		"title": "Podkop Bot", "order": 60,
+		"title": "Podkop BearGuard", "order": 60,
 		"action": { "type": "firstchild" },
 		"depends": { "acl": [ "luci-app-podkop-bot" ] }
 	},

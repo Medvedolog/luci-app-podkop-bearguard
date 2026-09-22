@@ -9,7 +9,7 @@ var callResults = rpc.declare({ object:'podkop_bot_bearhole', method:'results' }
 var callStart = rpc.declare({ object:'podkop_bot_bearhole', method:'start' });
 var callSetEnabled = rpc.declare({ object:'podkop_bot_bearhole', method:'set_enabled', params:['enabled'] });
 var callSetPort = rpc.declare({ object:'podkop_bot_bearhole', method:'set_port', params:['port'] });
-var callSetProxy = rpc.declare({ object:'podkop_bot_bearhole', method:'set_proxy', params:['port','auth_enabled','username','password'] });
+var callSetProxy = rpc.declare({ object:'podkop_bot_bearhole', method:'set_proxy', params:['port','listen_ips','auth_enabled','username','password'] });
 var callQualify = rpc.declare({ object:'podkop_bot_bearhole', method:'qualify_start' });
 var callLog = rpc.declare({ object:'podkop_bot_bearhole', method:'log', params:['offset'] });
 
@@ -20,7 +20,7 @@ function row(label,val){return E('div',{'class':'pb-row pb-row--plain'},[E('span
 function card(title,children){return E('div',{'class':'cbi-section pb-card','style':'max-width:900px;'},[E('h3',{'style':'margin-top:0;'},title)].concat(children));}
 function pbInjectCss(){if(document.getElementById('pb-css'))return;document.querySelector('head').appendChild(E('link',{'id':'pb-css','rel':'stylesheet','type':'text/css','href':L.resource('css/podkop-bot/podkop-bot.css')}));}
 function age(ts){var n=parseInt(ts||0,10);if(!n)return '—';var s=Math.max(0,Math.floor(Date.now()/1000)-n);if(s<60)return _('только что');if(s<3600)return Math.floor(s/60)+_(' мин назад');if(s<86400)return Math.floor(s/3600)+_(' ч назад');return Math.floor(s/86400)+_(' дн назад');}
-function reasonText(r){var m={hwelp_missing:_('hwelp proxy пока не установлен. При запуске Bearhole будет попытка установить подходящий пакет автоматически.'),hwelp_broken:_('Установленный hwelp proxy не прошёл самопроверку.'),hwelp_install_failed:_('Не удалось установить hwelp proxy через доступные маршруты.'),package_manager_missing:_('Не найден поддерживаемый менеджер пакетов.'),port_in_use:_('Выбранный порт hwelp proxy уже занят.'),bad_port:_('Порт должен быть в диапазоне 1024–65535.'),port_save_failed:_('Не удалось сохранить порт hwelp proxy.'),proxy_save_failed:_('Не удалось сохранить настройки hwelp proxy.'),auth_invalid:_('Для авторизации нужны логин и пароль.'),gateway_start_failed:_('hwelp proxy не смог запуститься на выбранном порту.'),gateway_check_failed:_('hwelp proxy запустился, но контрольная загрузка через него не прошла.'),system_proxy_apply_failed:_('Не удалось включить системный прокси OpenWrt.'),qualification_start_failed:_('Не удалось запустить проверку цепочки маршрутов.'),no_routes:_('В цепочке нет маршрутов для проверки.'),no_usable_route:_('После проверки не найден рабочий маршрут для системных загрузок.'),route_check_timeout:_('Проверка маршрутов превысила допустимое время.'),uci_enable_failed:_('Не удалось сохранить настройку Bearhole.'),uci_commit_failed:_('Не удалось записать конфигурацию Bearhole.')};return m[r]||r||_('Неизвестная ошибка.');}
+function reasonText(r){var m={hwelp_missing:_('hwelp proxy пока не установлен. При запуске Bearhole будет попытка установить подходящий пакет автоматически.'),hwelp_broken:_('Установленный hwelp proxy не прошёл самопроверку.'),hwelp_install_failed:_('Не удалось установить hwelp proxy через доступные маршруты.'),package_manager_missing:_('Не найден поддерживаемый менеджер пакетов.'),port_in_use:_('Выбранный порт hwelp proxy уже занят.'),bad_port:_('Порт должен быть в диапазоне 1024–65535.'),port_save_failed:_('Не удалось сохранить порт hwelp proxy.'),proxy_save_failed:_('Не удалось сохранить настройки hwelp proxy.'),listen_invalid:_('Можно указывать только локальные IP-адреса интерфейсов роутера; 0.0.0.0 и :: не допускаются. 127.0.0.1 добавляется всегда.'),listen_bind_failed:_('hwelp proxy не смог привязаться к одному из выбранных IP-адресов.'),auth_invalid:_('Для авторизации нужны логин и пароль.'),gateway_start_failed:_('hwelp proxy не смог запуститься на выбранном порту.'),gateway_check_failed:_('hwelp proxy запустился, но контрольная загрузка через него не прошла.'),system_proxy_apply_failed:_('Не удалось включить системный прокси OpenWrt.'),qualification_start_failed:_('Не удалось запустить проверку цепочки маршрутов.'),no_routes:_('В цепочке нет маршрутов для проверки.'),no_usable_route:_('После проверки не найден рабочий маршрут для системных загрузок.'),route_check_timeout:_('Проверка маршрутов превысила допустимое время.'),uci_enable_failed:_('Не удалось сохранить настройку Bearhole.'),uci_commit_failed:_('Не удалось записать конфигурацию Bearhole.')};return m[r]||r||_('Неизвестная ошибка.');}
 function verified(st){return !!(st.running&&st.system_applied&&st.state==='ready'&&st.reason==='gateway_verified');}
 function stateNode(st){if(!st.enabled&&st.running)return dot('red',_('Рассинхронизация: Bearhole выключен, hwelp ещё запущен'));if(st.probing)return dot('yellow',_('Проверяю маршруты'));if(st.state==='verifying')return dot('yellow',_('Проверяю локальный шлюз'));if(st.starting)return dot('yellow',_('Запускается'));if(verified(st))return dot('green',_('Работает'));if(st.state==='failed')return dot('red',reasonText(st.reason));if(st.enabled&&!st.running)return dot('red',_('Шлюз не запущен'));return dot('grey',_('Выключен'));}
 function hwelpNode(st){var pid=parseInt(st.pid||0,10)||0,s='';if(!st.hwelp_installed)return dot('grey',_('не установлен'));if(verified(st)){s=_('работает');if(pid>0)s+=' · PID '+String(pid);if(st.hwelp_version)s+=' · v'+st.hwelp_version;return dot('green',s);}if(st.running){s=(st.probing||st.state==='verifying'||st.starting)?_('запущен, проверяется'):_('запущен');if(pid>0)s+=' · PID '+String(pid);if(st.hwelp_version)s+=' · v'+st.hwelp_version;return dot('yellow',s);}if(st.starting)return dot('yellow',_('запускается'));if(st.engine_reason==='hwelp_broken')return dot('red',_('ошибка самопроверки'));return dot('grey',_('установлен, не запущен')+(st.hwelp_version?' · v'+st.hwelp_version:''));}
@@ -71,13 +71,13 @@ return view.extend({
 	stopBearhole:function(){var self=this;return callSetEnabled(false).then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'disable_failed');return self.refresh();}).catch(function(e){ui.addNotification(null,E('p',{},_('Не удалось остановить Bearhole: ')+((e&&e.message)||'?')),'error');});},
 	recheck:function(){var self=this;return callQualify().then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'check_failed');return self.refresh();}).then(function(){self.schedulePoll(300);}).catch(function(e){ui.addNotification(null,E('p',{},_('Не удалось запустить проверку маршрутов: ')+reasonText((e&&e.message)||'')),'error');});},
 
-	saveProxy:function(portInput,authInput,userInput,passInput){
-		var self=this,p=parseInt(portInput.value,10),auth=!!authInput.checked,user=(userInput.value||'').trim(),pass=passInput.value||'';
+	saveProxy:function(portInput,listenInput,authInput,userInput,passInput){
+		var self=this,p=parseInt(portInput.value,10),listen=(listenInput.value||'').trim(),auth=!!authInput.checked,user=(userInput.value||'').trim(),pass=passInput.value||'';
 		if(!isFinite(p)||p<1024||p>65535){ui.addNotification(null,E('p',{},reasonText('bad_port')),'error');return;}
 		if(auth&&!user){ui.addNotification(null,E('p',{},reasonText('auth_invalid')),'error');return;}
 		if(auth&&!pass&&!this.status.auth_configured){ui.addNotification(null,E('p',{},reasonText('auth_invalid')),'error');return;}
-		[portInput,authInput,userInput,passInput].forEach(function(x){x.disabled=true;});
-		return callSetProxy(p,auth,user,pass).then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'proxy_save_failed');return self.refresh();}).then(function(st){if(st.starting)self.schedulePoll(250);}).catch(function(e){ui.addNotification(null,E('p',{},reasonText((e&&e.message)||'proxy_save_failed')),'error');return self.refresh();});
+		[portInput,listenInput,authInput,userInput,passInput].forEach(function(x){x.disabled=true;});
+		return callSetProxy(p,listen,auth,user,pass).then(function(r){if(!r||!r.ok)throw new Error((r&&r.reason)||'proxy_save_failed');return self.refresh();}).then(function(st){if(st.starting)self.schedulePoll(250);}).catch(function(e){ui.addNotification(null,E('p',{},reasonText((e&&e.message)||'proxy_save_failed')),'error');return self.refresh();});
 	},
 
 	progressCard:function(st){if(!busy(st))return E('span',{});var done=parseInt(st.progress_done||0,10)||0,total=parseInt(st.progress_total||0,10)||0,label='';if(st.probing){label=_('Проверяю всю цепочку прокси');if(st.progress_label)label+=': '+st.progress_label;}else if(st.state==='verifying')label=_('Проверяю, что OpenWrt действительно выходит через hwelp proxy');else if(st.reason==='installing_hwelp')label=_('Устанавливаю hwelp proxy из owfeed');else if(st.reason==='system_proxy')label=_('Включаю системный прокси OpenWrt');else label=_('Подготавливаю цепочку и запускаю hwelp proxy');var kids=[E('strong',{},label)];if(st.probing&&total>0){kids.push(E('div',{'style':'margin-top:.55em;'},[E('progress',{'max':String(total),'value':String(Math.min(done,total)),'style':'width:100%;max-width:520px;'}),E('span',{'style':'margin-left:.6em;color:#888;'},String(done)+' / '+String(total))]));}return E('div',{'class':'cbi-section','style':'max-width:900px;margin-top:.7em;'},kids);},
@@ -85,6 +85,7 @@ return view.extend({
 	proxySettings:function(st,isBusy){
 		var self=this;
 		var port=E('input',{'type':'number','min':'1024','max':'65535','step':'1','value':String(st.port||1066),'disabled':isBusy?'disabled':null,'style':'width:7.5em;'});
+		var listen=E('input',{'type':'text','value':st.listen_ips||'127.0.0.1','disabled':isBusy?'disabled':null,'placeholder':'127.0.0.1;192.168.1.1','style':'width:min(100%,32em);font-family:monospace;'});
 		var auth=E('input',{'type':'checkbox','checked':st.auth_enabled?'checked':null,'disabled':isBusy?'disabled':null});
 		var user=E('input',{'type':'text','value':st.auth_user||'','disabled':isBusy?'disabled':null,'autocomplete':'username','style':'max-width:18em;'});
 		var pass=E('input',{'type':'password','value':'','placeholder':st.auth_configured?_('оставьте пустым, чтобы не менять'):_('пароль'),'disabled':isBusy?'disabled':null,'autocomplete':'new-password','style':'max-width:18em;'});
@@ -92,22 +93,22 @@ return view.extend({
 		auth.addEventListener('change',function(){authFields.style.display=auth.checked?'block':'none';});
 		var localAuth=E('details',{'style':'margin:.7em 0;padding:.55em .7em;border:1px solid rgba(127,127,127,.16);border-radius:8px;'},[
 			E('summary',{'style':'cursor:pointer;font-weight:600;'},_('Локальная авторизация hwelp (обычно не нужна)')),
-			E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Это защита ВХОДА в hwelp на 127.0.0.1. Она не относится к логину/паролю вышестоящего SOCKS/HTTP proxy. Так как hwelp слушает только loopback, обычно эту опцию можно оставить выключенной.')),
+			E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Это защита ВХОДА в hwelp. Она не относится к логину/паролю вышестоящего SOCKS/HTTP proxy. Если добавляете LAN/VPN-адреса прослушивания, авторизацию рекомендуется включить.')),
 			row(_('Требовать авторизацию'),E('label',{'style':'display:inline-flex;align-items:center;gap:.45em;'},[auth,E('span',{},_('у программ самого OpenWrt'))])),authFields
 		]);
 		return E('details',{'id':'bearhole-proxy-settings','open':this.proxyOpen?'':null,'style':'margin:.7em 0 .3em;'},[
 			E('summary',{'style':'cursor:pointer;font-weight:600;'},_('Настройки локального hwelp proxy')),
 			E('div',{'style':'margin-top:.65em;max-width:720px;'},[
-				row(_('Адрес входа'),E('code',{},'127.0.0.1')),
+				row(_('Адреса прослушивания'),listen),
 				row(_('Порт входа'),port),
-				E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Адрес намеренно фиксирован на loopback. Порт меняется только при конфликте.')),
+				E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Разделяйте дополнительные IP точкой с запятой. 127.0.0.1 обязателен, всегда добавляется первым и удалить его нельзя. Разрешены только адреса, реально назначенные интерфейсам роутера; wildcard 0.0.0.0 и :: не используются.')),
 				localAuth,
 				E('div',{'style':'margin:.8em 0;padding:.65em .75em;border-left:3px solid #4d8fd8;background:rgba(77,143,216,.06);'},[
 					E('strong',{},_('Авторизация на вышестоящих прокси')),
 					E('div',{'class':'pb-hint-90','style':'margin-top:.35em;'},_('Логин и пароль SOCKS5/HTTP задаются в самой записи маршрута. hwelp получает их из общего registry и использует при подключении к upstream proxy.')),
 					E('a',{'class':'cbi-button','style':'margin-top:.55em;','href':L.url('admin/services/podkop-bot/transport/main')},_('Открыть «Цепочку прокси»'))
 				]),
-				E('button',{'class':'cbi-button cbi-button-action','disabled':isBusy?'disabled':null,'click':function(){return self.saveProxy(port,auth,user,pass);}},_('Применить'))
+				E('button',{'class':'cbi-button cbi-button-action','disabled':isBusy?'disabled':null,'click':function(){return self.saveProxy(port,listen,auth,user,pass);}},_('Применить'))
 			])
 		]);
 	},

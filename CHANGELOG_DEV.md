@@ -4,6 +4,13 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r13 — review fixes: Forkop identity, multiline updates, mobile service details
+
+- Fixed `_forkop_display_name()` UCI end-anchor and added `/usr/share/forkop/mirror-migration.sh` as positive Forkop X evidence, keeping update sources aligned with the actual fork.
+- Preserved multiline Telegram input without losing `user_id`/document metadata by base64-wrapping the text field inside the consolidated jq record before shell parsing.
+- Service-matrix details remain compact but are now available by tap/click (and keyboard), not hover-only.
+- Bumped `PKG_RELEASE` from 12 to 13 because this is a new router-testable code slice; vendored bot stays byte-identical to standalone.
+
 ## 0.19.19-r1 — Tailscale/tsnet goes multiprovider; overlay watcher retired; opt-in auto-repair; partial rebrand
 
 ### Tailscale / tsnet architecture

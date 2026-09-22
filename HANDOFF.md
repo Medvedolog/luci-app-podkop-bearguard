@@ -1,14 +1,14 @@
 # HANDOFF — luci-app-podkop-bot 0.19.19 Tailscale multiprovider
 
-Updated: 2026-09-19
+Updated: 2026-09-22
 
 ## Repository / branch
 
-- Repository: `Medvedolog/luci-app-podkop-bot`
+- Repository: `Medvedolog/luci-app-podkop-bearguard` (legacy `luci-app-podkop-bot` URL redirects here)
 - Development branch: `dev/0.19.19-tailscale-multiprovider`
-- Current package version: **`0.19.19-r1`**
+- Current package version: **`0.19.19-r13`**
 - `version.txt` / `Makefile` `PKG_VERSION`: `0.19.19`
-- Branch head at this docs refresh: `ded2835` (reverts an incorrect fix at `fd5cf48` — see "Build/staging contract" below)
+- Reviewed baseline before the r13 fix slice: `1eb4fd3`; the r13 slice fixes Forkop identity detection, multiline Telegram parsing and mobile service-detail access.
 - Do **not** merge to `main`, create a tag, or publish a release without an explicit user command.
 
 This file previously described the `dev/0.19.18-warpscout-luci` / WARPSCOUT-baseline state (`0.19.18-r17`). That description was accurate for its time but was not kept in sync with `dev/0.19.19-tailscale-multiprovider`, which since diverged by ~100 commits of Tailscale/tsnet multiprovider work plus a partial app rebrand. This refresh replaces it with the current state of that branch. The WARPSCOUT/WARP Rescue sections below are condensed from the old file; nothing in that subsystem changed in this refresh, and its hardware-validation TODOs (see `TODO.md`) still stand.

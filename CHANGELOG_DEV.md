@@ -4,6 +4,14 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r15 — Bearhole explicit multi-address listeners
+
+- Bearhole always binds `127.0.0.1` and may additionally bind explicitly configured local IPv4/IPv6 addresses, separated by semicolons in LuCI.
+- Additional listeners are separate procd instances sharing the same route table, port, authentication and log; OpenWrt's own system proxy continues to use loopback.
+- Only addresses actually assigned to router interfaces are accepted. `0.0.0.0` and `::` wildcard listeners are rejected; duplicates are normalized away.
+- Existing configurations without `listen_ips` remain loopback-only.
+- Package revision bumped to r15.
+
 ## 0.19.19-r14 — Forkop X updater, branding placement, bounded full-route probe
 
 - LuCI update backend resolves generic `forkop` to the actual flavour before selecting the repository/cache key: Forkop X → `slayer326/forkop`, full Forkop → `ushan0v/forkop`.

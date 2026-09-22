@@ -21,36 +21,15 @@ hwelp_port() {
     printf '%s' "$_p"
 }
 
-listen_ip_local() {
-    _ip="$1"
-    [ "$_ip" = "127.0.0.1" ] && return 0
-    case "$_ip" in 0.0.0.0|::|'') return 1;; esac
-    if printf '%s' "$_ip" | grep -q ':'; then
-        ip -6 -o addr show 2>/dev/null | awk -v a="$_ip" '{split($4,x,"/"); if(x[1]==a) ok=1} END{exit !ok}'
-    else
-        ip -4 -o addr show 2>/dev/null | awk -v a="$_ip" '{split($4,x,"/"); if(x[1]==a) ok=1} END{exit !ok}'
-    fi
-}
-
 normalize_listen_ips() {
-    _raw="$1"
-    _out="127.0.0.1"
-    for _ip in $(printf '%s' "$_raw" | tr ';' ' '); do
-        _ip=$(printf '%s' "$_ip" | tr -d '[:space:]')
-        [ -n "$_ip" ] || continue
-        [ "$_ip" = "127.0.0.1" ] && continue
-        listen_ip_local "$_ip" || return 1
-        case " $_out " in *" $_ip "*) ;; *) _out="$_out $_ip";; esac
-    done
-    printf '%s' "$(printf '%s' "$_out" | tr ' ' ';')"
+    "$CTL" normalize-listeners "$1" 2>/dev/null
 }
 
 hwelp_listen_ips() {
-    _raw=$(uci -q get podkop_bearhole.main.listen_ips 2>/dev/null)
-    _norm=$(normalize_listen_ips "$_raw" 2>/dev/null) || _norm="127.0.0.1"
-    printf '%s' "$_norm" | tr ';' ' '
+    _ips=$("$CTL" listen-ips 2>/dev/null)
+    [ -n "$_ips" ] || _ips="127.0.0.1"
+    printf '%s' "$_ips" | tr ';' ' '
 }
-
 gateway() { printf 'http://127.0.0.1:%s' "$(hwelp_port)"; }
 gateway_auth() { "$CTL" proxy-url 2>/dev/null; }
 
@@ -171,11 +150,16 @@ start_worker() {
             return
         fi
     fi
-    for _listen_ip in $(hwelp_listen_ips); do
+    _effective=$("$CTL" prepare-listeners 2>/dev/null)
+    [ -n "$_effective" ] || _effective="127.0.0.1"
+    for _listen_ip in $(printf '%s' "$_effective" | tr ';' ' '); do
         if ! "$PROXY" -l "$_listen_ip" -p "$_port" --check-bind >/dev/null 2>&1; then
-            log_event "event=hwelp_bind_failed listen=$_listen_ip port=$_port"
-            fail_closed listen_bind_failed
-            return
+            if [ "$_listen_ip" = "127.0.0.1" ]; then
+                log_event "event=hwelp_bind_failed listen=$_listen_ip port=$_port"
+                fail_closed listen_bind_failed
+                return
+            fi
+            log_event "event=listener_skip listen=$_listen_ip reason=bind_failed_after_prepare"
         fi
     done
 

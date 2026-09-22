@@ -30,6 +30,7 @@
 - **[Branding]** Раздел пакета в Services снова называется `Podkop BearGuard`, а заголовок статусной страницы — `Podkop Bot`.
 - **[Route probe]** Убран ~200-секундный worst-case полной проверки: сетевые таймауты speed/geo сокращены, а detached worker имеет общий предел 90 секунд.
 - **[Packaging]** Исправления собраны как отдельный router-testable `0.19.19-r14`.
+- **[Bearhole listeners]** `127.0.0.1` остаётся обязательным и первым bind-адресом, но в LuCI можно через `;` добавить локальные IPv4/IPv6 адреса интерфейсов роутера. Каждый адрес получает отдельный procd instance; wildcard `0.0.0.0`/`::` запрещён.
 - **[Telegram UI]** Устранены дубли карточек при неопределённом результате `editMessageText`: timeout после уже применённого edit больше не вызывает автоматический `sendMessage`. Вход в список секций также больше не сбрасывает persistent reply keyboard и не плодит сообщения «Кнопки меню обновлены».
 - **[Производительность]** Сокращено число hot-path subprocess: child-секции Forkop разбираются одним проходом `uci show | awk`, Telegram update/document — одним `jq`, mixed/SOCKS inbound — одним `jq`; уже загруженный transport context переиспользуется в FAST recovery, long poll и health-check.
 - **[Транспорт]** Явные fallback SOCKS и автоматически найденные SOCKS других секций разведены до сборки итоговой tier2-цепочки; порядок подключения сохраняется как основной SOCKS → секция Podkop/Forkop → прокси бота → WARP Rescue → Direct → emergency IP.

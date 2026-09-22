@@ -22,6 +22,13 @@ _ts_pkg_installed() {
 
 tsnet_provider() {
     if [ -f /etc/config/forkop ]; then
+        # Forkop X has a dedicated migration helper. Check the positive marker
+        # first so a future file-layout change in either fork cannot flip the
+        # provider (and therefore updater/release source) by absence alone.
+        if [ -r /usr/share/forkop/mirror-migration.sh ]; then
+            printf '%s\n' forkop-x
+            return 0
+        fi
         # Upstream/full Forkop (ushan0v/forkop) ships its native server
         # generator at usr/lib/forkop/singbox/servers.uc on the router --
         # Package/forkop/install in that project's Makefile installs

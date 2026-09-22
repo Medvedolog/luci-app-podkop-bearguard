@@ -6,9 +6,9 @@ Updated: 2026-09-22
 
 - Repository: `Medvedolog/luci-app-podkop-bearguard` (legacy `luci-app-podkop-bot` URL redirects here)
 - Development branch: `dev/0.19.19-tailscale-multiprovider`
-- Current package version: **`0.19.19-r15`**
+- Current package version: **`0.19.19-r16`**
 - `version.txt` / `Makefile` `PKG_VERSION`: `0.19.19`
-- Reviewed baseline before the r15 slice: `429fca5`; r15 adds explicit Bearhole multi-address listeners while keeping mandatory loopback.
+- Reviewed baseline before the r16 slice: `f197fce`; r16 fixes the served mobile service matrix and centralizes/resiliently refreshes Bearhole listeners.
 - Do **not** merge to `main`, create a tag, or publish a release without an explicit user command.
 
 This file previously described the `dev/0.19.18-warpscout-luci` / WARPSCOUT-baseline state (`0.19.18-r17`). That description was accurate for its time but was not kept in sync with `dev/0.19.19-tailscale-multiprovider`, which since diverged by ~100 commits of Tailscale/tsnet multiprovider work plus a partial app rebrand. This refresh replaces it with the current state of that branch. The WARPSCOUT/WARP Rescue sections below are condensed from the old file; nothing in that subsystem changed in this refresh, and its hardware-validation TODOs (see `TODO.md`) still stand.

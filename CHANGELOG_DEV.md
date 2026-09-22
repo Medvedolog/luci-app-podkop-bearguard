@@ -4,6 +4,14 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r14 — Forkop X updater, branding placement, bounded full-route probe
+
+- LuCI update backend resolves generic `forkop` to the actual flavour before selecting the repository/cache key: Forkop X → `slayer326/forkop`, full Forkop → `ushan0v/forkop`.
+- `tsnet-provider.sh` uses `/usr/share/forkop/mirror-migration.sh` as positive Forkop X evidence, matching the standalone bot.
+- Services package/menu label is `Podkop BearGuard`; Overview status heading is `Podkop Bot`.
+- Full route diagnostics no longer have a ~200s worst-case: geo/speed stages are bounded more tightly and the detached worker enforces a 90s ceiling.
+- Package revision bumped to r14.
+
 ## 0.19.19-r13 — review fixes: Forkop identity, multiline updates, mobile service details
 
 - Fixed `_forkop_display_name()` UCI end-anchor and added `/usr/share/forkop/mirror-migration.sh` as positive Forkop X evidence, keeping update sources aligned with the actual fork.

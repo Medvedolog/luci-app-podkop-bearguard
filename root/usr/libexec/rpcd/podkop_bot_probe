@@ -47,13 +47,26 @@ method_start(){
   (
     trap '[ "$restore" = true ] && restore_warp; rm -rf "$LOCK_DIR" 2>/dev/null' EXIT INT TERM
     tmp="$RESULT_FILE.tmp.$$"
-    if printf '%s\n' "$probe_json" | "$BACKEND" call active_probe > "$tmp" 2>/dev/null && jq -e . "$tmp" >/dev/null 2>&1; then
+    if command -v timeout >/dev/null 2>&1; then
+      printf '%s\n' "$probe_json" | timeout 90 "$BACKEND" call active_probe > "$tmp" 2>/dev/null
+      probe_rc=$?
+    else
+      printf '%s\n' "$probe_json" | "$BACKEND" call active_probe > "$tmp" 2>/dev/null
+      probe_rc=$?
+    fi
+    if [ "$probe_rc" -eq 0 ] && jq -e . "$tmp" >/dev/null 2>&1; then
       mv "$tmp" "$RESULT_FILE"
       rc=0; reason=""
     else
       rm -f "$tmp" 2>/dev/null
-      printf '{"ok":false,"available":false,"reason":"probe_worker_failed","detail":"active probe worker failed"}\n' > "$RESULT_FILE"
-      rc=1; reason="probe_worker_failed"
+      if [ "$probe_rc" -eq 124 ] || [ "$probe_rc" -eq 143 ]; then
+        printf '{"ok":false,"available":false,"reason":"probe_timeout","detail":"active probe exceeded 90 seconds"}\n' > "$RESULT_FILE"
+        reason="probe_timeout"
+      else
+        printf '{"ok":false,"available":false,"reason":"probe_worker_failed","detail":"active probe worker failed"}\n' > "$RESULT_FILE"
+        reason="probe_worker_failed"
+      fi
+      rc=1
     fi
     [ "$restore" = true ] && restore_warp
     finished=$(date +%s 2>/dev/null || echo 0)

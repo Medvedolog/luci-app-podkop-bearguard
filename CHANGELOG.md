@@ -20,6 +20,8 @@
 
 - **[Forkop X]** Проверка версии, ссылка на releases и источник обновления для Forkop X теперь используют `slayer326/forkop`; обычный Forkop остаётся на `ushan0v/forkop`.
 - **[Forkop native Tailscale]** Live native evidence полного Forkop имеет приоритет над provider hint от опционального LuCI backend. Это исключает ложную маркировку существующей `protocol='tailscale'` секции как legacy Forkop X, когда standalone-бот обновлён раньше LuCI-пакета.
+- **[Версия sing-box]** Для Forkop добавлен источник `/var/run/forkop/ui-state/sing-box-version`, поэтому UI/бот видят версию даже у sing-box, установленного скриптом как standalone binary без записи в opkg/apk.
+- **[UI]** Корневой пункт LuCI переименован из `Podkop BearGuard` в `Podkop Bot`, поскольку overview показывает весь комплекс bot/Forkop/sing-box/WARP/HWELP, а не отдельный BearGuard-компонент.
 - **[Telegram UI]** Устранены дубли карточек при неопределённом результате `editMessageText`: timeout после уже применённого edit больше не вызывает автоматический `sendMessage`. Вход в список секций также больше не сбрасывает persistent reply keyboard и не плодит сообщения «Кнопки меню обновлены».
 - **[Производительность]** Сокращено число hot-path subprocess: child-секции Forkop разбираются одним проходом `uci show | awk`, Telegram update/document — одним `jq`, mixed/SOCKS inbound — одним `jq`; уже загруженный transport context переиспользуется в FAST recovery, long poll и health-check.
 - **[Транспорт]** Явные fallback SOCKS и автоматически найденные SOCKS других секций разведены до сборки итоговой tier2-цепочки; порядок подключения сохраняется как основной SOCKS → секция Podkop/Forkop → прокси бота → WARP Rescue → Direct → emergency IP.

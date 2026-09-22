@@ -21,6 +21,36 @@ hwelp_port() {
     printf '%s' "$_p"
 }
 
+listen_ip_local() {
+    _ip="$1"
+    [ "$_ip" = "127.0.0.1" ] && return 0
+    case "$_ip" in 0.0.0.0|::|'') return 1;; esac
+    if printf '%s' "$_ip" | grep -q ':'; then
+        ip -6 -o addr show 2>/dev/null | awk -v a="$_ip" '{split($4,x,"/"); if(x[1]==a) ok=1} END{exit !ok}'
+    else
+        ip -4 -o addr show 2>/dev/null | awk -v a="$_ip" '{split($4,x,"/"); if(x[1]==a) ok=1} END{exit !ok}'
+    fi
+}
+
+normalize_listen_ips() {
+    _raw="$1"
+    _out="127.0.0.1"
+    for _ip in $(printf '%s' "$_raw" | tr ';' ' '); do
+        _ip=$(printf '%s' "$_ip" | tr -d '[:space:]')
+        [ -n "$_ip" ] || continue
+        [ "$_ip" = "127.0.0.1" ] && continue
+        listen_ip_local "$_ip" || return 1
+        case " $_out " in *" $_ip "*) ;; *) _out="$_out $_ip";; esac
+    done
+    printf '%s' "$(printf '%s' "$_out" | tr ' ' ';')"
+}
+
+hwelp_listen_ips() {
+    _raw=$(uci -q get podkop_bearhole.main.listen_ips 2>/dev/null)
+    _norm=$(normalize_listen_ips "$_raw" 2>/dev/null) || _norm="127.0.0.1"
+    printf '%s' "$_norm" | tr ';' ' '
+}
+
 gateway() { printf 'http://127.0.0.1:%s' "$(hwelp_port)"; }
 gateway_auth() { "$CTL" proxy-url 2>/dev/null; }
 
@@ -141,10 +171,13 @@ start_worker() {
             return
         fi
     fi
-    if ! "$PROXY" -l 127.0.0.1 -p "$_port" --check-bind >/dev/null 2>&1; then
-        fail_closed port_in_use
-        return
-    fi
+    for _listen_ip in $(hwelp_listen_ips); do
+        if ! "$PROXY" -l "$_listen_ip" -p "$_port" --check-bind >/dev/null 2>&1; then
+            log_event "event=hwelp_bind_failed listen=$_listen_ip port=$_port"
+            fail_closed listen_bind_failed
+            return
+        fi
+    done
 
     ensure_bearhole_uci || { fail_closed uci_init_failed; return; }
     uci -q set podkop_bearhole.main.enabled=1 || { fail_closed uci_enable_failed; return; }
@@ -261,6 +294,8 @@ set_port() {
 set_proxy() {
     _json="$1"
     _port=$(printf '%s' "$_json" | jq -r '.port // empty' 2>/dev/null)
+    _listen_raw=$(printf '%s' "$_json" | jq -r '.listen_ips // ""' 2>/dev/null)
+    _listen=$(normalize_listen_ips "$_listen_raw") || return 4
     _auth=$(printf '%s' "$_json" | jq -r '.auth_enabled // false' 2>/dev/null)
     _user=$(printf '%s' "$_json" | jq -r '.username // ""' 2>/dev/null)
     _pass=$(printf '%s' "$_json" | jq -r '.password // ""' 2>/dev/null)
@@ -282,6 +317,7 @@ set_proxy() {
 
     ensure_bearhole_uci || return 1
     uci -q set "podkop_bearhole.main.port=$_port" || return 1
+    uci -q set "podkop_bearhole.main.listen_ips=$_listen" || return 1
     uci -q set "podkop_bearhole.main.auth_enabled=$_auth" || return 1
     if [ "$_auth" = 1 ]; then
         uci -q set "podkop_bearhole.main.auth_user=$_user" || return 1
@@ -291,14 +327,14 @@ set_proxy() {
         uci -q delete podkop_bearhole.main.auth_pass >/dev/null 2>&1 || true
     fi
     uci -q commit podkop_bearhole || return 1
-    log_event "event=hwelp_proxy_config port=$_port auth=$([ "$_auth" = 1 ] && echo on || echo off)"
+    log_event "event=hwelp_proxy_config port=$_port listen=$_listen auth=$([ "$_auth" = 1 ] && echo on || echo off)"
     [ "$_was_active" = 1 ] && start_async
     return 0
 }
 
 case "$1" in
     list)
-        echo '{"status":{},"results":{},"start":{},"set_enabled":{"enabled":true},"set_port":{"port":0},"set_proxy":{"port":0,"auth_enabled":false,"username":"","password":""},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
+        echo '{"status":{},"results":{},"start":{},"set_enabled":{"enabled":true},"set_port":{"port":0},"set_proxy":{"port":0,"listen_ips":"127.0.0.1","auth_enabled":false,"username":"","password":""},"qualify_start":{},"refresh_routes":{},"log":{"offset":0}}'
         ;;
     call)
         case "$2" in
@@ -360,10 +396,11 @@ case "$1" in
                 _in=$(cat 2>/dev/null); [ -n "$_in" ] || _in='{}'
                 if set_proxy "$_in"; then
                     _restarting=false; [ -d "$START_LOCK" ] && _restarting=true
-                    printf '{"ok":true,"port":%s,"restarting":%s}\n' "$(hwelp_port)" "$_restarting"
+                    _listen_saved=$(uci -q get podkop_bearhole.main.listen_ips 2>/dev/null); [ -n "$_listen_saved" ] || _listen_saved=127.0.0.1
+                    printf '{"ok":true,"port":%s,"listen_ips":%s,"restarting":%s}\n' "$(hwelp_port)" "$(printf '%s' "$_listen_saved" | pb_json_log_filter)" "$_restarting"
                 else
                     _rc=$?
-                    [ "$_rc" = 2 ] && printf '{"ok":false,"reason":"bad_port"}\n' || { [ "$_rc" = 3 ] && printf '{"ok":false,"reason":"auth_invalid"}\n' || printf '{"ok":false,"reason":"proxy_save_failed"}\n'; }
+                    [ "$_rc" = 2 ] && printf '{"ok":false,"reason":"bad_port"}\n' || { [ "$_rc" = 3 ] && printf '{"ok":false,"reason":"auth_invalid"}\n' || { [ "$_rc" = 4 ] && printf '{"ok":false,"reason":"listen_invalid"}\n' || printf '{"ok":false,"reason":"proxy_save_failed"}\n'; }; }
                 fi
                 ;;
             qualify_start)

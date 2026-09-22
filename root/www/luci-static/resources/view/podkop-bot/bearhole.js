@@ -85,7 +85,7 @@ return view.extend({
 	proxySettings:function(st,isBusy){
 		var self=this;
 		var port=E('input',{'type':'number','min':'1024','max':'65535','step':'1','value':String(st.port||1066),'disabled':isBusy?'disabled':null,'style':'width:7.5em;'});
-		var listen=E('input',{'type':'text','value':st.listen_ips||'127.0.0.1','disabled':isBusy?'disabled':null,'placeholder':'127.0.0.1;192.168.1.1','style':'width:min(100%,32em);font-family:monospace;'});
+		var listen=E('input',{'type':'text','value':st.listen_ips_configured||st.listen_ips||'127.0.0.1','disabled':isBusy?'disabled':null,'placeholder':'127.0.0.1;192.168.1.1','style':'width:min(100%,32em);font-family:monospace;'});
 		var auth=E('input',{'type':'checkbox','checked':st.auth_enabled?'checked':null,'disabled':isBusy?'disabled':null});
 		var user=E('input',{'type':'text','value':st.auth_user||'','disabled':isBusy?'disabled':null,'autocomplete':'username','style':'max-width:18em;'});
 		var pass=E('input',{'type':'password','value':'','placeholder':st.auth_configured?_('оставьте пустым, чтобы не менять'):_('пароль'),'disabled':isBusy?'disabled':null,'autocomplete':'new-password','style':'max-width:18em;'});
@@ -101,7 +101,7 @@ return view.extend({
 			E('div',{'style':'margin-top:.65em;max-width:720px;'},[
 				row(_('Адреса прослушивания'),listen),
 				row(_('Порт входа'),port),
-				E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Разделяйте дополнительные IP точкой с запятой. 127.0.0.1 обязателен, всегда добавляется первым и удалить его нельзя. Разрешены только адреса, реально назначенные интерфейсам роутера; wildcard 0.0.0.0 и :: не используются.')),
+				E('p',{'class':'pb-hint-90','style':'margin:.55em 0;'},_('Разделяйте дополнительные IP точкой с запятой. 127.0.0.1 обязателен, всегда добавляется первым и удалить его нельзя. Сохранённый адрес может временно отсутствовать (например, VPN ещё не поднялся): тогда Bearhole пропустит его и автоматически пересчитает listeners при изменении интерфейсов. wildcard 0.0.0.0, :: и link-local IPv6 не используются.')),
 				localAuth,
 				E('div',{'style':'margin:.8em 0;padding:.65em .75em;border-left:3px solid #4d8fd8;background:rgba(77,143,216,.06);'},[
 					E('strong',{},_('Авторизация на вышестоящих прокси')),

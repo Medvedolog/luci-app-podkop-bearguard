@@ -229,14 +229,14 @@ Bearhole не ведёт отдельный список прокси. Он со
 **OpenWrt 25.12 и новее (apk):**
 
 ```sh
-wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19/luci-app-podkop-bot-0.19.19-r17.apk
+wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-19/luci-app-podkop-bot-0.19.19-r19.apk
 apk update && apk add --allow-untrusted /tmp/bearguard.apk
 ```
 
 **OpenWrt 24.10 и старее (opkg):**
 
 ```sh
-wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19/luci-app-podkop-bot_0.19.19-r17_all.ipk
+wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-19/luci-app-podkop-bot_0.19.19-r19_all.ipk
 opkg update && opkg install /tmp/bearguard.ipk
 ```
 

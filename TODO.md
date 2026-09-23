@@ -29,6 +29,7 @@ Priorities are ordered by release risk, not by implementation size. Refreshed 20
 - [ ] *(carried)* Exact Rescue restore after manual hidden-runtime tests: capture the previous Rescue endpoint/state before a temporary test SOCKS starts, restore on completion or error.
 - [ ] *(carried)* Persist per-endpoint TG status in the WARPSCOUT shortlist across `refreshView()`/reload.
 - [ ] *(carried)* Overview WARP metadata when `active_snapshot` is empty/stale — resolve by the actual Rescue endpoint.
+- [ ] **Router-verify the r19 one-button WARP start** on a clean router: no WARPSCOUT → `Транспорт → WARP` → «Установить и запустить WARP» → install → account → Discovery → TG qualification → ON-AIR without visiting any other section. Also: account present + empty magazine; saved magazine whose nodes all fail (expect one forced reload, then ON-AIR or `exhausted` with Rescue left disabled).
 - [ ] *(carried)* Router-verify Stop WARP semantics (Rescue stops, magazine `0 / 0`, shortlist/discovery kept, later Reload rebuilds).
 - [ ] *(carried)* Router-verify Reload/FIRE with Rescue already active (qualification uses the transient scan SOCKS; persistent Rescue is not replaced until FIRE succeeds).
 - [ ] *(carried)* Regression-check POLL/FAST separation, including the WARP Rescue cascade tier's sticky/demotion behaviour.

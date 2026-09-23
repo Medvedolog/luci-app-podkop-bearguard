@@ -4,6 +4,18 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r19 — WARP in one place; one-button first start
+
+- LuCI: `Настройки → WARP Rescue / WARPSCOUT` and `Транспорт → Револьвер WARP` are merged into a single `Транспорт → WARP` page (`warpscout-rescue.js`; `warpscout.js` removed). Order: WARPSCOUT install (when missing) → revolver → magazine; account, SOCKS/search parameters, manual discovery + shortlist (with per-node TG API test), WARPSCOUT version/update/remove and logs are folded sections below. Old URLs (`settings/warpscout`, `transport/warpscout`, `transport/warpscout-rescue`) alias to it. The WARPSCOUT card stays on `Обновление` too and links to the WARP page.
+- Only the revolver/magazine block is repainted during an operation (1.5 s); folded sections are rebuilt once when it ends, so an open section or a half-typed filter is not wiped by the status poll.
+- New rescue RPC `start` (ACL: write) used by the LuCI power button: control mode `start` = `ensure_account` (registers a WARP account through the normal `action_run register` worker if none exists) → `fire_worker 1` (saved magazine first; if empty or all fail, one Discovery → TG qualification → rebuild → FIRE, whatever `rescue_auto` says) → `enabled=1` only on success. A failed first start leaves Rescue disabled, so the watchdog does not churn. `trigger` (used by the bot) is unchanged.
+- `reload` also registers a missing account instead of failing with `not_ready`; failure is reported as `reload_failed` / `account_failed`. New UI phase `register` ("получаю учётную запись WARP"); idle failure states have readable labels.
+- Not-installed path: "Установить и запустить WARP" runs the official WARPSCOUT installer, polls its log and then calls `start` — first run is one click.
+- Removed the "cannot open …magazine" shell noise that an empty magazine wrote into the rescue log.
+- `tools/check-sources.sh`: guards for `ensure_account`/`start`, the ACL entry, and the one-button UI.
+- Simulated with stub `warpscout`/`ubus`/`uci`/`curl`: no account + empty magazine → register → Discovery → qualification → magazine 1 → ON-AIR, `enabled=1`; `start` without WARPSCOUT → `not_installed`. Not yet router-verified.
+- Package revision bumped to r19.
+
 ## 0.19.19-r18 — one-command console install; installer asset match
 
 - New `bearguard-install.sh` at the repository root: detects apk/opkg, refreshes package lists, reads the GitHub release (`latest` or `--version TAG`), picks only the BearGuard asset (`luci-app-podkop-bot-*.apk` / `luci-app-podkop-bot_*_all.ipk`) and installs it. README "Установка" leads with the one-liner; the manual commands use the same exact asset match.

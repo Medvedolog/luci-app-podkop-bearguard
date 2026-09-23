@@ -20,11 +20,10 @@ This file previously described the `dev/0.19.18-warpscout-luci` / WARPSCOUT-base
 
 - `Обзор`
 - `Настройки → Основные`
-- `Настройки → WARP Rescue / WARPSCOUT`
 - `Настройки → Мастер настройки`
 - `Транспорт → Цепочка прокси`
 - `Транспорт → Bearhole`
-- `Транспорт → Револьвер WARP`
+- `Транспорт → WARP` *(r19: one page — install, revolver, magazine; account/parameters/manual search/logs folded)*
 - `Транспорт → Tailscale` *(new)*
 - `Проверка маршрутов → Тест сервисов` *(Runtime split into two tabs; was one page)*
 - `Проверка маршрутов → Telegram`
@@ -32,7 +31,7 @@ This file previously described the `dev/0.19.18-warpscout-luci` / WARPSCOUT-base
 - `Логи`
 - `Помощь`
 
-Old WARPSCOUT/TG-route/Tailscale URLs have compatibility aliases where already implemented (`admin/services/podkop-bot/transport/warpscout`, `.../warpscout-rescue`, `.../wizard`).
+Old WARPSCOUT/TG-route/Tailscale URLs have compatibility aliases where already implemented (`admin/services/podkop-bot/settings/warpscout`, `.../transport/warpscout`, `.../warpscout-rescue`, `.../wizard`). The WARP page's route is still `transport/warp-revolver` (view `warpscout-rescue.js`).
 
 ### App branding: "Podkop BearGuard" vs "Podkop Bot" (settled)
 
@@ -79,6 +78,7 @@ So the raw git source of that file will *always* look like it has a stale versio
 6. Persistent user-facing WARP SOCKS is **WARP Rescue only**; the hidden test SOCKS (`/tmp/podkop_bot/warpscout_socks.pid`) is internal to diagnostics and must not appear as a second user-facing WARP service. Persistent Rescue runtime PID file: `/tmp/podkop_bot/warpscout_rescue_socks.pid`.
 7. Long WARP/manual route probes run in a detached backend worker (`podkop_bot_probe`) and request server-side cleanup/restore when the worker exits — router-level validation under browser/network loss is still an open TODO item, not yet claimed proven.
 8. WARP Rescue is **not** wired as an automatic final POLL/FAST transport failover stage; it remains qualification + Rescue control + Revolver + diagnostics only.
+9. *(r19)* First start is one button. LuCI calls rescue `start`, not `trigger`: register a missing account → FIRE from the saved magazine → if empty/exhausted, one forced reload → FIRE; `enabled=1` only on success. `trigger` stays the bot's cheap "fire what we have" call. `reload` also registers a missing account.
 
 ### Bearhole
 

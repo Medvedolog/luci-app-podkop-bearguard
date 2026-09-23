@@ -4,6 +4,12 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r18 — one-command console install; installer asset match
+
+- New `bearguard-install.sh` at the repository root: detects apk/opkg, refreshes package lists, reads the GitHub release (`latest` or `--version TAG`), picks only the BearGuard asset (`luci-app-podkop-bot-*.apk` / `luci-app-podkop-bot_*_all.ipk`) and installs it. README "Установка" leads with the one-liner; the manual commands use the same exact asset match.
+- `install.sh` 2.6.3 (vendored and standalone): `--action update-luci` matches the BearGuard asset by name instead of "first `*.apk`", because 0.19.19 releases also carry `hwelp-proxy` APK/IPK assets; `LUCI_REPO` uses the new repository name.
+- Package revision bumped to r18 (vendored installer changed).
+
 ## 0.19.19-r17 — bot: subscription edit reachable when Clash API is down
 
 - The Telegram bot's Proxy screen used to stop at "Clash API недоступен" with only Retry/Menu, while `✏ URL подписки` and `➕ Прокси` existed only on the proxy card that needs Clash. When sing-box could not start because of the section's own source (dead subscription, bad link), the bot offered no way to fix it. Hardware-observed on Forkop and Podkop Plus.

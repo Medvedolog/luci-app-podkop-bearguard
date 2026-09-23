@@ -6,7 +6,7 @@ Updated: 2026-09-23
 
 - Repository: `Medvedolog/luci-app-podkop-bearguard` (legacy `luci-app-podkop-bot` URL redirects here)
 - Development branch: `dev/0.19.19-tailscale-multiprovider`
-- Current package version: **`0.19.19-r17`** (`2804704`, CI run #588 green: sources, native APK/IPK build, install on OpenWrt 25.12/24.10)
+- Current package version: **`0.19.19-r18`** (r17 + one-command console installer `bearguard-install.sh` and installer 2.6.3 asset matching). Released to `main` as 0.19.19; the `0.19.19` tag still has to be pushed from outside this session (tag pushes are refused here).
 - `version.txt` / `Makefile` `PKG_VERSION`: `0.19.19`
 - r16 fixed the served mobile service matrix and made Bearhole listener handling resilient; r17 keeps subscription/proxy edits reachable from the bot when Clash API is down.
 - Standalone bot: `Medvedolog/podkop_bot` branch `dev/0.19.19-tailscale-multiprovider` (`fd99722`) is byte-identical to the vendored copy.

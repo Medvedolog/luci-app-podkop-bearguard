@@ -222,39 +222,40 @@ Bearhole не ведёт отдельный список прокси. Он со
 
 ## Установка
 
-Готовые пакеты публикуются в [GitHub Releases](../../releases). Установить или обновить BearGuard можно одной командой прямо в консоли OpenWrt (SSH):
+Одна команда в консоли OpenWrt (SSH) — и на **25.12** (apk), и на **24.10** (opkg):
 
 ```sh
-wget -qO /tmp/bearguard-install.sh https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/bearguard-install.sh && sh /tmp/bearguard-install.sh
+wget -qO- https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/bearguard-install.sh | sh
 ```
 
-Скрипт [`bearguard-install.sh`](bearguard-install.sh) сам определяет пакетный менеджер: на **OpenWrt 25.12 и новее** ставит APK через `apk`, на **24.10 и старее** — IPK через `opkg`. Он обновляет списки пакетов (чтобы подтянулись `luci-base`, `jq`, `curl`), берёт из последнего релиза именно пакет BearGuard и устанавливает его. В релизе лежат и архитектурные пакеты `hwelp-proxy`, их скрипт не трогает. Нужна конкретная версия — добавьте `--version <тег>`, например `sh /tmp/bearguard-install.sh --version 0.19.19`.
+Скрипт [`bearguard-install.sh`](bearguard-install.sh) сам выбирает APK или IPK, обновляет списки пакетов и ставит последнюю версию BearGuard из [GitHub Releases](../../releases). Та же команда обновляет уже установленный BearGuard. Нужна конкретная версия — `… | sh -s -- --version 0.19.19`.
 
-Если GitHub с роутера недоступен, перед командой укажите рабочий прокси, например Mixed Proxy Podkop:
+Если GitHub с роутера недоступен, сначала задайте прокси, например Mixed Proxy Podkop: `export https_proxy=http://192.168.1.1:2080`.
+
+Дальше: LuCI → **Службы → Podkop BearGuard** → **Мастер настройки**.
+
+<details>
+<summary>Без скрипта — вручную</summary>
+
+OpenWrt 25.12 и новее:
 
 ```sh
-export https_proxy=http://192.168.1.1:2080 http_proxy=http://192.168.1.1:2080
+apk update
+U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep -E '/luci-app-podkop-bot-[^/]*\.apk$' | head -n1)"
+wget -O /tmp/bearguard.apk "$U" && apk add --allow-untrusted /tmp/bearguard.apk
 ```
 
-После установки откройте LuCI → **Службы → Podkop BearGuard**. Если бот ещё не установлен, начните с **Мастера настройки**.
-
-### Вручную, без скрипта
-
-Те же шаги отдельными командами. Используется штатная утилита `jsonfilter`, входящая в OpenWrt.
-
-OpenWrt 25.12 и новее — apk:
+OpenWrt 24.10 и старее:
 
 ```sh
-apk update; U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep -E '/luci-app-podkop-bot-[^/]*\.apk$' | head -n1)"; [ -n "$U" ] && wget -O /tmp/luci-app-podkop-bot.apk "$U" && apk add --allow-untrusted /tmp/luci-app-podkop-bot.apk
+opkg update
+U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep -E '/luci-app-podkop-bot_[^/]*_all\.ipk$' | head -n1)"
+wget -O /tmp/bearguard.ipk "$U" && opkg install /tmp/bearguard.ipk
 ```
 
-OpenWrt 24.10 и старее — opkg:
+`--allow-untrusted` нужен потому, что APK скачивается напрямую, а не из подключённого репозитория apk.
 
-```sh
-opkg update; U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep -E '/luci-app-podkop-bot_[^/]*_all\.ipk$' | head -n1)"; [ -n "$U" ] && wget -O /tmp/luci-app-podkop-bot.ipk "$U" && opkg install /tmp/luci-app-podkop-bot.ipk
-```
-
-Одиночный APK из GitHub Releases не входит в настроенный репозиторий apk, поэтому на 25.12 он ставится с `--allow-untrusted`.
+</details>
 
 ### Зависимости
 

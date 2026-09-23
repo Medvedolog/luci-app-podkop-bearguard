@@ -2,7 +2,8 @@
 # Podkop BearGuard (luci-app-podkop-bot) — install/update from GitHub Releases
 # straight from the OpenWrt console.
 #
-#   wget -qO /tmp/bearguard-install.sh https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/bearguard-install.sh && sh /tmp/bearguard-install.sh
+#   wget -qO- https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/bearguard-install.sh | sh
+#   (pin a version: ... | sh -s -- --version 0.19.19)
 #
 # OpenWrt 25.12+ (apk) gets the .apk asset, OpenWrt 24.10 and older (opkg)
 # the _all.ipk. Only the BearGuard package itself is picked from a release:
@@ -21,7 +22,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --version) TAG="${2:-}"; shift 2 ;;
         --version=*) TAG="${1#*=}"; shift ;;
-        -h|--help) sed -n '2,16p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,17p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done

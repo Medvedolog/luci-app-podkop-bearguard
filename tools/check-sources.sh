@@ -259,7 +259,7 @@ for ASYNC in root/www/luci-static/resources/view/podkop-bot/*-async.js; do
         echo "LuCI: async wrapper returns an injected instance: $ASYNC" >&2; fail=1
     fi
 done
-WARPSCOUT_JS="root/www/luci-static/resources/view/podkop-bot/warpscout.js"
+WARPSCOUT_JS="root/www/luci-static/resources/view/podkop-bot/warpscout-rescue.js"
 if grep -Fq 'self.refreshView();},1800' "$WARPSCOUT_JS"; then
     echo "WARPSCOUT: manual TG result-erasing delayed refresh returned" >&2; fail=1
 fi
@@ -283,6 +283,17 @@ grep -Fq "jq -e '.ok == true'" "$RESCUE_RPC" || {
 }
 grep -Fq 'rescue_autostart' "$RESCUE_RPC" || {
     echo "WARP Rescue: autostart setting missing" >&2; fail=1
+}
+# One-button first run: LuCI "Запустить WARP" must register a missing account
+# and discover/qualify an empty magazine itself (router-side, page may close).
+grep -Fq 'ensure_account(){' "$RESCUE_RPC" && grep -Fq 'start)method_start' "$RESCUE_RPC" || {
+    echo "WARP Rescue: one-button start (account + discovery) missing" >&2; fail=1
+}
+grep -Fq '"set", "trigger", "start"' root/usr/share/rpcd/acl.d/luci-app-podkop-bot.json || {
+    echo "WARP Rescue: start RPC not in ACL" >&2; fail=1
+}
+grep -Fq "callRescueStart" "$WARPSCOUT_JS" && grep -Fq "Установить и запустить WARP" "$WARPSCOUT_JS" || {
+    echo "WARP UI: install + one-button start missing from the WARP page" >&2; fail=1
 }
 grep -Fq 'start_control resume' "$RESCUE_RPC" || {
     echo "WARP Rescue: runtime-test restore fallback missing" >&2; fail=1

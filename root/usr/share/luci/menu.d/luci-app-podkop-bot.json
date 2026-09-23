@@ -17,8 +17,7 @@
 		"action": { "type": "view", "path": "podkop-bot/settings" }
 	},
 	"admin/services/podkop-bot/settings/warpscout": {
-		"title": "WARP Rescue / WARPSCOUT", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/warpscout" }
+		"action": { "type": "alias", "path": "admin/services/podkop-bot/transport/warp-revolver" }
 	},
 	"admin/services/podkop-bot/settings/wizard": {
 		"title": "Мастер настройки", "order": 20,
@@ -37,7 +36,7 @@
 		"action": { "type": "view", "path": "podkop-bot/bearhole-live" }
 	},
 	"admin/services/podkop-bot/transport/warp-revolver": {
-		"title": "Револьвер WARP", "order": 15,
+		"title": "WARP", "order": 15,
 		"action": { "type": "view", "path": "podkop-bot/warpscout-rescue" }
 	},
 	"admin/services/podkop-bot/transport/tailscale": {
@@ -45,7 +44,7 @@
 		"action": { "type": "view", "path": "podkop-bot/tailscale" }
 	},
 	"admin/services/podkop-bot/transport/warpscout": {
-		"action": { "type": "alias", "path": "admin/services/podkop-bot/settings/warpscout" }
+		"action": { "type": "alias", "path": "admin/services/podkop-bot/transport/warp-revolver" }
 	},
 	"admin/services/podkop-bot/transport/warpscout-rescue": {
 		"action": { "type": "alias", "path": "admin/services/podkop-bot/transport/warp-revolver" }

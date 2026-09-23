@@ -78,7 +78,7 @@ build_magazine(){
 	mv "$RESCUE_MAG.$$" "$RESCUE_MAG"
 	persist_magazine || true
 }
-magazine_count(){ restore_magazine >/dev/null 2>&1 || true; _n=$(wc -l < "$RESCUE_MAG" 2>/dev/null | tr -d ' '); case "$_n" in ''|*[!0-9]*) _n=0;; esac; printf '%s' "$_n"; }
+magazine_count(){ restore_magazine >/dev/null 2>&1 || true; _n=0; [ -f "$RESCUE_MAG" ] && _n=$(wc -l < "$RESCUE_MAG" | tr -d ' '); case "$_n" in ''|*[!0-9]*) _n=0;; esac; printf '%s' "$_n"; }
 magazine_index(){ restore_magazine >/dev/null 2>&1 || true; _ep="$1"; awk -F'|' -v e="$_ep" '$1==e{print NR;exit}' "$RESCUE_MAG" 2>/dev/null; }
 magazine_has(){ restore_magazine >/dev/null 2>&1 || true; _ep="$1"; awk -F'|' -v e="$_ep" '$1==e{f=1;exit}END{exit(f?0:1)}' "$RESCUE_MAG" 2>/dev/null; }
 
@@ -135,6 +135,21 @@ wait_tgscan_done(){
 rpc_ok(){ printf '%s' "$1" | jq -e '.ok == true' >/dev/null 2>&1; }
 rpc_reason(){ printf '%s' "$1" | jq -r '.reason // "rpc_rejected"' 2>/dev/null; }
 
+# First start from LuCI must not send the operator to three pages: without a
+# local WARP account, register one through the same WARPSCOUT action worker
+# the manual button uses, then continue with Discovery.
+ensure_account(){
+	[ -s "$ACCOUNT_FILE" ] && return 0
+	state_write reloading "" 0 0 register
+	echo "[rescue] no WARP account yet: registering one"
+	_resp=$(ubus call podkop_bot_warpscout action_run '{"action":"register","target":""}' 2>/dev/null) || { echo "[rescue] register RPC failed"; return 1; }
+	if ! rpc_ok "$_resp"; then echo "[rescue] register rejected: $(rpc_reason "$_resp")"; return 1; fi
+	wait_action_done 120 || { echo "[rescue] register failed or timed out"; return 1; }
+	[ -s "$ACCOUNT_FILE" ] || { echo "[rescue] register finished without an account file"; return 1; }
+	echo "[rescue] WARP account ready"
+	return 0
+}
+
 reload_magazine(){
 	state_write reloading "" 0 0 discovery
 	echo "[rescue] reload: running Discovery"
@@ -159,6 +174,7 @@ fire_worker(){
 	_auto_reload="$1"; _attempt=0
 	while :; do
 		build_magazine || true
+		[ -f "$RESCUE_MAG" ] || : > "$RESCUE_MAG"
 		_total=$(magazine_count)
 		_idx=0; _last=$(state_get endpoint)
 		while IFS='|' read -r _ep _lat _loss _tun; do
@@ -195,7 +211,9 @@ run_control(){
 	case "$_mode" in
 		reload)
 			state_write reloading "" 0 0 manual
-			if reload_magazine; then
+			if ! ensure_account; then
+				state_write reload_failed "" 0 "$(magazine_count)" account_failed; _rc=1
+			elif reload_magazine; then
 				echo "[rescue] reload: firing best VALID WARP route"
 				fire_worker 0; _rc=$?
 			else
@@ -208,6 +226,20 @@ run_control(){
 			else
 				echo "[rescue] resume: previous WARP unavailable, falling through magazine"
 				fire_worker "$_auto"; _rc=$?
+			fi
+			;;
+		start)
+			# One-button start: account -> saved magazine -> (if empty or
+			# exhausted) Discovery + TG qualification -> FIRE. Auto-reload is
+			# forced for this one run whatever rescue_auto says.
+			if ! ensure_account; then
+				state_write reload_failed "" 0 "$(magazine_count)" account_failed; _rc=1
+			elif fire_worker 1; then
+				cfg_write enabled 1; _rc=0
+			else
+				# reload_magazine enables Rescue once a magazine exists; a start
+				# that still ends exhausted must not leave the watchdog armed.
+				cfg_write enabled 0; _rc=1
 			fi
 			;;
 		selected) fire_selected_worker "$_target"; _rc=$?;;
@@ -262,21 +294,35 @@ EOF
 
 method_set(){ read -r _in 2>/dev/null; _k=$(printf '%s' "$_in"|jq -r '.key//""'); _v=$(printf '%s' "$_in"|jq -r '.value//""'); case "$_k" in rescue_auto|rescue_autostart|bearhole_gate) case "$_v" in 0|1) cfg_write "$_k" "$_v"; printf '{"ok":true}\n';; *) printf '{"ok":false,"reason":"bad_value"}\n';; esac;; *) printf '{"ok":false,"reason":"bad_key"}\n';; esac; }
 
-preflight_common(){
-	[ -x "$BIN" ] && [ -s "$ACCOUNT_FILE" ] || { printf '{"ok":false,"reason":"not_ready"}\n'; return 1; }
+preflight_idle(){
 	pid_alive "$CONTROL_PID" && { printf '{"ok":false,"reason":"controller_busy"}\n'; return 1; }
 	pid_alive "$TGSCAN_PID" && { printf '{"ok":false,"reason":"qualification_running"}\n'; return 1; }
 	pid_alive "$ACTION_PID" && { printf '{"ok":false,"reason":"discovery_running"}\n'; return 1; }
 	handoff_runtime || { printf '{"ok":false,"reason":"runtime_handoff_failed"}\n'; return 1; }
 	return 0
 }
+preflight_common(){
+	[ -x "$BIN" ] && [ -s "$ACCOUNT_FILE" ] || { printf '{"ok":false,"reason":"not_ready"}\n'; return 1; }
+	preflight_idle
+}
+# start/reload register a missing WARP account themselves.
+preflight_start(){
+	[ -x "$BIN" ] || { printf '{"ok":false,"reason":"not_installed"}\n'; return 1; }
+	preflight_idle
+}
 preflight_fire(){
 	[ "$(cfg_get enabled)" = 1 ] || { printf '{"ok":false,"reason":"warpscout_disabled"}\n'; return 1; }
 	preflight_common
 }
-preflight_reload(){ preflight_common; }
+preflight_reload(){ preflight_start; }
 
 method_trigger(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_common || return; pid_alive "$RESCUE_PID" && { cfg_write enabled 1; printf '{"ok":true,"already_active":true}\n'; return; }; cfg_write enabled 1 || { printf '{"ok":false,"reason":"write_failed"}\n'; return; }; _auto=$(cfg_get rescue_auto); [ "$_auto" = 1 ] || _auto=0; start_control fire "$_auto" ""; printf '{"ok":true}\n'; }
+method_start(){
+	read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_start || return
+	pid_alive "$RESCUE_PID" && { cfg_write enabled 1; printf '{"ok":true,"already_active":true}\n'; return; }
+	start_control start 1 ""
+	printf '{"ok":true}\n'
+}
 method_next(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_fire || return; stop_rescue; start_control fire 0 ""; printf '{"ok":true}\n'; }
 method_fire(){ read -r _in 2>/dev/null; _ep=$(printf '%s' "$_in" | jq -r '.endpoint // ""' 2>/dev/null); valid_endpoint "$_ep" || { printf '{"ok":false,"reason":"bad_endpoint"}\n'; return; }; magazine_has "$_ep" || { printf '{"ok":false,"reason":"not_in_magazine"}\n'; return; }; preflight_fire || return; : >"$RESCUE_LOG"; if pid_alive "$RESCUE_PID" && [ "$(state_get endpoint)" = "$_ep" ]; then printf '{"ok":true,"already_active":true}\n'; return; fi; stop_rescue; start_control selected 0 "$_ep"; printf '{"ok":true}\n'; }
 method_reload(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_reload || return; stop_rescue; start_control reload 0 ""; printf '{"ok":true}\n'; }
@@ -300,7 +346,7 @@ method_resume(){
 method_log(){ read -r _in 2>/dev/null; _o=$(printf '%s' "$_in"|sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); [ -n "$_o" ]||_o=0; _sz=$(wc -c <"$RESCUE_LOG" 2>/dev/null|tr -d ' '); [ -n "$_sz" ]||_sz=0; [ "$_o" -le "$_sz" ] 2>/dev/null || _o=0; _b=$((_sz-_o)); [ "$_b" -gt 32768 ]&&_b=32768; if [ "$_b" -gt 0 ]; then _c=$(tail -c +$((_o+1)) "$RESCUE_LOG"|head -c "$_b"| pb_json_log_filter); [ -n "$_c" ]||_c='""'; else _c='""'; fi; printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_c" "$((_o+_b))"; }
 
 case "$1" in
- list) echo '{"status":{},"magazine":{},"set":{"key":"x","value":"x"},"trigger":{},"next":{},"fire":{"endpoint":"x"},"reload":{},"stop":{},"pause":{},"resume":{},"log":{"offset":0}}';;
- call) case "$2" in status)method_status;;magazine)method_magazine;;set)method_set;;trigger)method_trigger;;next)method_next;;fire)method_fire;;reload)method_reload;;stop)method_stop;;pause)method_pause;;resume)method_resume;;log)method_log;;*)echo '{"error":"unknown method"}';exit 1;;esac;;
+ list) echo '{"status":{},"magazine":{},"set":{"key":"x","value":"x"},"trigger":{},"start":{},"next":{},"fire":{"endpoint":"x"},"reload":{},"stop":{},"pause":{},"resume":{},"log":{"offset":0}}';;
+ call) case "$2" in status)method_status;;magazine)method_magazine;;set)method_set;;trigger)method_trigger;;start)method_start;;next)method_next;;fire)method_fire;;reload)method_reload;;stop)method_stop;;pause)method_pause;;resume)method_resume;;log)method_log;;*)echo '{"error":"unknown method"}';exit 1;;esac;;
  *) echo '{"error":"unknown command"}'; exit 1;;
 esac

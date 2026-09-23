@@ -83,7 +83,7 @@ return view.extend({
 				E('div',{'style':'display:flex;gap:.5em;flex-wrap:wrap;'},[saveAuto,act(callRescueTrigger,_('Fire · запустить лучший')),act(callRescueNext,_('Следующий WARP')),act(callRescueReload,_('Перезарядить магазин')),act(callRescueStop,_('Стоп'))]),actionStatus,
 				E('p',{'class':'pb-hint-90','style':'margin-top:.8em;'},_('OpenWrt Rescue / Bearhole: отдельный аварийный рубильник предусмотрен в backend, но его влияние на маршрутизацию пока не активировано до фиксации точной семантики.'))
 			]),
-			E('div',{'style':'margin-top:.7em;'},[E('a',{'class':'cbi-button','href':L.url('admin/services/podkop-bot/transport/warpscout')},_('Открыть настройки WARP Rescue')), ' ', E('a',{'class':'cbi-button','href':L.url('admin/services/podkop-bot/runtime/tg-api-routes')},_('Открыть TG API Routes'))])
+			E('div',{'style':'margin-top:.7em;'},[E('a',{'class':'cbi-button','href':L.url('admin/services/podkop-bot/transport/warp-revolver')},_('Открыть WARP')), ' ', E('a',{'class':'cbi-button','href':L.url('admin/services/podkop-bot/runtime/tg-api-routes')},_('Открыть TG API Routes'))])
 		]);
 	},
 	ago:function(ts){var s=Math.floor(Date.now()/1000)-ts;if(s<60)return _('только что');if(s<3600)return Math.floor(s/60)+_(' мин назад');if(s<86400)return Math.floor(s/3600)+_(' ч назад');return Math.floor(s/86400)+_(' дн назад');},

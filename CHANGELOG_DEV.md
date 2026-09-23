@@ -4,6 +4,14 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r17 — bot: subscription edit reachable when Clash API is down
+
+- The Telegram bot's Proxy screen used to stop at "Clash API недоступен" with only Retry/Menu, while `✏ URL подписки` and `➕ Прокси` existed only on the proxy card that needs Clash. When sing-box could not start because of the section's own source (dead subscription, bad link), the bot offered no way to fix it. Hardware-observed on Forkop and Podkop Plus.
+- The Clash-unavailable card now carries those UCI-only actions: `✏ URL подписки` for subscription sections, `➕ Прокси` for Plus/Forkop or non-subscription sections. Save paths are UCI + Podkop reload and never touch Clash; afterwards the bot returns to `proxy_menu`, which shows the same card again if sing-box is still down.
+- Standalone `podkop_bot` synced byte-for-byte (`fd99722` on its `dev/0.19.19-tailscale-multiprovider`); `vendor.sha256` regenerated.
+- CI run #588 (`35855928719`) green on `2804704`. Not yet router-verified.
+- Package revision bumped to r17.
+
 ## 0.19.19-r16 — served mobile matrix details; resilient Bearhole listener set
 
 - `runtime-live.js` now implements the same tap/click/keyboard service-detail cell as the base matrix, so the actually served `runtime-services-only` page exposes HTTP/latency details on phones.
@@ -19,6 +27,7 @@ This file tracks the current development branch. The large historical `CHANGELOG
 - Additional listeners are separate procd instances sharing the same route table, port, authentication and log; OpenWrt's own system proxy continues to use loopback.
 - Only addresses actually assigned to router interfaces are accepted. `0.0.0.0` and `::` wildcard listeners are rejected; duplicates are normalized away.
 - Existing configurations without `listen_ips` remain loopback-only.
+- Note (added later): `hwelp-proxy` 0.1.1-r3 refuses non-loopback binds, so with the current binary no extra listener actually runs; r16 turns that into a safe `bind_unsupported` skip. The feature needs a hwelp change to become functional.
 - Package revision bumped to r15.
 
 ## 0.19.19-r14 — Forkop X updater, branding placement, bounded full-route probe
@@ -35,6 +44,22 @@ This file tracks the current development branch. The large historical `CHANGELOG
 - Preserved multiline Telegram input without losing `user_id`/document metadata by base64-wrapping the text field inside the consolidated jq record before shell parsing.
 - Service-matrix details remain compact but are now available by tap/click (and keyboard), not hover-only.
 - Bumped `PKG_RELEASE` from 12 to 13 because this is a new router-testable code slice; vendored bot stays byte-identical to standalone.
+
+## 0.19.19-r2 … r12 — condensed (recorded after the fact)
+
+These slices shipped between the r1 refresh and the r13 review fixes without their own entries here. One line each:
+
+- **r2** — "Podkop BearGuard v…" version footer rolled out to `help.js`, `settings.js`, `update.js`, `wizard.js`, `runtime.js`, `transport.js` (display text only; rpcd objects and UCI names untouched).
+- **r3** — WARPSCOUT install/management made findable: the Update page scrolls to `#hash` targets after async render, card order is LuCI → Telegram bot → Podkop → WARPSCOUT → local components → danger zone, card titles unified.
+- **r4** — `tailscale.js` shows a native Forkop `protocol='tailscale'` section the current provider does not own ("legacy" card with hostname/control URL/enabled and a guarded delete), and blocks creating a second node while it exists; `callDelete` gained the `legacy_native` param.
+- **r5** — Forkop native detection fixed: `tsnet_provider()` and the bot's fallback checked `/usr/lib/singbox/servers.uc`, which never exists (Forkop installs under `/usr/lib/forkop/`). Now `/usr/lib/forkop/singbox/servers.uc` or a live `protocol='tailscale'` section means native. Found on a real Forkop 1.0.5 router that LuCI misread as Forkop X.
+- **r6** — Bot sing-box version cache keyed by the binary's inode:mtime:size; a Forkop `-extended` → standard swap no longer leaves a stale version in reports.
+- **r7** — Bot sing-box restart flap guard: two individual alerts per 10 min, then one "флапает" summary and one "стабилизировался" message (reported: 13 alerts in a burst on a 19 MB-free router).
+- **r8** — Route service matrix compacted to status lamps.
+- **r9** — HWELP updater: owfeed first, then GitHub release assets by `DISTRIB_ARCH`; CI builds cortex-a53 and generic AArch64 IPK/APK and attaches them to releases; Update page shows arch, format and last install source.
+- **r10** — Forkop X display flavour on Overview/status and in the bot (`podkop_variant_display`), without changing the UCI variant.
+- **r11** — Live route matrix lamp-only, with a source guard.
+- **r12** — Bot hot-path performance (one-pass Forkop child classification, single-`jq` update/document parse, transport context reuse in FAST recovery/long poll/health check) with CI guards. Later commits that still carried the r12 label until r13 bumped it: duplicate callback cards after ambiguous `editMessageText` timeouts, Forkop X release repository, `LUCI_APP_VERSION` 0.19.19, live native-Tailscale evidence over a stale backend hint, Forkop `/var/run/forkop/ui-state/sing-box-version`, root menu title experiments.
 
 ## 0.19.19-r1 — Tailscale/tsnet goes multiprovider; overlay watcher retired; opt-in auto-repair; partial rebrand
 

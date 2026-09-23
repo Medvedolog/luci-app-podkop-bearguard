@@ -6,8 +6,8 @@
 
 `Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.19.19` · OpenWrt · LuCI · opkg / apk
 
-[![Release](https://img.shields.io/github/v/release/Medvedolog/luci-app-podkop-bot?style=flat-square&label=release&color=0969da)](https://github.com/Medvedolog/luci-app-podkop-bot/releases/latest)
-[![Build](https://img.shields.io/github/actions/workflow/status/Medvedolog/luci-app-podkop-bot/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/Medvedolog/luci-app-podkop-bot/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Medvedolog/luci-app-podkop-bearguard?style=flat-square&label=release&color=0969da)](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/Medvedolog/luci-app-podkop-bearguard/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/Medvedolog/luci-app-podkop-bearguard/actions/workflows/ci.yml)
 [![OpenWrt](https://img.shields.io/badge/OpenWrt-opkg%20%7C%20apk-00b5e2?style=flat-square&logo=openwrt&logoColor=white)](https://openwrt.org/)
 [![LuCI](https://img.shields.io/badge/LuCI-web%20interface-8250df?style=flat-square)](#разделы-интерфейса)
 [![Bot](https://img.shields.io/badge/Telegram-podkop__bot-26a5e4?style=flat-square&logo=telegram&logoColor=white)](https://github.com/Medvedolog/podkop_bot)
@@ -31,7 +31,7 @@ BearGuard помогает установить, восстановить и о�
 
 Начиная с ветки 0.19.19 приложение также умеет работать со встроенным в sing-box Tailscale/tsnet. Поддерживаются обычный Podkop, Forkop и Forkop X. Там, где проект уже предоставляет штатную Tailscale-интеграцию, используется именно она. Для Podkop и Forkop X исходные проекты не патчатся: BearGuard меняет текущий runtime-конфиг sing-box и, по желанию пользователя, может автоматически вернуть потерянный endpoint после штатной перегенерации конфигурации.
 
-Автовосстановление Tailscale не использует постоянный watcher. Раз в минуту короткий cron-helper проверяет, нужен ли repair; перед повторным применением он ждёт окончания reload Forkop и подтверждает готовность dataplane реальной прикладной пробой через Main/Backup Mixed Proxy. После попытки действует cooldown, поэтому механизм не превращается в цикл перезапусков.
+Автовосстановление Tailscale не использует постоянный watcher. Раз в минуту короткий cron-helper проверяет, нужен ли repair; перед повторным применением он ждёт окончания reload Forkop и подтверждает готовность dataplane реальной прикладной пробой через Main/Backup Mixed Proxy. После попытки действует cooldown, поэтому механизм не превращается в цикл перезапусков. Пока endpoint отсутствует, сама проверка готовности (запрос к Telegram через Mixed Proxy) всё ещё выполняется раз в минуту — cooldown ограничивает только повторное применение; это известное ограничение, см. `TODO.md`.
 
 Конфигурация маршрутизации Podkop и его форков по-прежнему остаётся их зоной ответственности. BearGuard читает необходимые параметры для диагностики и транспорта, а изменения выполняет только там, где для этого предусмотрена отдельная функция: например, настройка Tailscale/tsnet, включение Mixed Proxy, управление фильтрами Forkop или явное обновление установленного варианта Podkop.
 
@@ -48,7 +48,7 @@ BearGuard помогает установить, восстановить и о�
 - штатная Tailscale-интеграция там, где она доступна, и runtime-интеграция для Podkop/Forkop X без постоянного watcher-процесса;
 - опциональное автовосстановление tsnet после перегенерации Podkop/Forkop X с readiness-проверкой через Main/Backup Mixed Proxy;
 - WARP Rescue и Warpscout для резервного доступа и диагностики;
-- Bearhole для аварийного многопрокси-доступа;
+- Bearhole для аварийного многопрокси-доступа и `hwelp-proxy` с автоматической установкой из owfeed или GitHub Releases;
 - работа с OpenWrt 24.10 через IPK и с OpenWrt 25.12+ через APK.
 
 ## Скриншоты
@@ -144,6 +144,8 @@ BearGuard помогает установить, восстановить и о�
 
 Проверки выполняются параллельно и имеют общий предел времени, чтобы одна недоступная служба не задерживала всю страницу.
 
+Результаты по всем маршрутам сводятся в компактную матрицу-«светофор»: одна строка — один маршрут, одна лампочка — один сервис. HTTP-код, задержка и прочие детали открываются по наведению или нажатию на лампочку, так что матрица удобна и с телефона.
+
 Набор этих проверок появился не с нуля. Значительная часть практических приёмов, используемых для проверки Telegram, GitHub, видеосервисов и других внешних площадок, пришла из `podkop_bot`, а там формировалась с оглядкой на открытые инструменты сообщества, в том числе WARPSCOUT. В LuCI эти проверки были переработаны под параллельный запуск, общий предел времени, работу через выбранный маршрут и единое представление результата. В конце README перечислены проекты, у которых заимствовались идеи, способы проверки доступности и отдельные технические приёмы.
 
 ### Tailscale
@@ -189,19 +191,24 @@ Bearhole не ведёт отдельный список прокси. Он со
 
 Для Bearhole написан отдельный компактный прокси **`hwelp-proxy` на C**. Название — игра слов: английское *help* и староанглийское **hwelp**, «детёныш, медвежонок»; то есть буквально маленький помощник рядом с Bearhole.
 
-`hwelp-proxy` слушает только loopback (`127.0.0.1`), принимает обычный HTTP-прокси и HTTPS `CONNECT` и умеет последовательно использовать несколько верхних маршрутов: прямой выход, SOCKS5/SOCKS5h или HTTP-прокси. Поддерживается авторизация SOCKS5 и HTTP, но учётные данные не пишутся в журнал. Перехвата TLS, TUN/TAP, `nftables`, sing-box или ucode внутри него нет — во время работы ему нужна только libc.
+`hwelp-proxy` слушает loopback (`127.0.0.1`), принимает обычный HTTP-прокси и HTTPS `CONNECT` и умеет последовательно использовать несколько верхних маршрутов: прямой выход, SOCKS5/SOCKS5h или HTTP-прокси. Поддерживается авторизация SOCKS5 и HTTP, но учётные данные не пишутся в журнал. Перехвата TLS, TUN/TAP, `nftables`, sing-box или ucode внутри него нет — во время работы ему нужна только libc.
 
 Ключевая особенность: список маршрутов хранится отдельно в `routes.conf`, и `hwelp-proxy` перечитывает его **на каждом новом клиентском соединении**. Поэтому Bearhole может переквалифицировать или переставить маршруты без перезапуска самого прокси. Получается маленький устойчивый шлюз для пакетного менеджера и аварийных загрузок, который не зависит от тяжёлого сетевого стека в момент, когда этот стек как раз и приходится чинить.
 
-`hwelp-proxy` остаётся необязательным архитектурным пакетом и устанавливается по требованию. Его отсутствие не должно мешать установке или ремонту основного пакета BearGuard (`luci-app-podkop-bot`).
+В настройках Bearhole можно указать дополнительные адреса прослушивания через `;` (например, `127.0.0.1;192.168.2.1`): `127.0.0.1` обязателен и всегда первый, wildcard-адреса запрещены, принимаются только адреса, реально назначенные интерфейсам роутера. **Пока это заготовка:** текущая версия `hwelp-proxy` (0.1.1) умеет слушать только loopback, поэтому дополнительные адреса пропускаются с диагностикой `bind_unsupported` и не мешают работе основного `127.0.0.1`.
+
+`hwelp-proxy` остаётся необязательным архитектурным пакетом и устанавливается по требованию: сначала из owfeed, а если он недоступен — из подходящего по архитектуре файла GitHub Releases. Его отсутствие не должно мешать установке или ремонту основного пакета BearGuard (`luci-app-podkop-bot`).
 
 ### Обновление
 
-В одном месте собраны обновления трёх независимых частей:
+В одном месте собраны обновления четырёх независимых модулей:
 
 - **веб-интерфейс LuCI** — проверка и установка новой версии IPK/APK;
 - **Telegram-бот** — обновление с GitHub или установка локального файла `podkop_bot.sh`;
-- **Podkop/Forkop** — проверка версии и запуск штатного установщика выбранного варианта.
+- **Podkop/Forkop** — проверка версии и запуск штатного установщика выбранного варианта; для Forkop и Forkop X используется репозиторий именно установленного форка;
+- **WARPSCOUT** — установка, обновление и удаление.
+
+Ниже — локальные компоненты пакета на случай, если GitHub недоступен: вложенная копия бота и HWELP (архитектура, формат пакета и источник последней установки).
 
 Если GitHub недоступен напрямую, приложение может использовать уже работающий прокси-маршрут. Установка выполняется так, чтобы перезапуск `rpcd` не обрывал сам процесс обновления.
 
@@ -222,13 +229,13 @@ Bearhole не ведёт отдельный список прокси. Он со
 ### OpenWrt 24.10 и старее — opkg
 
 ```sh
-U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bot/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep '_all\.ipk$' | head -n1)"; [ -n "$U" ] && wget -O /tmp/luci-app-podkop-bot.ipk "$U" && opkg install /tmp/luci-app-podkop-bot.ipk
+U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep '_all\.ipk$' | head -n1)"; [ -n "$U" ] && wget -O /tmp/luci-app-podkop-bot.ipk "$U" && opkg install /tmp/luci-app-podkop-bot.ipk
 ```
 
 ### OpenWrt 25.12 и новее — apk
 
 ```sh
-U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bot/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep '\.apk$' | head -n1)"; [ -n "$U" ] && wget -O /tmp/luci-app-podkop-bot.apk "$U" && apk add --allow-untrusted /tmp/luci-app-podkop-bot.apk
+U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep '\.apk$' | head -n1)"; [ -n "$U" ] && wget -O /tmp/luci-app-podkop-bot.apk "$U" && apk add --allow-untrusted /tmp/luci-app-podkop-bot.apk
 ```
 
 Для отдельного APK из GitHub Releases используется `--allow-untrusted`, пока пакет не устанавливается из настроенного доверенного репозитория.

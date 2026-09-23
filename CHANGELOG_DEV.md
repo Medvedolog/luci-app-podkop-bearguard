@@ -8,6 +8,8 @@ This file tracks the current development branch. The large historical `CHANGELOG
 
 - New `bearguard-install.sh` at the repository root: detects apk/opkg, refreshes package lists, reads the GitHub release (`latest` or `--version TAG`), picks only the BearGuard asset (`luci-app-podkop-bot-*.apk` / `luci-app-podkop-bot_*_all.ipk`) and installs it. README "Установка" leads with the one-liner; the manual commands use the same exact asset match.
 - `install.sh` 2.6.3 (vendored and standalone): `--action update-luci` matches the BearGuard asset by name instead of "first `*.apk`", because 0.19.19 releases also carry `hwelp-proxy` APK/IPK assets; `LUCI_REPO` uses the new repository name.
+- README "Установка": plain `wget` + `apk add` / `opkg install` with direct 0.19.19 asset links, plus the `bearguard-install.sh` one-liner; the `jsonfilter` one-liners are gone. RELEASING.md notes that the direct links need a bump per release.
+- CI: removed the `release-hwelp-assets` job. owfeed already publishes the hwelp packages (with signatures) from the build artifact, and the job failed anyway (`gh release upload` without a checkout: "not a git repository"), marking the 0.19.19 tag run red although the release itself was complete.
 - Package revision bumped to r18 (vendored installer changed).
 
 ## 0.19.19-r17 — bot: subscription edit reachable when Clash API is down

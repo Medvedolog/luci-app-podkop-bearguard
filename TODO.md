@@ -35,7 +35,7 @@ Priorities are ordered by release risk, not by implementation size. Refreshed 20
 
 ## P1 — important UX / diagnostics
 
-- [ ] **HWELP GitHub fallback has nothing to download yet.** `bh_install_hwelp_github` reads `/releases/latest`, which is still `0.19.17-2` without `hwelp-proxy` assets; it starts working only when a release carrying the CI-built cortex-a53/generic AArch64 IPK/APK is published. Also: x86_64 is built but not uploaded, and the GitHub path installs with `apk --allow-untrusted` / plain `opkg install` — integrity rests on TLS to GitHub only (the luci package has `.sig` files, hwelp does not).
+- [x] **HWELP GitHub fallback now has assets.** The 0.19.19 release (published by owfeed) carries signed `hwelp-proxy` IPK/APK for cortex-a53 and generic AArch64 plus an x86_64 IPK, so `bh_install_hwelp_github` can resolve them. Still open: the GitHub path installs with `apk --allow-untrusted` / plain `opkg install` and does not check the `.sig` files that now sit next to each asset.
 - [ ] **Bearhole status reports PID/RSS of the first procd instance only**; once extra listeners really run, report per-instance or summed RSS.
 - [ ] Make the all-routes final summary rich (outbound/server, country/provider/IP, Telegram result, service pass/fail, speed/TSPU, errors; collapsible details).
 - [ ] Clarify Shortlist vs Magazine visually (WARPSCOUT).

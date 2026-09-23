@@ -88,7 +88,7 @@ Emergency system-proxy for OpenWrt's own downloads (curl/opkg/apk), backed by th
 
 **Reality check:** `hwelp-proxy` 0.1.1-r3 refuses every non-loopback bind (`make_listener()` → `EACCES`), so today every extra address ends up `bind_unsupported` and only `127.0.0.1` runs. That is safe (loopback is never taken down by an extra address), but LAN/VPN listeners do not work until hwelp is changed and republished. See `TODO.md` P0 for the security rule that should come with it (auth required for non-loopback, no WAN-zone addresses).
 
-**HWELP installer (r9).** `bh_install_hwelp` tries owfeed first (`apk add --upgrade` / `opkg install`), then GitHub release assets matched by `DISTRIB_ARCH` (`hwelp-proxy_*_<arch>.ipk`, `hwelp-proxy-*_<arch>.apk`; CI builds cortex-a53 and generic AArch64). It no longer early-returns when hwelp is already present, so the Update page button means "check and update". Bearhole start still installs only when `engine_ready` fails. The GitHub path finds nothing until a release with hwelp assets is published (`/releases/latest` is still `0.19.17-2`).
+**HWELP installer (r9).** `bh_install_hwelp` tries owfeed first (`apk add --upgrade` / `opkg install`), then GitHub release assets matched by `DISTRIB_ARCH` (`hwelp-proxy_*_<arch>.ipk`, `hwelp-proxy-*_<arch>.apk`; CI builds cortex-a53 and generic AArch64). It no longer early-returns when hwelp is already present, so the Update page button means "check and update". Bearhole start still installs only when `engine_ready` fails. Since the 0.19.19 release, owfeed publishes the hwelp packages (cortex-a53, generic AArch64, x86_64 IPK) with `.sig` files into the release, so the GitHub path has assets; it does not verify the signatures yet.
 
 ### Long diagnostics / XHR model (unchanged)
 
@@ -156,7 +156,6 @@ See `TODO.md` for the full list. Headline items:
 - No production POLL/FAST automatic failover through WARP Rescue beyond the cascade tier described above (it is a fallback tier the bot's own transport can use, not a supervised failover state machine).
 - Bearhole does not fully own OpenWrt system routing yet — only the bot's own downloads are proven to go through it.
 - Bearhole LAN/VPN listeners: configurable, but not running with the current `hwelp-proxy` (always `bind_unsupported`).
-- HWELP GitHub-release fallback: wired, but inactive until a release carries hwelp assets.
 - Manual TG result persistence in Settings is not complete.
 - Rich final batch route-test result rendering is not complete.
 - tsnet auto-repair is opt-in and has the cooldown gap above; do not describe it as "self-healing" without that caveat.

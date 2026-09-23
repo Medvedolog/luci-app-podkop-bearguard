@@ -222,23 +222,33 @@ Bearhole не ведёт отдельный список прокси. Он со
 
 ## Установка
 
-Готовые пакеты публикуются в [GitHub Releases](../../releases). Команды ниже автоматически находят последнюю опубликованную версию, скачивают подходящий пакет во `/tmp` и устанавливают его.
+В консоли OpenWrt (SSH).
 
-Используется штатная утилита `jsonfilter`, входящая в OpenWrt.
-
-### OpenWrt 24.10 и старее — opkg
+**OpenWrt 25.12 и новее (apk):**
 
 ```sh
-U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep '_all\.ipk$' | head -n1)"; [ -n "$U" ] && wget -O /tmp/luci-app-podkop-bot.ipk "$U" && opkg install /tmp/luci-app-podkop-bot.ipk
+wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19/luci-app-podkop-bot-0.19.19-r17.apk
+apk update && apk add --allow-untrusted /tmp/bearguard.apk
 ```
 
-### OpenWrt 25.12 и новее — apk
+**OpenWrt 24.10 и старее (opkg):**
 
 ```sh
-U="$(wget -qO- https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest | jsonfilter -e '@.assets[*].browser_download_url' | grep '\.apk$' | head -n1)"; [ -n "$U" ] && wget -O /tmp/luci-app-podkop-bot.apk "$U" && apk add --allow-untrusted /tmp/luci-app-podkop-bot.apk
+wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19/luci-app-podkop-bot_0.19.19-r17_all.ipk
+opkg update && opkg install /tmp/bearguard.ipk
 ```
 
-Для отдельного APK из GitHub Releases используется `--allow-untrusted`, пока пакет не устанавливается из настроенного доверенного репозитория.
+`--allow-untrusted` нужен потому, что пакет ставится файлом, а не из подключённого репозитория.
+
+Или одной командой — скрипт сам выберет apk или opkg и поставит последнюю версию:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/bearguard-install.sh | sh
+```
+
+Если GitHub с роутера недоступен, сначала задайте прокси, например Mixed Proxy Podkop: `export https_proxy=http://192.168.1.1:2080`.
+
+Дальше: LuCI → **Службы → Podkop BearGuard** → **Мастер настройки**.
 
 ### Зависимости
 

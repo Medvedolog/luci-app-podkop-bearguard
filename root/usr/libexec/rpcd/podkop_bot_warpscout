@@ -249,6 +249,15 @@ parse_report() {
 	return 0
 }
 
+# Bound a warpscout invocation so a hang (no route out to Cloudflare) cannot
+# leave the worker — and its ACTION_PID — alive forever, which otherwise wedges
+# every later register/scan with "already_running" until reboot. busybox timeout
+# sends SIGTERM on expiry; the non-zero exit is reported as a normal failure.
+ws_bounded() {
+	_t="$1"; shift
+	if command -v timeout >/dev/null 2>&1; then timeout "$_t" "$@"; else "$@"; fi
+}
+
 run_action_worker() {
 	_act="$1"; _target="$2"
 	{
@@ -256,8 +265,15 @@ run_action_worker() {
 		case "$_act" in
 			register)
 				echo "[warpscout] registering WARP account"
-				"$BIN" register -a "$ACCOUNT_FILE" || _rc=$?
-				[ "$_rc" -eq 0 ] && chmod 600 "$ACCOUNT_FILE" 2>/dev/null
+				ws_bounded 90 "$BIN" register -a "$ACCOUNT_FILE" || _rc=$?
+				if [ "$_rc" -eq 0 ]; then
+					chmod 600 "$ACCOUNT_FILE" 2>/dev/null
+				else
+					case "$_rc" in
+						124|143) echo "[warpscout] register timed out after 90s (no route to Cloudflare?)";;
+					esac
+					echo "[warpscout] register needs a working outbound route; if direct GitHub/Cloudflare is blocked, bring up Bearhole or a proxy first, or import an account JSON."
+				fi
 				;;
 			scan|target)
 				echo "[warpscout] starting ${_act}"
@@ -269,7 +285,7 @@ run_action_worker() {
 				_en=$(cfg_get exclude_node); [ -n "$_en" ] && set -- "$@" -exclude-node "$_en"
 				_ec=$(cfg_get exclude_country); [ -n "$_ec" ] && set -- "$@" -exclude-country "$_ec"
 				[ "$_act" = target ] && set -- "$@" -target "${_target%:*}"
-				"$BIN" scan "$@" || _rc=$?
+				ws_bounded 300 "$BIN" scan "$@" || _rc=$?
 				if [ "$_rc" -eq 0 ]; then parse_report || _rc=31; fi
 				;;
 			*) _rc=30;;

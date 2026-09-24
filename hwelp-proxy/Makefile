@@ -5,7 +5,7 @@ PKG_NAME:=hwelp-proxy
 # which CI runs from the tag before building). Kept in sync here for local builds;
 # tools/check-sources.sh enforces it.
 PKG_VERSION:=0.19.19
-PKG_RELEASE:=20
+PKG_RELEASE:=21
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_MAINTAINER:=Medvedolog
 

@@ -249,15 +249,50 @@ parse_report() {
 	return 0
 }
 
+# Bound a warpscout invocation so a hang (no route out to Cloudflare) cannot
+# leave the worker — and its ACTION_PID — alive forever, which otherwise wedges
+# every later register/scan with "already_running" until reboot. busybox timeout
+# sends SIGTERM on expiry; the non-zero exit is reported as a normal failure.
+ws_bounded() {
+	_t="$1"; shift
+	if command -v timeout >/dev/null 2>&1; then timeout "$_t" "$@"; else "$@"; fi
+}
+
+# When Bearhole (hwelp) is up, route warpscout's HTTP control-plane calls
+# (account registration, endpoint discovery) through it, so register/scan work
+# on a router where direct GitHub/Cloudflare is blocked — the case this whole
+# app exists for. Only set it when Bearhole reports running: a dead proxy would
+# break register where direct actually works. WireGuard/AWG probes are UDP and
+# ignore this; if warpscout ignores the proxy env it is simply a no-op.
+ws_bearhole_proxy() {
+	command -v jq >/dev/null 2>&1 || return 0
+	_bh=$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null) || return 0
+	[ "$(printf '%s' "$_bh" | jq -r '.running // false' 2>/dev/null)" = true ] || return 0
+	_gw=$(printf '%s' "$_bh" | jq -r '.gateway // ""' 2>/dev/null)
+	case "$_gw" in http://*) printf '%s' "$_gw";; esac
+}
+
 run_action_worker() {
 	_act="$1"; _target="$2"
 	{
 		_rc=0
+		_gw=$(ws_bearhole_proxy)
+		if [ -n "$_gw" ]; then
+			echo "[warpscout] routing ${_act} HTTP through Bearhole ${_gw}"
+			export HTTPS_PROXY="$_gw" HTTP_PROXY="$_gw" https_proxy="$_gw" http_proxy="$_gw" NO_PROXY="127.0.0.1,localhost,::1" no_proxy="127.0.0.1,localhost,::1"
+		fi
 		case "$_act" in
 			register)
 				echo "[warpscout] registering WARP account"
-				"$BIN" register -a "$ACCOUNT_FILE" || _rc=$?
-				[ "$_rc" -eq 0 ] && chmod 600 "$ACCOUNT_FILE" 2>/dev/null
+				ws_bounded 90 "$BIN" register -a "$ACCOUNT_FILE" || _rc=$?
+				if [ "$_rc" -eq 0 ]; then
+					chmod 600 "$ACCOUNT_FILE" 2>/dev/null
+				else
+					case "$_rc" in
+						124|143) echo "[warpscout] register timed out after 90s (no route to Cloudflare?)";;
+					esac
+					echo "[warpscout] register needs a working outbound route; if direct GitHub/Cloudflare is blocked, bring up Bearhole or a proxy first, or import an account JSON."
+				fi
 				;;
 			scan|target)
 				echo "[warpscout] starting ${_act}"
@@ -269,7 +304,7 @@ run_action_worker() {
 				_en=$(cfg_get exclude_node); [ -n "$_en" ] && set -- "$@" -exclude-node "$_en"
 				_ec=$(cfg_get exclude_country); [ -n "$_ec" ] && set -- "$@" -exclude-country "$_ec"
 				[ "$_act" = target ] && set -- "$@" -target "${_target%:*}"
-				"$BIN" scan "$@" || _rc=$?
+				ws_bounded 300 "$BIN" scan "$@" || _rc=$?
 				if [ "$_rc" -eq 0 ]; then parse_report || _rc=31; fi
 				;;
 			*) _rc=30;;

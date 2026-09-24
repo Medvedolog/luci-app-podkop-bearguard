@@ -6,23 +6,33 @@
 #   (pin a version: ... | sh -s -- --version 0.19.19)
 #
 # OpenWrt 25.12+ (apk) gets the .apk asset, OpenWrt 24.10 and older (opkg)
-# the _all.ipk. Only the BearGuard package itself is picked from a release:
-# the same release also carries architecture-specific hwelp-proxy packages.
+# the _all.ipk. The BearGuard package is architecture-independent; the same
+# release also carries the native Bearhole gateway hwelp-proxy per architecture.
+# hwelp lets OpenWrt's own curl/wget/opkg/apk reach GitHub through the proxy
+# chain when direct access is blocked, and WARP account setup needs a route out,
+# so this installer offers to install the matching hwelp too — it is the one
+# place that already has a working route. Prebuilt hwelp exists only for a few
+# architectures (aarch64 and x86_64); on others it is skipped.
 #
 # Options:
 #   --version TAG   install a specific release tag instead of the latest
+#   --with-hwelp    install hwelp-proxy without asking
+#   --no-hwelp      do not install hwelp-proxy
 #
 # Behind a blocked GitHub, export a proxy first, for example:
 #   export https_proxy=http://192.168.1.1:2080 http_proxy=http://192.168.1.1:2080
 
 REPO="Medvedolog/luci-app-podkop-bearguard"
 TAG=""
+HWELP_MODE=ask
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) TAG="${2:-}"; shift 2 ;;
         --version=*) TAG="${1#*=}"; shift ;;
-        -h|--help) sed -n '2,17p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --with-hwelp) HWELP_MODE=force; shift ;;
+        --no-hwelp) HWELP_MODE=no; shift ;;
+        -h|--help) sed -n '2,22p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -83,7 +93,56 @@ else
     opkg install "$PKG" || fail "opkg install failed"
 fi
 rm -f "$PKG"
+say "Podkop BearGuard ${REL:-} installed."
+
+# hwelp-proxy: the native Bearhole gateway, architecture-specific, in the same
+# release. Installing it here (where a route out exists) means Bearhole and WARP
+# account setup work later even if the router cannot reach GitHub directly. A
+# failure here never fails the BearGuard install.
+install_hwelp() {
+    [ "$HWELP_MODE" = no ] && { say "hwelp-proxy: skipped (--no-hwelp)."; return 0; }
+
+    ARCH=""
+    [ -r /etc/openwrt_release ] && ARCH="$(. /etc/openwrt_release 2>/dev/null; printf '%s' "${DISTRIB_ARCH:-}")"
+    [ -n "$ARCH" ] || ARCH="$(uname -m 2>/dev/null)"
+
+    if [ "$PM" = apk ]; then
+        HRE="/hwelp-proxy-[^\"/]*_${ARCH}[.]apk\$"; HPKG=/tmp/hwelp-proxy.apk
+    else
+        HRE="/hwelp-proxy_[^\"/]*_${ARCH}[.]ipk\$"; HPKG=/tmp/hwelp-proxy.ipk
+    fi
+    HURL="$(printf '%s' "$JSON" | jsonfilter -e '@.assets[*].browser_download_url' 2>/dev/null | grep -E "$HRE" | head -n1)"
+
+    if [ -z "$HURL" ]; then
+        say ""
+        say "hwelp-proxy: no prebuilt package for arch '${ARCH:-unknown}' in this release — skipped."
+        say "The router works without it; Bearhole extras stay optional (build from source: hwelp-proxy/ in the repo)."
+        return 0
+    fi
+
+    if [ "$HWELP_MODE" = ask ]; then
+        if [ -r /dev/tty ]; then
+            printf 'Install native Bearhole gateway %s? [Y/n] ' "${HURL##*/}" > /dev/tty
+            read ans < /dev/tty 2>/dev/null || ans=y
+            case "$ans" in [Nn]*) say "hwelp-proxy: skipped."; return 0 ;; esac
+        else
+            say "hwelp-proxy: installing too (run with --no-hwelp to skip)."
+        fi
+    fi
+
+    say "Downloading hwelp-proxy (${ARCH})..."
+    rm -f "$HPKG"
+    wget -qO "$HPKG" "$HURL" || { say "WARNING: hwelp-proxy download failed; install it later from the Update page."; return 0; }
+    [ -s "$HPKG" ] || { say "WARNING: hwelp-proxy download was empty; skipped."; rm -f "$HPKG"; return 0; }
+    say "Installing hwelp-proxy..."
+    if [ "$PM" = apk ]; then
+        apk add --allow-untrusted "$HPKG" || say "WARNING: hwelp-proxy install failed; install it later from the Update page."
+    else
+        opkg install "$HPKG" || say "WARNING: hwelp-proxy install failed; install it later from the Update page."
+    fi
+    rm -f "$HPKG"
+}
+install_hwelp
 
 say ""
-say "Podkop BearGuard ${REL:-} installed."
 say "Open LuCI -> Services -> Podkop BearGuard. If the bot is not installed yet, start with the Setup Wizard."

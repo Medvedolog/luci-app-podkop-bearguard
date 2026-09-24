@@ -146,12 +146,12 @@ run_update_worker() {
 		echo "[warpscout] downloading official installer"
 		if ! fetch_file_url "$INSTALLER_URL" "$INSTALLER_TMP"; then echo "[warpscout][error] installer download failed"; echo "[warpscout-update-exit] 20"; printf 'error 20\n' > "$UPDATE_STATE"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
 		if ! head -n1 "$INSTALLER_TMP" 2>/dev/null | grep -q '^#!'; then echo "[warpscout][error] downloaded installer has no shebang"; echo "[warpscout-update-exit] 21"; printf 'error 21\n' > "$UPDATE_STATE"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
-		echo "[warpscout] running upstream install.sh"
+		echo "[warpscout] running upstream install.sh"; ws_syslog "install start"
 		/bin/sh "$INSTALLER_TMP"; _rc=$?; rm -f "$INSTALLER_TMP"
-		if [ "$_rc" -ne 0 ]; then echo "[warpscout][error] upstream installer exited $_rc"; echo "[warpscout-update-exit] $_rc"; printf 'error %s\n' "$_rc" > "$UPDATE_STATE"; rm -f "$UPDATE_PID"; return; fi
+		if [ "$_rc" -ne 0 ]; then echo "[warpscout][error] upstream installer exited $_rc"; echo "[warpscout-update-exit] $_rc"; printf 'error %s\n' "$_rc" > "$UPDATE_STATE"; ws_syslog "install result=error code=$_rc"; rm -f "$UPDATE_PID"; return; fi
 		_v=$(installed_version 2>/dev/null || true)
-		if [ -z "$_v" ]; then echo "[warpscout][error] binary/version check failed after install"; echo "[warpscout-update-exit] 22"; printf 'error 22\n' > "$UPDATE_STATE"; rm -f "$UPDATE_PID"; return; fi
-		echo "[warpscout] installed version $_v"; echo "[warpscout-update-exit] 0"; printf 'done 0\n' > "$UPDATE_STATE"; rm -f "$UPDATE_PID"
+		if [ -z "$_v" ]; then echo "[warpscout][error] binary/version check failed after install"; echo "[warpscout-update-exit] 22"; printf 'error 22\n' > "$UPDATE_STATE"; ws_syslog "install result=error code=22"; rm -f "$UPDATE_PID"; return; fi
+		echo "[warpscout] installed version $_v"; echo "[warpscout-update-exit] 0"; printf 'done 0\n' > "$UPDATE_STATE"; ws_syslog "install result=ok version=$_v"; rm -f "$UPDATE_PID"
 	} >> "$UPDATE_LOG" 2>&1
 }
 method_run() {
@@ -162,6 +162,7 @@ method_remove() {
 	read -r _input 2>/dev/null
 	pid_alive "$UPDATE_PID" && { printf '{"ok":false,"reason":"update_running"}\n'; return; }
 	pid_alive "$ACTION_PID" && { printf '{"ok":false,"reason":"action_running"}\n'; return; }
+	ws_syslog "remove start"
 	ubus call podkop_bot_warpscout_rescue stop '{}' >/dev/null 2>&1 || true
 	ubus call podkop_bot_warpscout_runtime stop '{}' >/dev/null 2>&1 || true
 	rm -f "$BIN" "$ACCOUNT_FILE" "$CONFIG_FILE" "$SHORTLIST_FILE" "$UPLOAD_ACCOUNT" "$REPORT_FILE" "$LATEST_CACHE" \
@@ -272,8 +273,14 @@ ws_bearhole_proxy() {
 	case "$_gw" in http://*) printf '%s' "$_gw";; esac
 }
 
+# Mirror WARPSCOUT operations to the system log (logread) so account/discovery
+# activity is visible there and in the LuCI Logs tab. No account secret,
+# subscription or token is logged — only the action and its result code.
+ws_syslog() { logger -t podkop-warpscout "$*" 2>/dev/null || true; }
+
 run_action_worker() {
 	_act="$1"; _target="$2"
+	ws_syslog "action=$_act start"
 	{
 		_rc=0
 		_gw=$(ws_bearhole_proxy)
@@ -309,7 +316,7 @@ run_action_worker() {
 				;;
 			*) _rc=30;;
 		esac
-		if [ "$_rc" -eq 0 ]; then echo "[warpscout-action-exit] 0"; printf 'done 0\n' > "$ACTION_STATE"; else echo "[warpscout-action-exit] $_rc"; printf 'error %s\n' "$_rc" > "$ACTION_STATE"; fi
+		if [ "$_rc" -eq 0 ]; then echo "[warpscout-action-exit] 0"; printf 'done 0\n' > "$ACTION_STATE"; ws_syslog "action=$_act result=ok"; else echo "[warpscout-action-exit] $_rc"; printf 'error %s\n' "$_rc" > "$ACTION_STATE"; ws_syslog "action=$_act result=error code=$_rc"; fi
 		rm -f "$ACTION_PID"
 	} >> "$ACTION_LOG" 2>&1
 }

@@ -4,6 +4,16 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r20 — hwelp-proxy carries the release version
+
+- Why: the community owfeed feed (owfeed-packages) serves one source archive per release (the tag's GitHub tarball) and publishes it only under package names whose assets start with `<pkg>-<VERSION>` / `<pkg>_<VERSION>`, `VERSION` being the feed entry's (tag-derived) version. `hwelp-proxy` was built from the same tag under its own `0.1.1-r3`, so it got no source there; its licence is GPL-2.0-or-later, and `tools/sources.sh` then refuses to publish the whole feed.
+- `tools/hwelp-version.sh` rewrites `hwelp-proxy/Makefile` `PKG_VERSION`/`PKG_RELEASE` from `dist/VERSION` (written by `tools/stage.sh` from the tag, or from `version.txt` + `PKG_RELEASE` for non-tag builds). CI runs it right after staging, before the owlab and SDK builds.
+- The committed `hwelp-proxy/Makefile` carries the same version for local builds; `tools/check-sources.sh` fails if it drifts from the main `Makefile` or if CI stops calling the script.
+- CI artifact step now asserts `hwelp-proxy_<V>_<arch>.ipk` and `hwelp-proxy-<V>_<arch>.apk` exist for both AArch64 targets, i.e. the names the feed filter accepts.
+- hwelp code is unchanged; `hwelp-proxy --version` now prints `0.19.19`. 0.1.1 → 0.19.19 is an upgrade for apk/opkg. Nothing compares the hwelp version (LuCI and logs only display it).
+- Release tag must carry the revision (`0.19.19-20`): a bare `0.19.19` makes the feed version `0.19.19-r1`, which then matches neither package.
+- Package revision bumped to r20.
+
 ## 0.19.19-r19 — WARP in one place; one-button first start
 
 - LuCI: `Настройки → WARP Rescue / WARPSCOUT` and `Транспорт → Револьвер WARP` are merged into a single `Транспорт → WARP` page (`warpscout-rescue.js`; `warpscout.js` removed). Order: WARPSCOUT install (when missing) → revolver → magazine; account, SOCKS/search parameters, manual discovery + shortlist (with per-node TG API test), WARPSCOUT version/update/remove and logs are folded sections below. Old URLs (`settings/warpscout`, `transport/warpscout`, `transport/warpscout-rescue`) alias to it. The WARPSCOUT card stays on `Обновление` too and links to the WARP page.

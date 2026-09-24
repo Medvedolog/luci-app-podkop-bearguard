@@ -44,6 +44,8 @@ jobs:
 
       - name: Stage LuCI package
         run: ./tools/stage.sh
+      - name: Version hwelp-proxy with the release
+        run: sh tools/hwelp-version.sh dist/VERSION
       - run: owfeed plan
       - run: owfeed check
       - run: owfeed build
@@ -101,6 +103,13 @@ jobs:
           test -n "$(find dist/aarch64_generic -maxdepth 1 -type f -name 'hwelp-proxy_*_aarch64_generic.ipk' -print -quit)"
           test -n "$(find dist/aarch64_generic -maxdepth 1 -type f -name 'hwelp-proxy-*_aarch64_generic.apk' -print -quit)"
           test -n "$(find dist/x86_64 -maxdepth 1 -type f -name 'hwelp-proxy*' -print -quit)"
+          # owfeed-packages serves the release's source only under names whose
+          # assets start with <pkg>-<release version> / <pkg>_<release version>.
+          V=$(cat dist/VERSION)
+          for a in aarch64_cortex-a53 aarch64_generic; do
+            test -f "dist/$a/hwelp-proxy_${V}_$a.ipk" || { echo "hwelp IPK not versioned $V for $a"; ls "dist/$a"; exit 1; }
+            test -f "dist/$a/hwelp-proxy-${V}_$a.apk" || { echo "hwelp APK not versioned $V for $a"; ls "dist/$a"; exit 1; }
+          done
 
       - uses: actions/upload-artifact@v7
         with:

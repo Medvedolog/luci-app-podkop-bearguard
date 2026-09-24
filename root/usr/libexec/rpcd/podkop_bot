@@ -646,7 +646,13 @@ method_bot_logs() {
 		printf '{"ok":false,"reason":"no_logread","detail":"logread not available"}\n'
 		return
 	fi
-	_log=$(logread -e podkop-bot 2>/dev/null | tail -n "$_lines")
+	# All of the app's own syslog tags, so the Logs tab shows the bot, Bearhole
+	# (hwelp), WARP Rescue and WARPSCOUT together — not just the bot. Scope is
+	# limited to tags this package emits (each vetted not to print the token,
+	# subscription or account secrets); upstream Podkop/Forkop/sing-box core tags
+	# are deliberately excluded so nothing unvetted (e.g. a subscription URL) is
+	# surfaced here. podkop-bot also matches podkop-bot-tsnet / -rpcd.
+	_log=$(logread 2>/dev/null | grep -E 'podkop-(bot|bearhole|warp-rescue|warpscout)' | tail -n "$_lines")
 	_init_status="unknown"
 	if [ -x /etc/init.d/podkop_bot ]; then
 		if /etc/init.d/podkop_bot status >/dev/null 2>&1; then _init_status="running"; else _init_status="stopped"; fi

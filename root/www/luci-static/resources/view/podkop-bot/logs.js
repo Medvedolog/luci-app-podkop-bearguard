@@ -3,13 +3,15 @@
 'require rpc';
 'require ui';
 'require dom';
+'require poll';
 
 /*
  * luci-app-podkop-bot — Logs (TZ section 14, core)
  *
- * Shows the bot's syslog via `logread -e podkop-bot` with a selectable line
- * cap. The bot tags lines `podkop-bot` and never prints the token value, so
- * this is safe (TZ 2176). Support Bundle (14.3/14.4) is intentionally NOT built
+ * Shows the app's syslog (bot, Bearhole/hwelp, WARP Rescue, WARPSCOUT) with a
+ * selectable line cap and a 5s live tail. Every tag this package emits is vetted
+ * not to print the token or account/subscription secrets, so this is safe (TZ
+ * 2176); upstream Podkop/Forkop/sing-box core tags are excluded on purpose. Support Bundle (14.3/14.4) is intentionally NOT built
  * here — the bot already produces a redacted bundle in its Telegram handler;
  * duplicating its redaction in LuCI would risk leaking the token (TZ 4.2).
  */
@@ -87,16 +89,32 @@ return view.extend({
 			'click': function(){ reload(self.curLines); }
 		}, _('Обновить'));
 
+		// Live tail: refresh in place every 5s without the "Загрузка…" flicker,
+		// and keep the scroll where the reader left it unless they are pinned to
+		// the bottom (then follow the tail). LuCI's poll runs only while the view
+		// is open and stops on navigation.
+		var auto = E('input', { 'type':'checkbox', 'checked':'checked', 'style':'vertical-align:middle;margin:0 .3em 0 0;' });
+		function silentReload() {
+			return callBotLogs(self.curLines).then(function(d){
+				var atBottom = (pre.scrollHeight - pre.scrollTop - pre.clientHeight) < 40;
+				dom.content(pre, self.fmt(d));
+				dom.content(statusSpan, self.statusText(d));
+				if (atBottom) pre.scrollTop = pre.scrollHeight;
+			}).catch(function(){});
+		}
+		poll.add(function(){ if (auto.checked) return silentReload(); }, 5);
+
 		return E('div', {}, [
 			E('h2', {}, _('Логи Podkop Bot')),
 			E('p', { 'style':'color:#888;' }, [
-				_('Системный лог бота (logread -e podkop-bot). Токен в логах не отображается.'),
+				_('Системный лог: бот, Bearhole (hwelp), WARP Rescue и WARPSCOUT. Токен и секреты не отображаются. Обновляется автоматически.'),
 				statusSpan
 			]),
 			E('div', { 'style':'margin-top:.5em;' }, [
 				E('span', { 'style':'color:#888;margin-right:.5em;' }, _('Строк:')),
 				limitBtn(50), limitBtn(100), limitBtn(200), limitBtn(500),
-				refreshBtn, downloadBtn
+				refreshBtn, downloadBtn,
+				E('label', { 'style':'margin-left:.6em;color:#888;cursor:pointer;' }, [ auto, _('Авто') ])
 			]),
 			pre,
 			E('p', { 'style':'color:#888;font-size:90%;margin-top:.6em;' },
@@ -111,7 +129,7 @@ return view.extend({
 			return _('Логи недоступны') + (d && d.detail ? (': ' + d.detail) : '.');
 		}
 		var log = (d.log || '').trim();
-		return log.length ? log : _('(нет строк podkop-bot в логе)');
+		return log.length ? log : _('(в логе нет строк podkop-bot / bearhole / warp-rescue / warpscout)');
 	},
 
 	statusText: function(d) {

@@ -33,7 +33,11 @@ cfg_write(){ _k="$1"; _v="$2"; [ -f "$CONFIG_FILE" ] || touch "$CONFIG_FILE"; _t
 pid_alive(){ _f="$1"; [ -s "$_f" ] || return 1; _p=$(cat "$_f" 2>/dev/null); case "$_p" in ''|*[!0-9]*) return 1;; esac; kill -0 "$_p" 2>/dev/null; }
 pid_rss_mb(){ _p="$1"; _kb=$(awk '/^VmRSS:/ {print $2; exit}' "/proc/$_p/status" 2>/dev/null); case "$_kb" in ''|*[!0-9]*) printf '0';; *) awk -v k="$_kb" 'BEGIN{printf "%.1f",k/1024}';; esac; }
 state_get(){ [ -s "$RESCUE_STATE" ] && sed -n "s/^$1=//p" "$RESCUE_STATE" | head -n1; }
-state_write(){ _s="$1"; _ep="$2"; _idx="$3"; _total="$4"; _reason="$5"; _now=$(date +%s 2>/dev/null || echo 0); _t="$RESCUE_STATE.$$"; { printf 'state=%s\n' "$_s"; printf 'endpoint=%s\n' "$_ep"; printf 'index=%s\n' "$_idx"; printf 'total=%s\n' "$_total"; printf 'reason=%s\n' "$_reason"; printf 'updated_at=%s\n' "$_now"; } >"$_t" && mv "$_t" "$RESCUE_STATE"; }
+# Every rescue transition is mirrored to the system log (logread), so WARP
+# activity is visible there and in the LuCI Logs tab, not only in the private
+# rescue log. The tag podkop-warp-rescue is the one the watchdog already uses.
+# Endpoints (WARP node IPs) are not secrets; no token/subscription is logged.
+state_write(){ _s="$1"; _ep="$2"; _idx="$3"; _total="$4"; _reason="$5"; _now=$(date +%s 2>/dev/null || echo 0); _t="$RESCUE_STATE.$$"; { printf 'state=%s\n' "$_s"; printf 'endpoint=%s\n' "$_ep"; printf 'index=%s\n' "$_idx"; printf 'total=%s\n' "$_total"; printf 'reason=%s\n' "$_reason"; printf 'updated_at=%s\n' "$_now"; } >"$_t" && mv "$_t" "$RESCUE_STATE"; logger -t podkop-warp-rescue "state=$_s endpoint=${_ep:-} pos=${_idx:-0}/${_total:-0} reason=${_reason:-}" 2>/dev/null || true; }
 valid_endpoint(){ printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$'; }
 
 stop_rescue(){

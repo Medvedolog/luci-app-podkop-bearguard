@@ -4,6 +4,14 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r22 — WARP and hwelp visible in the log; live Logs tab and WARP mini-log
+
+- **WARP now writes to syslog (logread).** The warpscout RPC backends logged only to private state files, so `logread` showed nothing for WARP. `podkop_bot_warpscout_rescue` `state_write` now mirrors every transition to `logger -t podkop-warp-rescue` (reload phases, firing, active, exhausted, stopped, register); `podkop_bot_warpscout` logs `action=register/scan/…` start/result and install/remove under `logger -t podkop-warpscout`. WARP node IPs are not secrets; no token/subscription/account is logged.
+- **Logs tab shows the whole app, not just the bot.** `bot_logs` widened from `logread -e podkop-bot` to `logread | grep -E 'podkop-(bot|bearhole|warp-rescue|warpscout)'`, so the bot, Bearhole (hwelp), WARP Rescue and WARPSCOUT appear together. `podkop-bot` still covers `-tsnet`/`-rpcd`. Upstream Podkop/Forkop/sing-box core tags are deliberately excluded so nothing unvetted (e.g. a subscription URL in core logs) is surfaced; Podkop/Forkop transport events keep showing via the bot's own `podkop-bot` lines.
+- **Logs tab tails live.** Added a 5 s `poll`-driven refresh (an "Авто" toggle, on by default) that updates in place without the "Загрузка…" flicker and preserves scroll unless pinned to the bottom.
+- **WARP mini-log tails live.** On the WARP page the rescue/action mini-log only refreshed when an operation finished, so it froze on stale text mid-run. `watchOperation` now refetches the logs on every 1.5 s tick.
+- Package revision bumped to r22 (hwelp Makefile kept in lockstep).
+
 ## 0.19.19-r21 — WARP first-run on a blocked network; installer offers hwelp
 
 - **Register/scan no longer wedge.** On a router with no route out, `warpscout register` hangs; `ensure_account` gave up after 120 s but never killed it, so `ACTION_PID` stayed alive and every later register/scan (the WARP button and the manual "Создать учётную запись") was refused `already_running` until reboot. register/scan are now wrapped in `timeout` (90 s / 300 s) when available: a hang resolves to an error, the PID clears, retries work.

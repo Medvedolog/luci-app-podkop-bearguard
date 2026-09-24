@@ -77,8 +77,10 @@ return view.extend({
 	refreshTop:function(){var self=this;return this.loadData().then(function(d){self.fillTop(d);return d;});},
 	refreshView:function(){var self=this;return this.loadData().then(function(d){self.fillTop(d);self.fillRest(d);return d;});},
 	/* Only the revolver/magazine block is repainted while an operation runs;
-	 * the folded sections below are rebuilt once when it finishes. */
-	watchOperation:function(){var self=this;if(this.watchTimer)window.clearTimeout(this.watchTimer);this.watchTimer=window.setTimeout(function(){self.refreshTop().then(function(d){if(d[1]&&d[1].busy)self.watchOperation();else{self.watchTimer=null;self.fillRest(d);}});},1500);},
+	 * the folded sections below are rebuilt once when it finishes. The rescue and
+	 * action logs are refetched on every tick so the mini-log tails live instead
+	 * of freezing on stale text until the operation ends. */
+	watchOperation:function(){var self=this;if(this.watchTimer)window.clearTimeout(this.watchTimer);this.watchTimer=window.setTimeout(function(){self.loadSavedLogs();self.refreshTop().then(function(d){if(d[1]&&d[1].busy)self.watchOperation();else{self.watchTimer=null;self.fillRest(d);}});},1500);},
 
 	renderTop:function(data){
 		var st=data[0],rs=data[1]||{},mag=data[2]||{items:[]};

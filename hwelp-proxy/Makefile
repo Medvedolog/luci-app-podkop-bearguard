@@ -1,8 +1,11 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=hwelp-proxy
-PKG_VERSION:=0.1.1
-PKG_RELEASE:=3
+# Always the release version of luci-app-podkop-bot (see tools/hwelp-version.sh,
+# which CI runs from the tag before building). Kept in sync here for local builds;
+# tools/check-sources.sh enforces it.
+PKG_VERSION:=0.19.19
+PKG_RELEASE:=20
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_MAINTAINER:=Medvedolog
 

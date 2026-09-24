@@ -197,7 +197,7 @@ Bearhole не ведёт отдельный список прокси. Он со
 
 Ключевая особенность: список маршрутов хранится отдельно в `routes.conf`, и `hwelp-proxy` перечитывает его **на каждом новом клиентском соединении**. Поэтому Bearhole может переквалифицировать или переставить маршруты без перезапуска самого прокси. Получается маленький устойчивый шлюз для пакетного менеджера и аварийных загрузок, который не зависит от тяжёлого сетевого стека в момент, когда этот стек как раз и приходится чинить.
 
-В настройках Bearhole можно указать дополнительные адреса прослушивания через `;` (например, `127.0.0.1;192.168.2.1`): `127.0.0.1` обязателен и всегда первый, wildcard-адреса запрещены, принимаются только адреса, реально назначенные интерфейсам роутера. **Пока это заготовка:** текущая версия `hwelp-proxy` (0.1.1) умеет слушать только loopback, поэтому дополнительные адреса пропускаются с диагностикой `bind_unsupported` и не мешают работе основного `127.0.0.1`.
+В настройках Bearhole можно указать дополнительные адреса прослушивания через `;` (например, `127.0.0.1;192.168.2.1`): `127.0.0.1` обязателен и всегда первый, wildcard-адреса запрещены, принимаются только адреса, реально назначенные интерфейсам роутера. **Пока это заготовка:** текущий `hwelp-proxy` умеет слушать только loopback, поэтому дополнительные адреса пропускаются с диагностикой `bind_unsupported` и не мешают работе основного `127.0.0.1`.
 
 `hwelp-proxy` остаётся необязательным архитектурным пакетом и устанавливается по требованию: сначала из owfeed, а если он недоступен — из подходящего по архитектуре файла GitHub Releases. Его отсутствие не должно мешать установке или ремонту основного пакета BearGuard (`luci-app-podkop-bot`).
 
@@ -229,14 +229,14 @@ Bearhole не ведёт отдельный список прокси. Он со
 **OpenWrt 25.12 и новее (apk):**
 
 ```sh
-wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-19/luci-app-podkop-bot-0.19.19-r19.apk
+wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-20/luci-app-podkop-bot-0.19.19-r20.apk
 apk update && apk add --allow-untrusted /tmp/bearguard.apk
 ```
 
 **OpenWrt 24.10 и старее (opkg):**
 
 ```sh
-wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-19/luci-app-podkop-bot_0.19.19-r19_all.ipk
+wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-20/luci-app-podkop-bot_0.19.19-r20_all.ipk
 opkg update && opkg install /tmp/bearguard.ipk
 ```
 

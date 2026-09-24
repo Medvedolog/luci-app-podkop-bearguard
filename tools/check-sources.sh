@@ -305,5 +305,15 @@ if grep -Fq 'Bearhole' root/www/luci-static/resources/view/podkop-bot/warpscout-
     echo "WARP Rescue UI must not contain Bearhole copy" >&2; fail=1
 fi
 
+# hwelp-proxy ships under the release version (owfeed feed source matching).
+_mk_v=$(sed -n 's/^PKG_VERSION:=//p' Makefile | head -n1); _mk_r=$(sed -n 's/^PKG_RELEASE:=//p' Makefile | head -n1)
+_hw_v=$(sed -n 's/^PKG_VERSION:=//p' hwelp-proxy/Makefile | head -n1); _hw_r=$(sed -n 's/^PKG_RELEASE:=//p' hwelp-proxy/Makefile | head -n1)
+[ "$_mk_v-$_mk_r" = "$_hw_v-$_hw_r" ] || {
+    echo "hwelp-proxy version $_hw_v-r$_hw_r must equal package version $_mk_v-r$_mk_r" >&2; fail=1
+}
+grep -Fq 'tools/hwelp-version.sh' .github/workflows/ci.yml || {
+    echo "CI must version hwelp-proxy from the release tag" >&2; fail=1
+}
+
 [ "$fail" -eq 0 ] || { echo "source checks failed"; exit 1; }
 echo "source checks passed"

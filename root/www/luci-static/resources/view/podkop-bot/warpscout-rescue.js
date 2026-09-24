@@ -39,7 +39,7 @@ var CARD_STYLE='max-width:820px;';
 function dot(c,label){return E('span',{'style':'display:inline-flex;align-items:flex-start;gap:.4em;'},[E('span',{'style':'width:.7em;height:.7em;border-radius:50%;display:inline-block;flex:none;margin-top:.28em;background:'+(COLOURS[c]||COLOURS.grey)+';'}),E('span',{},label)]);}
 function helpLabel(label,help){if(!help)return label;return E('span',{'title':help,'style':'cursor:help;text-decoration:underline dotted;text-underline-offset:2px;'},[label,E('span',{'style':'margin-left:.35em;color:#888;text-decoration:none;'},'ⓘ')]);}
 function row(label,val,help){return E('div',{'class':'pb-row pb-row--plain'},[E('span',{'class':'pb-row-label'},helpLabel(label,help)),E('span',{'class':'pb-row-val'},[val])]);}
-function card(title,children){return E('div',{'class':'cbi-section pb-card','style':CARD_STYLE},[E('h3',{'style':'margin-top:0;'},title)].concat(children));}
+function card(title,children){return E('div',{'class':'cbi-section pb-card','style':CARD_STYLE},[E('h3',{'style':'margin-top:0;'},title)].concat(children.filter(Boolean)));}
 /* Folded secondary section. Kept outside the 1.5 s status refresh, so an open
  * section or a half-typed filter survives a running reload. */
 function fold(title,children,open){return E('details',{'class':'cbi-section pb-card','style':CARD_STYLE,'open':open?'':null},[E('summary',{'style':'cursor:pointer;font-weight:600;font-size:110%;'},title),E('div',{'style':'margin-top:.8em;'},children)]);}

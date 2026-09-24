@@ -4,6 +4,15 @@ Branch: `dev/0.19.19-tailscale-multiprovider`
 
 This file tracks the current development branch. The large historical `CHANGELOG.md` remains the release history and should absorb this section when 0.19.19 is promoted. This file was not updated between 0.19.18-r55 and 0.19.19-r1 (~100 commits); that gap is closed below in one pass rather than commit-by-commit, since the intermediate r56–r61 revisions were themselves short-lived CI test slices, not independently shipped states.
 
+## 0.19.19-r21 — WARP first-run on a blocked network; installer offers hwelp
+
+- **Register/scan no longer wedge.** On a router with no route out, `warpscout register` hangs; `ensure_account` gave up after 120 s but never killed it, so `ACTION_PID` stayed alive and every later register/scan (the WARP button and the manual "Создать учётную запись") was refused `already_running` until reboot. register/scan are now wrapped in `timeout` (90 s / 300 s) when available: a hang resolves to an error, the PID clears, retries work.
+- **Register/scan route through Bearhole when it is up.** `run_action_worker` sets `HTTPS_PROXY`/`HTTP_PROXY` to the Bearhole gateway when `podkop_bot_bearhole status` reports running, so WARP account setup and discovery work where direct GitHub/Cloudflare is blocked — the case the app exists for. Only set when Bearhole is up (a dead proxy would break the direct case); WireGuard/AWG probes are UDP and ignore it; a warpscout that ignores the proxy env is unaffected. Not yet confirmed on-router that warpscout honours the env — harmless if it does not.
+- **`bearguard-install.sh` offers hwelp-proxy.** After BearGuard installs, the console installer detects the arch (`DISTRIB_ARCH`) and, when the release ships a matching hwelp asset (aarch64_cortex-a53 / aarch64_generic apk+ipk, x86_64 ipk), offers to install it from the same release — the installer is the one place with a route out. `--with-hwelp` / `--no-hwelp` skip the prompt; a non-interactive `| sh` installs it with a notice. Unsupported arches (e.g. ramips mipsel) are skipped with a clear message. Known gap: a 25.12 **x86_64 (apk)** router finds no hwelp *apk* (the release builds hwelp apk only for the two aarch64 targets); recorded in TODO.
+- **UI:** the "Револьвер WARP" card no longer renders a stray `null` line — the first-run hint is `null` once WARP is up and `card()` now filters falsy children.
+- register failure now logs that it needs a working outbound route (Bearhole/proxy or an imported account JSON).
+- Package revision bumped to r21 (hwelp Makefile kept in lockstep).
+
 ## 0.19.19-r20 — hwelp-proxy carries the release version
 
 - Why: the community owfeed feed (owfeed-packages) serves one source archive per release (the tag's GitHub tarball) and publishes it only under package names whose assets start with `<pkg>-<VERSION>` / `<pkg>_<VERSION>`, `VERSION` being the feed entry's (tag-derived) version. `hwelp-proxy` was built from the same tag under its own `0.1.1-r3`, so it got no source there; its licence is GPL-2.0-or-later, and `tools/sources.sh` then refuses to publish the whole feed.

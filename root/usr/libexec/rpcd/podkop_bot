@@ -704,6 +704,7 @@ method_resources() {
 
 UPDATE_CACHE="/tmp/podkop_bot_update_check.json"   # daily version-check cache
 UPDATE_CACHE_TTL=86400                              # 1 day
+UPDATE_FAILURE_TTL=300                              # retry failed lookups after 5 minutes
 
 _ver_gt() {
 	_a="$1"; _b="$2"
@@ -762,12 +763,13 @@ method_check_update() {
 	# "latest"; only the GitHub fetch is actually rate-limited by TTL.
 	if [ "$_force" != "true" ] && [ -f "$UPDATE_CACHE" ]; then
 		_ts=$(sed -n 's/.*"checked_at":\([0-9]*\).*/\1/p' "$UPDATE_CACHE")
-		if [ -n "$_ts" ] && [ "$((_now - _ts))" -lt "$UPDATE_CACHE_TTL" ] 2>/dev/null; then
+		if [ -n "$_ts" ]; then
 			_c_latest=$(sed -n 's/.*"latest":"\([^"]*\)".*/\1/p' "$UPDATE_CACHE")
 			_c_via=$(sed -n 's/.*"via":"\([^"]*\)".*/\1/p' "$UPDATE_CACHE")
-			if [ -n "$_c_latest" ] && [ "$_c_latest" != "unknown" ]; then
+			_ttl=$UPDATE_CACHE_TTL; [ "$_c_latest" = unknown ] && _ttl=$UPDATE_FAILURE_TTL
+			if [ -n "$_c_latest" ] && [ "$((_now - _ts))" -ge 0 ] && [ "$((_now - _ts))" -lt "$_ttl" ] 2>/dev/null; then
 				_c_avail="false"
-				[ "$_cur" != "unknown" ] && _ver_gt "$_c_latest" "$_cur" && _c_avail="true"
+				[ "$_cur" != "unknown" ] && [ "$_c_latest" != "unknown" ] && _ver_gt "$_c_latest" "$_cur" && _c_avail="true"
 				printf '{"ok":true,"current":"%s","latest":"%s","update_available":%s,"via":"%s","checked_at":%s}\n' \
 					"$_cur" "$_c_latest" "$_c_avail" "${_c_via:-cache}" "$_ts"
 				return
@@ -802,7 +804,7 @@ method_check_update() {
 	[ "$_latest" != "unknown" ] && [ "$_cur" != "unknown" ] && _ver_gt "$_latest" "$_cur" && _avail="true"
 
 	_out=$(printf '{"ok":true,"current":"%s","latest":"%s","update_available":%s,"via":"%s","checked_at":%s}' "$_cur" "$_latest" "$_avail" "$_via" "$_now")
-	[ "$_latest" != "unknown" ] && printf '%s' "$_out" > "$UPDATE_CACHE" 2>/dev/null
+	printf '%s' "$_out" > "$UPDATE_CACHE" 2>/dev/null
 	printf '%s\n' "$_out"
 }
 
@@ -825,13 +827,14 @@ method_luci_update_check() {
 	# app leaves a phantom "update available" banner for up to a day.
 	if [ "$_force" != "true" ] && [ -f "$LUCI_UPDATE_CACHE" ]; then
 		_ts=$(sed -n 's/.*"checked_at":\([0-9]*\).*/\1/p' "$LUCI_UPDATE_CACHE")
-		if [ -n "$_ts" ] && [ "$((_now - _ts))" -lt "$UPDATE_CACHE_TTL" ] 2>/dev/null; then
+		if [ -n "$_ts" ]; then
 			_c_latest=$(sed -n 's/.*"latest":"\([^"]*\)".*/\1/p' "$LUCI_UPDATE_CACHE")
 			_c_via=$(sed -n 's/.*"via":"\([^"]*\)".*/\1/p' "$LUCI_UPDATE_CACHE")
-			if [ -n "$_c_latest" ] && [ "$_c_latest" != "unknown" ]; then
+			_ttl=$UPDATE_CACHE_TTL; [ "$_c_latest" = unknown ] && _ttl=$UPDATE_FAILURE_TTL
+			if [ -n "$_c_latest" ] && [ "$((_now - _ts))" -ge 0 ] && [ "$((_now - _ts))" -lt "$_ttl" ] 2>/dev/null; then
 				_c_avail="false"
-				[ "$_cur" != "unknown" ] && _ver_gt "$_c_latest" "$_cur" && _c_avail="true"
-				printf '{"ok":true,"current":"%s","latest":"%s","update_available":%s,"via":"%s","checked_at":%s}\n' \
+				[ "$_cur" != "unknown" ] && [ "$_c_latest" != "unknown" ] && _ver_gt "$_c_latest" "$_cur" && _c_avail="true"
+				printf '{"ok":true,"current":"%s","latest":"%s","update_available":%s,"via":"%s","releases_url":"https://github.com/Medvedolog/luci-app-podkop-bearguard/releases","checked_at":%s}\n' \
 					"$_cur" "$_c_latest" "$_c_avail" "${_c_via:-cache}" "$_ts"
 				return
 			fi
@@ -840,9 +843,9 @@ method_luci_update_check() {
 
 	_latest=""
 	_via="none"
-	_url="https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt"
+	_url="https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/version.txt"
 	_tmp="/tmp/podkop_luci_version.$$"
-	if _core_fetch "$_url" "$_tmp"; then
+	if _core_fetch "$_url" "$_tmp" 10; then
 		_latest=$(head -1 "$_tmp" 2>/dev/null | tr -d '\r\n\t ')
 		[ -n "$_latest" ] && _via="${_CORE_FETCH_ROUTE:-unknown}"
 	fi
@@ -852,9 +855,9 @@ method_luci_update_check() {
 	_avail="false"
 	[ "$_latest" != "unknown" ] && [ "$_cur" != "unknown" ] && _ver_gt "$_latest" "$_cur" && _avail="true"
 
-	_releases="https://github.com/Medvedolog/luci-app-podkop-bot/releases"
+	_releases="https://github.com/Medvedolog/luci-app-podkop-bearguard/releases"
 	_out=$(printf '{"ok":true,"current":"%s","latest":"%s","update_available":%s,"via":"%s","releases_url":"%s","checked_at":%s}' "$_cur" "$_latest" "$_avail" "$_via" "$_releases" "$_now")
-	[ "$_latest" != "unknown" ] && printf '%s' "$_out" > "$LUCI_UPDATE_CACHE" 2>/dev/null
+	printf '%s' "$_out" > "$LUCI_UPDATE_CACHE" 2>/dev/null
 	printf '%s\n' "$_out"
 }
 
@@ -895,13 +898,18 @@ _bearhole_export_env() {
 # proxy and reports a false route label. The selected route is returned in
 # _CORE_FETCH_ROUTE for logs/UI diagnostics.
 _core_fetch() {
-	_url="$1"; _dest="$2"; _CORE_FETCH_ROUTE=""
+	_url="$1"; _dest="$2"; _fetch_timeout="${3:-90}"; _CORE_FETCH_ROUTE=""
+	_direct_timeout="$_fetch_timeout"; [ $# -lt 3 ] && _direct_timeout=60
 	rm -f "$_dest" 2>/dev/null
 
 	_bh_enabled=$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)
 	if [ "$_bh_enabled" = "1" ]; then
-		_bh_gateway="http://127.0.0.1:1066"
-		if curl -q -4 -fsSL --proxy "$_bh_gateway" --connect-timeout 8 --max-time 90 -o "$_dest" "$_url" 2>/dev/null; then
+		_bh_port=$(uci -q get podkop_bearhole.main.port 2>/dev/null)
+		case "$_bh_port" in ''|*[!0-9]*) _bh_port=1066;; esac
+		[ "$_bh_port" -ge 1024 ] 2>/dev/null && [ "$_bh_port" -le 65535 ] 2>/dev/null || _bh_port=1066
+		_bh_gateway=$(/usr/lib/podkop_bot/bearhole.sh proxy-url 2>/dev/null)
+		[ -n "$_bh_gateway" ] || _bh_gateway="http://127.0.0.1:$_bh_port"
+		if curl -q -4 -fsSL --proxy "$_bh_gateway" --connect-timeout 8 --max-time "$_fetch_timeout" -o "$_dest" "$_url" 2>/dev/null; then
 			_bh_route=$(cut -d'|' -f1 /tmp/podkop_bot/bearhole/current 2>/dev/null | head -n1)
 			[ -n "$_bh_route" ] || _bh_route="gateway"
 			_CORE_FETCH_ROUTE="bearhole:$_bh_route"
@@ -912,7 +920,7 @@ _core_fetch() {
 		return 1
 	fi
 
-	if curl -q -4 -fsSL --proxy '' --connect-timeout 8 --max-time 60 -o "$_dest" "$_url" 2>/dev/null; then
+	if curl -q -4 -fsSL --proxy '' --connect-timeout 8 --max-time "$_direct_timeout" -o "$_dest" "$_url" 2>/dev/null; then
 		_CORE_FETCH_ROUTE="direct"; return 0
 	fi
 
@@ -925,7 +933,7 @@ _core_fetch() {
 		_port=$(uci -q get "$_pkg.$_sec.mixed_proxy_port" 2>/dev/null); [ -z "$_port" ] && _port="2080"
 		_ip=$(_resolve_proxy_ip "$_port")
 		_proxy="socks5h://$_ip:$_port"
-		if curl -q -fsSL --proxy "$_proxy" --connect-timeout 8 --max-time 90 -o "$_dest" "$_url" 2>/dev/null; then
+		if curl -q -fsSL --proxy "$_proxy" --connect-timeout 8 --max-time "$_fetch_timeout" -o "$_dest" "$_url" 2>/dev/null; then
 			_CORE_FETCH_ROUTE="tier1 $_proxy"; return 0
 		fi
 	fi
@@ -933,14 +941,14 @@ _core_fetch() {
 	for _proxy in $(uci -q get podkop_bot.settings.fallback_socks 2>/dev/null); do
 		_proxy=${_proxy%%#*}
 		[ -n "$_proxy" ] || continue
-		if curl -q -fsSL --proxy "$_proxy" --connect-timeout 8 --max-time 90 -o "$_dest" "$_url" 2>/dev/null; then
+		if curl -q -fsSL --proxy "$_proxy" --connect-timeout 8 --max-time "$_fetch_timeout" -o "$_dest" "$_url" 2>/dev/null; then
 			_CORE_FETCH_ROUTE="fallback proxy"; return 0
 		fi
 	done
 
 	_proxy=$(uci -q get podkop_bot.settings.custom_proxy 2>/dev/null)
 	_proxy=${_proxy%%#*}
-	if [ -n "$_proxy" ] && curl -q -fsSL --proxy "$_proxy" --connect-timeout 8 --max-time 90 -o "$_dest" "$_url" 2>/dev/null; then
+	if [ -n "$_proxy" ] && curl -q -fsSL --proxy "$_proxy" --connect-timeout 8 --max-time "$_fetch_timeout" -o "$_dest" "$_url" 2>/dev/null; then
 		_CORE_FETCH_ROUTE="custom proxy"; return 0
 	fi
 
@@ -1423,7 +1431,7 @@ method_transport_probe() {
 # footer. Version is a build-synced constant (opkg may not be authoritative if
 # the file was replaced manually).
 method_app_info() {
-	printf '{"ok":true,"luci_app_version":"%s","repo":"https://github.com/Medvedolog/luci-app-podkop-bot"}\n' "$LUCI_APP_VERSION"
+	printf '{"ok":true,"luci_app_version":"%s","repo":"https://github.com/Medvedolog/luci-app-podkop-bearguard"}\n' "$LUCI_APP_VERSION"
 }
 
 method_singbox_info() {
@@ -1439,6 +1447,15 @@ method_singbox_info() {
 		_line=$(apk list --installed 2>/dev/null | grep -E '^sing-box' | head -1)
 		_pkgname=$(printf '%s' "$_line" | sed 's/-[0-9].*//')
 		_ver=$(printf '%s' "$_line" | sed -n 's/^sing-box[a-z-]*-\([0-9][^ ]*\).*/\1/p')
+	fi
+	# Fork installers may put sing-box outside opkg/apk. Ask the installed
+	# binary first, avoiding a full installer status scan on the Overview tab.
+	if [ -z "$_ver" ] && command -v sing-box >/dev/null 2>&1; then
+		if command -v timeout >/dev/null 2>&1; then
+			_ver=$(timeout 3 sing-box version 2>/dev/null | awk '$1=="sing-box" && $2=="version" {print $3; exit}')
+		else
+			_ver=$(sing-box version 2>/dev/null | awk '$1=="sing-box" && $2=="version" {print $3; exit}')
+		fi
 	fi
 	# Fallback version source: variant-specific state file, then unknown.
 	# Path differs by variant: forkop → /etc/forkop, plus → /etc/podkop-plus
@@ -2020,7 +2037,9 @@ method_podkop_update_check() {
 	_pc_cache="/tmp/podkop_bot_podkop_update_${_repo_variant}.json"
 	if [ "$_force" != "true" ] && [ -f "$_pc_cache" ]; then
 		_ts=$(sed -n 's/.*"checked_at":\([0-9]*\).*/\1/p' "$_pc_cache")
-		if [ -n "$_ts" ] && [ "$((_now - _ts))" -lt "$UPDATE_CACHE_TTL" ] 2>/dev/null; then
+		_pc_ttl=$UPDATE_CACHE_TTL
+		grep -q '"available":false' "$_pc_cache" && _pc_ttl=$UPDATE_FAILURE_TTL
+		if [ -n "$_ts" ] && [ "$((_now - _ts))" -ge 0 ] && [ "$((_now - _ts))" -lt "$_pc_ttl" ] 2>/dev/null; then
 			cat "$_pc_cache"; printf '\n'; return
 		fi
 	fi
@@ -2054,8 +2073,10 @@ method_podkop_update_check() {
 
 	_now=$(date +%s 2>/dev/null || echo 0)
 	if [ -z "$_latest" ]; then
-		printf '{"ok":true,"available":false,"reason":"github_unreachable","detail":"Could not check releases via direct or SOCKS","action":"retry_later","variant":"%s","name":"%s","repo":"%s","repo_url":"%s","releases_url":"%s","current":"%s"}\n' \
-			"$_repo_variant" "$_name" "$_repo" "$_repo_url" "$_rel_url" "$_cur"
+		_out=$(printf '{"ok":true,"available":false,"reason":"github_unreachable","detail":"Could not check releases via direct or SOCKS","action":"retry_later","variant":"%s","name":"%s","repo":"%s","repo_url":"%s","releases_url":"%s","current":"%s","checked_at":%s}' \
+			"$_repo_variant" "$_name" "$_repo" "$_repo_url" "$_rel_url" "$_cur" "$_now")
+		printf '%s' "$_out" > "$_pc_cache" 2>/dev/null
+		printf '%s\n' "$_out"
 		return
 	fi
 	# normalise for COMPARISON the way the bot does (podkop_bot.sh:3441): strip a

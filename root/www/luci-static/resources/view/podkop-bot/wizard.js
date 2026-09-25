@@ -86,7 +86,7 @@ function pbFooter() {
 		if (a && a.ok) {
 			dom.content(span, [
 				E('span', {}, 'Podkop BearGuard v' + (a.luci_app_version || '?') + ' \u00b7 '),
-				E('a', { 'href': a.repo || 'https://github.com/Medvedolog/luci-app-podkop-bot', 'target': '_blank', 'rel': 'noopener' }, _('репозиторий'))
+				E('a', { 'href': a.repo || 'https://github.com/Medvedolog/luci-app-podkop-bearguard', 'target': '_blank', 'rel': 'noopener' }, _('репозиторий'))
 			]);
 		}
 	}).catch(function(){});

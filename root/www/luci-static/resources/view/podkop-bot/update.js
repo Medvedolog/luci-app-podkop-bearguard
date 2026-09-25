@@ -43,7 +43,7 @@ function pbFooter() {
 		if (a && a.ok) {
 			dom.content(span, [
 				E('span', {}, 'Podkop BearGuard v' + (a.luci_app_version || '?') + ' · '),
-				E('a', { 'href': a.repo || 'https://github.com/Medvedolog/luci-app-podkop-bot', 'target': '_blank', 'rel': 'noopener' }, _('репозиторий'))
+				E('a', { 'href': a.repo || 'https://github.com/Medvedolog/luci-app-podkop-bearguard', 'target': '_blank', 'rel': 'noopener' }, _('репозиторий'))
 			]);
 		}
 	}).catch(function(){});
@@ -201,7 +201,7 @@ return view.extend({
 		var via = (d.via === 'socks') ? (' (' + _('через SOCKS') + ')') : (d.via === 'direct' ? (' (' + _('напрямую') + ')') : '');
 		if (d.update_available) {
 			var self = this; dom.content(line, dot('yellow', _('Доступно обновление: v') + d.current + ' → v' + d.latest + via));
-			dom.content(actions, [ E('button', { 'class':'cbi-button cbi-button-apply', 'click': function() { this.disabled = true; callLuciRun().then(function(){ self.pollLuciLog(); }).catch(function(){ self.pollLuciLog(); }); } }, _('Обновить веб-интерфейс')), E('a', { 'class':'cbi-button', 'href': d.releases_url || 'https://github.com/Medvedolog/luci-app-podkop-bot/releases', 'target':'_blank', 'rel':'noopener' }, _('Скачать вручную')), this._luciRecheckBtn ]);
+			dom.content(actions, [ E('button', { 'class':'cbi-button cbi-button-apply', 'click': function() { this.disabled = true; callLuciRun().then(function(){ self.pollLuciLog(); }).catch(function(){ self.pollLuciLog(); }); } }, _('Обновить веб-интерфейс')), E('a', { 'class':'cbi-button', 'href': d.releases_url || 'https://github.com/Medvedolog/luci-app-podkop-bearguard/releases', 'target':'_blank', 'rel':'noopener' }, _('Скачать вручную')), this._luciRecheckBtn ]);
 		} else { dom.content(line, dot('green', _('Установлено v') + (d.current||'?') + ' · ' + _('в репозитории v') + (d.latest||'?') + ' — ' + _('актуально') + via)); dom.content(actions, [ this._luciRecheckBtn ]); }
 	},
 

@@ -64,7 +64,7 @@ function pbFooter() {
 		if (a && a.ok) {
 			dom.content(span, [
 				E('span', {}, 'Podkop BearGuard v' + (a.luci_app_version || '?') + ' \u00b7 '),
-				E('a', { 'href': a.repo || 'https://github.com/Medvedolog/luci-app-podkop-bot', 'target': '_blank', 'rel': 'noopener' }, _('репозиторий'))
+				E('a', { 'href': a.repo || 'https://github.com/Medvedolog/luci-app-podkop-bearguard', 'target': '_blank', 'rel': 'noopener' }, _('репозиторий'))
 			]);
 		}
 	}).catch(function(){});
@@ -189,7 +189,7 @@ return view.extend({
 				]),
 				p([
 					_('Исходный код: '),
-					E('a', { 'href':'https://github.com/Medvedolog/luci-app-podkop-bot', 'target':'_blank', 'rel':'noopener' }, _('веб-интерфейс')),
+					E('a', { 'href':'https://github.com/Medvedolog/luci-app-podkop-bearguard', 'target':'_blank', 'rel':'noopener' }, _('веб-интерфейс')),
 					_(' и '),
 					E('a', { 'href':'https://github.com/Medvedolog/podkop_bot', 'target':'_blank', 'rel':'noopener' }, _('Telegram-бот')),
 					'.'

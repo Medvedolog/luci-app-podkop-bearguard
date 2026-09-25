@@ -46,6 +46,17 @@ recover() {
 	_state=$(state_get state); [ -n "$_state" ] || _state=idle
 
 	case "$_state" in
+		start_failed)
+			# The first start includes account registration, Discovery and TG
+			# qualification. Retry that whole sequence after a transient failure.
+			_now=$(now_s); _last=$(cat "$BACKOFF_FILE" 2>/dev/null)
+			case "$_last" in ''|*[!0-9]*) _last=0;; esac
+			[ $((_now-_last)) -ge 300 ] 2>/dev/null || return
+			printf '%s\n' "$_now" > "$BACKOFF_FILE"
+			logger -t podkop-warp-rescue "event=watchdog_recover action=start state=start_failed retry=backoff" 2>/dev/null || true
+			ubus call podkop_bot_warpscout_rescue start '{}' >/dev/null 2>&1 || true
+			return
+			;;
 		paused)
 			logger -t podkop-warp-rescue "event=watchdog_recover action=resume state=paused" 2>/dev/null || true
 			ubus call podkop_bot_warpscout_rescue resume '{}' >/dev/null 2>&1 || true

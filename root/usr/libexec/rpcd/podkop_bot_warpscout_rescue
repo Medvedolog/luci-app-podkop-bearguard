@@ -23,6 +23,7 @@ RESCUE_STATE="$STATE_DIR/warpscout_rescue.state"
 RESCUE_LOG="$STATE_DIR/warpscout_rescue.log"
 RESCUE_MAG="$STATE_DIR/warpscout_rescue.magazine"
 RESCUE_MAG_PERSIST="$PERSIST_DIR/warpscout-rescue.magazine"
+RETRY_FILE="$STATE_DIR/warpscout_rescue_watchdog.retry"
 
 mkdir -p "$STATE_DIR" "$PERSIST_DIR" 2>/dev/null
 
@@ -143,13 +144,13 @@ rpc_reason(){ printf '%s' "$1" | jq -r '.reason // "rpc_rejected"' 2>/dev/null; 
 # local WARP account, register one through the same WARPSCOUT action worker
 # the manual button uses, then continue with Discovery.
 ensure_account(){
-	[ -s "$ACCOUNT_FILE" ] && return 0
+	[ -s "$ACCOUNT_FILE" ] && jq -e 'type=="object"' "$ACCOUNT_FILE" >/dev/null 2>&1 && return 0
 	state_write reloading "" 0 0 register
 	echo "[rescue] no WARP account yet: registering one"
 	_resp=$(ubus call podkop_bot_warpscout action_run '{"action":"register","target":""}' 2>/dev/null) || { echo "[rescue] register RPC failed"; return 1; }
 	if ! rpc_ok "$_resp"; then echo "[rescue] register rejected: $(rpc_reason "$_resp")"; return 1; fi
 	wait_action_done 120 || { echo "[rescue] register failed or timed out"; return 1; }
-	[ -s "$ACCOUNT_FILE" ] || { echo "[rescue] register finished without an account file"; return 1; }
+	[ -s "$ACCOUNT_FILE" ] && jq -e 'type=="object"' "$ACCOUNT_FILE" >/dev/null 2>&1 || { echo "[rescue] register finished without a valid account file"; return 1; }
 	echo "[rescue] WARP account ready"
 	return 0
 }
@@ -237,14 +238,15 @@ run_control(){
 			# exhausted) Discovery + TG qualification -> FIRE. Auto-reload is
 			# forced for this one run whatever rescue_auto says.
 			if ! ensure_account; then
-				state_write reload_failed "" 0 "$(magazine_count)" account_failed; _rc=1
+				state_write start_failed "" 0 "$(magazine_count)" account_failed; _rc=1
 			elif fire_worker 1; then
 				cfg_write enabled 1; _rc=0
 			else
-				# reload_magazine enables Rescue once a magazine exists; a start
-				# that still ends exhausted must not leave the watchdog armed.
-				cfg_write enabled 0; _rc=1
+				# Keep the explicitly requested first start armed for the bounded
+				# watchdog retry. A manual stop still disarms it.
+				state_write start_failed "" 0 "$(magazine_count)" qualification_or_fire_failed; _rc=1
 			fi
+			[ "$_rc" -eq 0 ] || date +%s > "$RETRY_FILE"
 			;;
 		selected) fire_selected_worker "$_target"; _rc=$?;;
 		*) fire_worker "$_auto"; _rc=$?;;
@@ -324,6 +326,7 @@ method_trigger(){ read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_common ||
 method_start(){
 	read -r _in 2>/dev/null; : >"$RESCUE_LOG"; preflight_start || return
 	pid_alive "$RESCUE_PID" && { cfg_write enabled 1; printf '{"ok":true,"already_active":true}\n'; return; }
+	cfg_write enabled 1 || { printf '{"ok":false,"reason":"write_failed"}\n'; return; }
 	start_control start 1 ""
 	printf '{"ok":true}\n'
 }
@@ -347,7 +350,23 @@ method_resume(){
 	start_control fire "$_auto" ""
 	printf '{"ok":true,"fallback":true}\n'
 }
-method_log(){ read -r _in 2>/dev/null; _o=$(printf '%s' "$_in"|sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); [ -n "$_o" ]||_o=0; _sz=$(wc -c <"$RESCUE_LOG" 2>/dev/null|tr -d ' '); [ -n "$_sz" ]||_sz=0; [ "$_o" -le "$_sz" ] 2>/dev/null || _o=0; _b=$((_sz-_o)); [ "$_b" -gt 32768 ]&&_b=32768; if [ "$_b" -gt 0 ]; then _c=$(tail -c +$((_o+1)) "$RESCUE_LOG"|head -c "$_b"| pb_json_log_filter); [ -n "$_c" ]||_c='""'; else _c='""'; fi; printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_c" "$((_o+_b))"; }
+method_log(){
+	read -r _in 2>/dev/null
+	_o=$(printf '%s' "$_in" | jq -r '.offset // 0' 2>/dev/null); [ -n "$_o" ] || _o=0
+	_sz=$(wc -c < "$RESCUE_LOG" 2>/dev/null | tr -d ' '); [ -n "$_sz" ] || _sz=0
+	_tail=false; [ "$_o" = -1 ] && { _tail=true; _o=$((_sz-32768)); [ "$_o" -ge 0 ] || _o=0; }
+	[ "$_o" -le "$_sz" ] 2>/dev/null || _o=0
+	_b=$((_sz-_o)); [ "$_b" -gt 32768 ] && _b=32768
+	if [ "$_b" -gt 0 ]; then
+		if [ "$_tail" = true ] && [ "$_o" -gt 0 ]; then
+			_c=$(tail -c +$((_o+1)) "$RESCUE_LOG" | head -c "$_b" | sed '1d' | pb_json_log_filter)
+		else
+			_c=$(tail -c +$((_o+1)) "$RESCUE_LOG" | head -c "$_b" | pb_json_log_filter)
+		fi
+		[ -n "$_c" ] || _c='""'
+	else _c='""'; fi
+	printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_c" "$((_o+_b))"
+}
 
 case "$1" in
  list) echo '{"status":{},"magazine":{},"set":{"key":"x","value":"x"},"trigger":{},"start":{},"next":{},"fire":{"endpoint":"x"},"reload":{},"stop":{},"pause":{},"resume":{},"log":{"offset":0}}';;

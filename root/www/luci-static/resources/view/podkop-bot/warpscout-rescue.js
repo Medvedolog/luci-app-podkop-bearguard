@@ -3,6 +3,7 @@
 'require rpc';
 'require dom';
 'require ui';
+'require poll';
 
 /* The single WARP page: WARPSCOUT install, the revolver (WARP Rescue), its
  * magazine, and — folded below — account, search parameters, manual
@@ -70,17 +71,28 @@ return view.extend({
 		]);
 		this.fillTop(data);this.fillRest(data);
 		if(data[1]&&data[1].busy)this.watchOperation();
+		this._lastRescueKey=this.rescueKey(data[1]);
+		var self=this;
+		poll.add(function(){
+			if(self.watchTimer||document.visibilityState!=='visible')return;
+			return callRescueStatus().then(function(rs){
+				var key=self.rescueKey(rs);
+				if(key===self._lastRescueKey)return;
+				return self.refreshTop().then(function(d){if(d[1]&&d[1].busy)self.watchOperation();});
+			}).catch(function(){});
+		},5);
 		return this.root;
 	},
+	rescueKey:function(rs){return [rs&&rs.state,rs&&rs.running,rs&&rs.busy,rs&&rs.total,rs&&rs.updated_at].join('|');},
 	fillTop:function(d){dom.content(this.topRoot,this.renderTop(d));},
 	fillRest:function(d){dom.content(this.restRoot,this.renderRest(d));window.setTimeout(this.loadSavedLogs.bind(this),0);},
-	refreshTop:function(){var self=this;return this.loadData().then(function(d){self.fillTop(d);return d;});},
-	refreshView:function(){var self=this;return this.loadData().then(function(d){self.fillTop(d);self.fillRest(d);return d;});},
+	refreshTop:function(){var self=this;return this.loadData().then(function(d){self.fillTop(d);self._lastRescueKey=self.rescueKey(d[1]);return d;});},
+	refreshView:function(){var self=this;return this.loadData().then(function(d){self.fillTop(d);self.fillRest(d);self._lastRescueKey=self.rescueKey(d[1]);return d;});},
 	/* Only the revolver/magazine block is repainted while an operation runs;
 	 * the folded sections below are rebuilt once when it finishes. The rescue and
 	 * action logs are refetched on every tick so the mini-log tails live instead
 	 * of freezing on stale text until the operation ends. */
-	watchOperation:function(){var self=this;if(this.watchTimer)window.clearTimeout(this.watchTimer);this.watchTimer=window.setTimeout(function(){self.loadSavedLogs();self.refreshTop().then(function(d){if(d[1]&&d[1].busy)self.watchOperation();else{self.watchTimer=null;self.fillRest(d);}});},1500);},
+	watchOperation:function(){var self=this;if(this.watchTimer)window.clearTimeout(this.watchTimer);this.watchTimer=window.setTimeout(function(){self.loadSavedLogs();self.refreshTop().then(function(d){if(d[1]&&d[1].busy)self.watchOperation();else{self.watchTimer=null;self.fillRest(d);}}).catch(function(){self.watchTimer=window.setTimeout(function(){self.watchTimer=null;self.watchOperation();},3000);});},1500);},
 
 	renderTop:function(data){
 		var st=data[0],rs=data[1]||{},mag=data[2]||{items:[]};
@@ -205,8 +217,8 @@ return view.extend({
 		}else if(rs.busy&&rs.state==='firing'){
 			busyLabel=_('Взвожу курок')+' · '+String(rs.index||0)+' / '+String(rs.total||0)+' · '+_('тестовый отстрел: SOCKS → Telegram getMe');
 		}
-		var idleLabel={exhausted:_('магазин исчерпан · ни один узел не прошёл Telegram getMe'),reload_failed:(rs.reason==='account_failed'?_('не удалось получить учётную запись WARP · см. журнал'):_('перезарядка не удалась · см. журнал')),fire_failed:_('узел не прошёл проверку Telegram'),paused:_('на паузе · идёт ручная проверка'),stopped:_('остановлен')};
-		var stateNode=rs.running?dot('green',_('работает')):(rs.busy?dot('yellow',busyLabel):dot((rs.state==='exhausted'||rs.state==='reload_failed'||rs.state==='fire_failed')?'red':'grey',idleLabel[rs.state]||(enabled?_('не запущен'):_('остановлен'))));
+		var idleLabel={exhausted:_('магазин исчерпан · ни один узел не прошёл Telegram getMe'),reload_failed:(rs.reason==='account_failed'?_('не удалось получить учётную запись WARP · см. журнал'):_('перезарядка не удалась · см. журнал')),start_failed:_('первый запуск не удался · повтор через 5 минут · см. журнал'),fire_failed:_('узел не прошёл проверку Telegram'),paused:_('на паузе · идёт ручная проверка'),stopped:_('остановлен')};
+		var stateNode=rs.running?dot('green',_('работает')):(rs.busy?dot('yellow',busyLabel):dot((rs.state==='exhausted'||rs.state==='reload_failed'||rs.state==='start_failed'||rs.state==='fire_failed')?'red':'grey',idleLabel[rs.state]||(enabled?_('не запущен'):_('остановлен'))));
 		var magNode=(rs.total||0)>0?dot('green',_('заряжен · ')+String(rs.total)+_(' VALID WARP-маршрутов')):dot('grey',_('пуст · заполнится при запуске'));
 		var position=rs.busy&&rs.state==='reloading'?magazineLoader():E('span',{},String(rs.index||0)+' / '+String(rs.total||0));
 		var firstRun=!enabled&&!rs.running&&!rs.busy&&!((rs.total||0)>0)?E('p',{'class':'pb-hint-90','style':'margin:.2em 0 .7em;padding:.55em .75em;border-left:3px solid #33a02c;background:rgba(51,160,44,.08);border-radius:4px;'},_('«Запустить WARP» всё делает сам: при необходимости создаёт учётную запись WARP, ищет узлы, проверяет Telegram API, заряжает магазин и ставит лучший узел в эфир. Обычно 3–10 минут; страницу можно закрыть.')):null;
@@ -346,8 +358,8 @@ return view.extend({
 
 	loadSavedLogs:function(){
 		var a=this._actionLogPre,r=this._rescueLogPre;
-		if(a)callWsActionLog(0).then(function(x){a.textContent=(x&&x.chunk)||_('Лог пуст.');}).catch(function(){});
-		if(r)callRescueLog(0).then(function(x){r.textContent=(x&&x.chunk)||_('Лог пуст.');}).catch(function(){});
+		if(a)callWsActionLog(-1).then(function(x){a.textContent=(x&&x.chunk)||_('Лог пуст.');}).catch(function(){});
+		if(r)callRescueLog(-1).then(function(x){r.textContent=(x&&x.chunk)||_('Лог пуст.');}).catch(function(){});
 	},
 
 	manualTelegramTest:function(endpoint,status,btn){

@@ -173,9 +173,9 @@ bh_probe_small(){ rm -f "$3" 2>/dev/null; bh_curl "$1" --range 0-2047 -o "$3" "$
 bh_probe_route(){
     _id=$1; _label=$2; _ep=$3; _tmp="$BH_DIR/probe.$$.tmp"; _api="$BH_DIR/api.$$.json"; _core=fail; _raw=fail; _ghapi=fail; _codeload=fail; _asset=skip; _feeds=ok
     bh_probe_small "$_ep" 'https://github.com/' "$_tmp"&&_core=ok
-    bh_probe_small "$_ep" 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt' "$_tmp"&&_raw=ok
-    if bh_probe_small "$_ep" 'https://api.github.com/repos/Medvedolog/luci-app-podkop-bot/releases/latest' "$_api"; then _ghapi=ok; _asset_url=$(jq -r '.assets[0].browser_download_url // empty' "$_api" 2>/dev/null); if [ -n "$_asset_url" ]; then _asset=fail; bh_probe_small "$_ep" "$_asset_url" "$_tmp"&&_asset=ok; fi; fi
-    bh_probe_small "$_ep" 'https://codeload.github.com/Medvedolog/luci-app-podkop-bot/tar.gz/refs/heads/main' "$_tmp"&&_codeload=ok
+    bh_probe_small "$_ep" 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/version.txt' "$_tmp"&&_raw=ok
+    if bh_probe_small "$_ep" 'https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest' "$_api"; then _ghapi=ok; _asset_url=$(jq -r '.assets[0].browser_download_url // empty' "$_api" 2>/dev/null); if [ -n "$_asset_url" ]; then _asset=fail; bh_probe_small "$_ep" "$_asset_url" "$_tmp"&&_asset=ok; fi; fi
+    bh_probe_small "$_ep" 'https://codeload.github.com/Medvedolog/luci-app-podkop-bearguard/tar.gz/refs/heads/main' "$_tmp"&&_codeload=ok
     for _feed in $(bh_feed_targets); do bh_probe_small "$_ep" "$_feed" "$_tmp"||{ _feeds=fail; break; }; done
     rm -f "$_tmp" "$_api" 2>/dev/null; _status=FAIL
     if [ "$_core" = ok ]&&[ "$_raw" = ok ]&&[ "$_ghapi" = ok ]&&[ "$_codeload" = ok ]&&[ "$_feeds" = ok ]&&{ [ "$_asset" = ok ]||[ "$_asset" = skip ]; }; then _status=VALID; elif [ "$_core" = ok ]||[ "$_raw" = ok ]||[ "$_feeds" = ok ]; then _status=DEGRADED; fi

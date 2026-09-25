@@ -231,7 +231,7 @@ start_worker() {
     write_state verifying gateway_check
     log_event "event=bearhole_start stage=gateway_check gateway=$_display"
     if ! curl -q -4 -L -fsS --proxy "$_gateway" --connect-timeout 4 --max-time 12 \
-        -o /dev/null 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bot/main/version.txt' >/dev/null 2>&1; then
+        -o /dev/null 'https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/version.txt' >/dev/null 2>&1; then
         fail_closed gateway_check_failed
         return
     fi

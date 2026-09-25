@@ -144,8 +144,9 @@ pid_alive() { _pf="$1"; [ -s "$_pf" ] || return 1; _p=$(cat "$_pf" 2>/dev/null);
 run_update_worker() {
 	{
 		echo "[warpscout] downloading official installer"
-		if ! fetch_file_url "$INSTALLER_URL" "$INSTALLER_TMP"; then echo "[warpscout][error] installer download failed"; echo "[warpscout-update-exit] 20"; printf 'error 20\n' > "$UPDATE_STATE"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
-		if ! head -n1 "$INSTALLER_TMP" 2>/dev/null | grep -q '^#!'; then echo "[warpscout][error] downloaded installer has no shebang"; echo "[warpscout-update-exit] 21"; printf 'error 21\n' > "$UPDATE_STATE"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
+		ws_syslog "install stage=download"
+		if ! fetch_file_url "$INSTALLER_URL" "$INSTALLER_TMP"; then echo "[warpscout][error] installer download failed"; echo "[warpscout-update-exit] 20"; printf 'error 20\n' > "$UPDATE_STATE"; ws_syslog "install result=error code=20"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
+		if ! head -n1 "$INSTALLER_TMP" 2>/dev/null | grep -q '^#!'; then echo "[warpscout][error] downloaded installer has no shebang"; echo "[warpscout-update-exit] 21"; printf 'error 21\n' > "$UPDATE_STATE"; ws_syslog "install result=error code=21"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
 		echo "[warpscout] running upstream install.sh"; ws_syslog "install start"
 		/bin/sh "$INSTALLER_TMP"; _rc=$?; rm -f "$INSTALLER_TMP"
 		if [ "$_rc" -ne 0 ]; then echo "[warpscout][error] upstream installer exited $_rc"; echo "[warpscout-update-exit] $_rc"; printf 'error %s\n' "$_rc" > "$UPDATE_STATE"; ws_syslog "install result=error code=$_rc"; rm -f "$UPDATE_PID"; return; fi
@@ -175,10 +176,16 @@ method_remove() {
 
 log_json() {
 	_log="$1"; _statef="$2"; _off="$3"; [ -n "$_off" ] || _off=0
-	_size=$(wc -c < "$_log" 2>/dev/null | tr -d ' '); [ -n "$_size" ] || _size=0; [ "$_off" -le "$_size" ] 2>/dev/null || _off=0
+	_size=$(wc -c < "$_log" 2>/dev/null | tr -d ' '); [ -n "$_size" ] || _size=0
+	_tail=false; [ "$_off" = -1 ] && { _tail=true; _off=$((_size-32768)); [ "$_off" -ge 0 ] || _off=0; }
+	[ "$_off" -le "$_size" ] 2>/dev/null || _off=0
 	_bytes=$((_size-_off)); [ "$_bytes" -gt 32768 ] 2>/dev/null && _bytes=32768
 	if [ "$_bytes" -gt 0 ] 2>/dev/null; then
-		_chunk_json=$(tail -c +$((_off+1)) "$_log" 2>/dev/null | head -c "$_bytes" | pb_json_log_filter)
+		if [ "$_tail" = true ] && [ "$_off" -gt 0 ]; then
+			_chunk_json=$(tail -c +$((_off+1)) "$_log" 2>/dev/null | head -c "$_bytes" | sed '1d' | pb_json_log_filter)
+		else
+			_chunk_json=$(tail -c +$((_off+1)) "$_log" 2>/dev/null | head -c "$_bytes" | pb_json_log_filter)
+		fi
 		[ -n "$_chunk_json" ] || _chunk_json='""'
 	else
 		_chunk_json='""'
@@ -188,7 +195,7 @@ log_json() {
 	printf '{"ok":true,"chunk":%s,"offset":%s,"done":%s,"exit_code":%s}\n' "$_chunk_json" "$_new" "$_done" "$_rc"
 }
 method_log() { read -r _input 2>/dev/null; _off=$(printf '%s' "$_input" | sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); log_json "$UPDATE_LOG" "$UPDATE_STATE" "$_off"; }
-method_action_log() { read -r _input 2>/dev/null; _off=$(printf '%s' "$_input" | sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); log_json "$ACTION_LOG" "$ACTION_STATE" "$_off"; }
+method_action_log() { read -r _input 2>/dev/null; _off=$(printf '%s' "$_input" | jq -r '.offset // 0' 2>/dev/null); log_json "$ACTION_LOG" "$ACTION_STATE" "$_off"; }
 
 method_config_set() {
 	read -r _in 2>/dev/null
@@ -209,8 +216,11 @@ method_config_set() {
 method_account_import() {
 	[ -s "$UPLOAD_ACCOUNT" ] || { printf '{"ok":false,"reason":"upload_missing"}\n'; return; }
 	if ! jq -e 'type=="object"' "$UPLOAD_ACCOUNT" >/dev/null 2>&1; then rm -f "$UPLOAD_ACCOUNT"; printf '{"ok":false,"reason":"invalid_json"}\n'; return; fi
-	cp "$UPLOAD_ACCOUNT" "$ACCOUNT_FILE" || { rm -f "$UPLOAD_ACCOUNT"; printf '{"ok":false,"reason":"write_failed"}\n'; return; }
-	chmod 600 "$ACCOUNT_FILE"; rm -f "$UPLOAD_ACCOUNT"; printf '{"ok":true}\n'
+	_import_tmp="$PERSIST_DIR/.warpscout-account-import.$$.json"
+	if ! cp "$UPLOAD_ACCOUNT" "$_import_tmp" || ! chmod 600 "$_import_tmp" || ! mv "$_import_tmp" "$ACCOUNT_FILE"; then
+		rm -f "$UPLOAD_ACCOUNT" "$_import_tmp"; printf '{"ok":false,"reason":"write_failed"}\n'; return
+	fi
+	rm -f "$UPLOAD_ACCOUNT"; printf '{"ok":true}\n'
 }
 
 build_scan_args() {
@@ -245,7 +255,7 @@ parse_report() {
 		rm -f "$_tmp"; return 1
 	fi
 	mv "$_tmp" "$SHORTLIST_FILE"; chmod 600 "$SHORTLIST_FILE"
-	_count=$(shortlist_count); echo "[warpscout] shortlist saved: $_count endpoint(s)"
+	_count=$(shortlist_count); echo "[warpscout] shortlist saved: $_count endpoint(s)"; ws_syslog "action=scan shortlist_count=$_count"
 	_active=$(cfg_get active_endpoint); if [ -z "$_active" ] || ! grep -q "^${_active}|" "$SHORTLIST_FILE" 2>/dev/null; then _active=$(cut -d'|' -f1 "$SHORTLIST_FILE" | head -n1); cfg_write active_endpoint "$_active"; fi
 	return 0
 }
@@ -256,7 +266,10 @@ parse_report() {
 # sends SIGTERM on expiry; the non-zero exit is reported as a normal failure.
 ws_bounded() {
 	_t="$1"; shift
-	if command -v timeout >/dev/null 2>&1; then timeout "$_t" "$@"; else "$@"; fi
+	if command -v timeout >/dev/null 2>&1; then timeout "$_t" "$@"
+	elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -qx timeout; then busybox timeout "$_t" "$@"
+	else echo '[warpscout][error] timeout utility unavailable; refusing an unbounded operation' >&2; return 125
+	fi
 }
 
 # When Bearhole (hwelp) is up, route warpscout's HTTP control-plane calls
@@ -269,7 +282,7 @@ ws_bearhole_proxy() {
 	command -v jq >/dev/null 2>&1 || return 0
 	_bh=$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null) || return 0
 	[ "$(printf '%s' "$_bh" | jq -r '.running // false' 2>/dev/null)" = true ] || return 0
-	_gw=$(printf '%s' "$_bh" | jq -r '.gateway // ""' 2>/dev/null)
+	_gw=$(/usr/lib/podkop_bot/bearhole.sh proxy-url 2>/dev/null)
 	case "$_gw" in http://*) printf '%s' "$_gw";; esac
 }
 
@@ -285,24 +298,36 @@ run_action_worker() {
 		_rc=0
 		_gw=$(ws_bearhole_proxy)
 		if [ -n "$_gw" ]; then
-			echo "[warpscout] routing ${_act} HTTP through Bearhole ${_gw}"
+			echo "[warpscout] routing ${_act} HTTP through Bearhole"
+			ws_syslog "action=$_act route=bearhole"
 			export HTTPS_PROXY="$_gw" HTTP_PROXY="$_gw" https_proxy="$_gw" http_proxy="$_gw" NO_PROXY="127.0.0.1,localhost,::1" no_proxy="127.0.0.1,localhost,::1"
 		fi
 		case "$_act" in
 			register)
 				echo "[warpscout] registering WARP account"
-				ws_bounded 90 "$BIN" register -a "$ACCOUNT_FILE" || _rc=$?
+				ws_syslog "action=register stage=account_request timeout=90s"
+				_account_tmp="$PERSIST_DIR/.warpscout-account.$$.json"
+				rm -f "$_account_tmp"
+				ws_bounded 90 "$BIN" register -a "$_account_tmp" || _rc=$?
 				if [ "$_rc" -eq 0 ]; then
-					chmod 600 "$ACCOUNT_FILE" 2>/dev/null
-				else
+					if [ -s "$_account_tmp" ] && jq -e 'type=="object"' "$_account_tmp" >/dev/null 2>&1; then
+						chmod 600 "$_account_tmp" && mv "$_account_tmp" "$ACCOUNT_FILE" || _rc=32
+					else _rc=33; fi
+				fi
+				rm -f "$_account_tmp"
+				if [ "$_rc" -ne 0 ]; then
 					case "$_rc" in
 						124|143) echo "[warpscout] register timed out after 90s (no route to Cloudflare?)";;
+						33) echo "[warpscout] register returned no valid account JSON";;
 					esac
 					echo "[warpscout] register needs a working outbound route; if direct GitHub/Cloudflare is blocked, bring up Bearhole or a proxy first, or import an account JSON."
+				else
+					ws_syslog "action=register stage=account_saved"
 				fi
 				;;
 			scan|target)
 				echo "[warpscout] starting ${_act}"
+				ws_syslog "action=$_act stage=discovery timeout=300s"
 				rm -f "$REPORT_FILE"
 				_proto=$(cfg_get protocol); [ -n "$_proto" ] || _proto=awg
 				set -- -a "$ACCOUNT_FILE" -p "$_proto" -P -o "$REPORT_FILE"
@@ -316,7 +341,7 @@ run_action_worker() {
 				;;
 			*) _rc=30;;
 		esac
-		if [ "$_rc" -eq 0 ]; then echo "[warpscout-action-exit] 0"; printf 'done 0\n' > "$ACTION_STATE"; ws_syslog "action=$_act result=ok"; else echo "[warpscout-action-exit] $_rc"; printf 'error %s\n' "$_rc" > "$ACTION_STATE"; ws_syslog "action=$_act result=error code=$_rc"; fi
+		if [ "$_rc" -eq 0 ]; then echo "[warpscout-action-exit] 0"; printf 'done 0\n' > "$ACTION_STATE"; ws_syslog "action=$_act result=ok"; else echo "[warpscout-action-exit] $_rc"; printf 'error %s\n' "$_rc" > "$ACTION_STATE"; case "$_rc" in 124|143) ws_syslog "action=$_act result=timeout code=$_rc";; *) ws_syslog "action=$_act result=error code=$_rc";; esac; fi
 		rm -f "$ACTION_PID"
 	} >> "$ACTION_LOG" 2>&1
 }

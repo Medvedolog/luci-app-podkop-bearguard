@@ -33,7 +33,7 @@
 	},
 	"admin/services/podkop-bot/transport/bearhole": {
 		"title": "Bearhole", "order": 10,
-		"action": { "type": "view", "path": "podkop-bot/bearhole-live" }
+		"action": { "type": "view", "path": "podkop-bot/bearhole" }
 	},
 	"admin/services/podkop-bot/transport/warp-revolver": {
 		"title": "WARP", "order": 15,

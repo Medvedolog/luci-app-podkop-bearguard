@@ -18,7 +18,7 @@ if grep -ERq "require view\.podkop-bot\.[A-Za-z0-9_-]*-r[0-9]+" "$VIEW_DIR"; the
     exit 1
 fi
 
-for view in overview-live bearhole-live; do
+for view in overview-live bearhole; do
     [ -f "$VIEW_DIR/$view.js" ] || { echo "FAIL missing stable view: $view.js" >&2; exit 1; }
     grep -Fq '"path": "podkop-bot/'"$view"'"' "$MENU" || {
         echo "FAIL menu does not use stable view: $view" >&2

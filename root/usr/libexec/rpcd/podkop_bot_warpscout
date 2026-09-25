@@ -144,8 +144,9 @@ pid_alive() { _pf="$1"; [ -s "$_pf" ] || return 1; _p=$(cat "$_pf" 2>/dev/null);
 run_update_worker() {
 	{
 		echo "[warpscout] downloading official installer"
-		if ! fetch_file_url "$INSTALLER_URL" "$INSTALLER_TMP"; then echo "[warpscout][error] installer download failed"; echo "[warpscout-update-exit] 20"; printf 'error 20\n' > "$UPDATE_STATE"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
-		if ! head -n1 "$INSTALLER_TMP" 2>/dev/null | grep -q '^#!'; then echo "[warpscout][error] downloaded installer has no shebang"; echo "[warpscout-update-exit] 21"; printf 'error 21\n' > "$UPDATE_STATE"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
+		ws_syslog "install stage=download"
+		if ! fetch_file_url "$INSTALLER_URL" "$INSTALLER_TMP"; then echo "[warpscout][error] installer download failed"; echo "[warpscout-update-exit] 20"; printf 'error 20\n' > "$UPDATE_STATE"; ws_syslog "install result=error code=20"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
+		if ! head -n1 "$INSTALLER_TMP" 2>/dev/null | grep -q '^#!'; then echo "[warpscout][error] downloaded installer has no shebang"; echo "[warpscout-update-exit] 21"; printf 'error 21\n' > "$UPDATE_STATE"; ws_syslog "install result=error code=21"; rm -f "$UPDATE_PID" "$INSTALLER_TMP"; return; fi
 		echo "[warpscout] running upstream install.sh"; ws_syslog "install start"
 		/bin/sh "$INSTALLER_TMP"; _rc=$?; rm -f "$INSTALLER_TMP"
 		if [ "$_rc" -ne 0 ]; then echo "[warpscout][error] upstream installer exited $_rc"; echo "[warpscout-update-exit] $_rc"; printf 'error %s\n' "$_rc" > "$UPDATE_STATE"; ws_syslog "install result=error code=$_rc"; rm -f "$UPDATE_PID"; return; fi
@@ -254,7 +255,7 @@ parse_report() {
 		rm -f "$_tmp"; return 1
 	fi
 	mv "$_tmp" "$SHORTLIST_FILE"; chmod 600 "$SHORTLIST_FILE"
-	_count=$(shortlist_count); echo "[warpscout] shortlist saved: $_count endpoint(s)"
+	_count=$(shortlist_count); echo "[warpscout] shortlist saved: $_count endpoint(s)"; ws_syslog "action=scan shortlist_count=$_count"
 	_active=$(cfg_get active_endpoint); if [ -z "$_active" ] || ! grep -q "^${_active}|" "$SHORTLIST_FILE" 2>/dev/null; then _active=$(cut -d'|' -f1 "$SHORTLIST_FILE" | head -n1); cfg_write active_endpoint "$_active"; fi
 	return 0
 }
@@ -298,11 +299,13 @@ run_action_worker() {
 		_gw=$(ws_bearhole_proxy)
 		if [ -n "$_gw" ]; then
 			echo "[warpscout] routing ${_act} HTTP through Bearhole"
+			ws_syslog "action=$_act route=bearhole"
 			export HTTPS_PROXY="$_gw" HTTP_PROXY="$_gw" https_proxy="$_gw" http_proxy="$_gw" NO_PROXY="127.0.0.1,localhost,::1" no_proxy="127.0.0.1,localhost,::1"
 		fi
 		case "$_act" in
 			register)
 				echo "[warpscout] registering WARP account"
+				ws_syslog "action=register stage=account_request timeout=90s"
 				_account_tmp="$PERSIST_DIR/.warpscout-account.$$.json"
 				rm -f "$_account_tmp"
 				ws_bounded 90 "$BIN" register -a "$_account_tmp" || _rc=$?
@@ -318,10 +321,13 @@ run_action_worker() {
 						33) echo "[warpscout] register returned no valid account JSON";;
 					esac
 					echo "[warpscout] register needs a working outbound route; if direct GitHub/Cloudflare is blocked, bring up Bearhole or a proxy first, or import an account JSON."
+				else
+					ws_syslog "action=register stage=account_saved"
 				fi
 				;;
 			scan|target)
 				echo "[warpscout] starting ${_act}"
+				ws_syslog "action=$_act stage=discovery timeout=300s"
 				rm -f "$REPORT_FILE"
 				_proto=$(cfg_get protocol); [ -n "$_proto" ] || _proto=awg
 				set -- -a "$ACCOUNT_FILE" -p "$_proto" -P -o "$REPORT_FILE"
@@ -335,7 +341,7 @@ run_action_worker() {
 				;;
 			*) _rc=30;;
 		esac
-		if [ "$_rc" -eq 0 ]; then echo "[warpscout-action-exit] 0"; printf 'done 0\n' > "$ACTION_STATE"; ws_syslog "action=$_act result=ok"; else echo "[warpscout-action-exit] $_rc"; printf 'error %s\n' "$_rc" > "$ACTION_STATE"; ws_syslog "action=$_act result=error code=$_rc"; fi
+		if [ "$_rc" -eq 0 ]; then echo "[warpscout-action-exit] 0"; printf 'done 0\n' > "$ACTION_STATE"; ws_syslog "action=$_act result=ok"; else echo "[warpscout-action-exit] $_rc"; printf 'error %s\n' "$_rc" > "$ACTION_STATE"; case "$_rc" in 124|143) ws_syslog "action=$_act result=timeout code=$_rc";; *) ws_syslog "action=$_act result=error code=$_rc";; esac; fi
 		rm -f "$ACTION_PID"
 	} >> "$ACTION_LOG" 2>&1
 }

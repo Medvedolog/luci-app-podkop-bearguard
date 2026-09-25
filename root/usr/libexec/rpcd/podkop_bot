@@ -880,7 +880,8 @@ _RESOLV_STATE="/tmp/podkop_bot_resolv.state"
 # later ubus calls. apk-tools consumes HTTP(S)_PROXY from its process environment.
 _bearhole_export_env() {
 	[ "$(uci -q get podkop_bearhole.main.enabled 2>/dev/null)" = "1" ] || return 1
-	_bh_gateway="http://127.0.0.1:1066"
+	_bh_gateway=$(/usr/lib/podkop_bot/bearhole.sh proxy-url 2>/dev/null)
+	case "$_bh_gateway" in http://*) :;; *) return 1;; esac
 	export http_proxy="$_bh_gateway" https_proxy="$_bh_gateway"
 	export HTTP_PROXY="$_bh_gateway" HTTPS_PROXY="$_bh_gateway"
 	export all_proxy="$_bh_gateway" ALL_PROXY="$_bh_gateway"

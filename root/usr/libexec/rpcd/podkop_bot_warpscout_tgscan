@@ -30,6 +30,7 @@ mask_proxy(){ printf '%s' "$1" | sed -E 's|(://[^:@/]+:)[^@/]*@|\1***@|'; }
 section_id(){ _s=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_]+/_/g; s/^_+//; s/_+$//'); [ -n "$_s" ] || _s=route; printf 'section_%s' "$_s"; }
 pid_from_file(){ _f="$1"; [ -s "$_f" ] || return 1; _p=$(cat "$_f" 2>/dev/null); case "$_p" in ''|*[!0-9]*) return 1;; esac; printf '%s' "$_p"; }
 pid_alive_file(){ _p=$(pid_from_file "$1") || return 1; kill -0 "$_p" 2>/dev/null; }
+scan_syslog(){ logger -t podkop-warpscout "telegram_scan $*" 2>/dev/null || true; }
 
 handoff_runtime(){
 	pid_alive_file "$RUNTIME_PID_FILE" || return 0
@@ -109,6 +110,7 @@ build_input(){
 
 worker_cancelled(){
 	stop_scan_socks; _cur=$(state_get current); _total=$(state_get total); _route=$(state_get endpoint); _valid=$(state_get passed); _reachable=$(state_get reachable); _failed=$(state_get failed); _started=$(state_get started_at)
+	scan_syslog "result=cancelled checked=${_cur:-0} total=${_total:-0}"
 	state_write cancelled "${_cur:-0}" "${_total:-0}" "$_route" cancelled "${_valid:-0}" "${_reachable:-0}" "${_failed:-0}" "${_started:-0}"; echo '[tgroutes] cancelled'; rm -f "$SCAN_PID" "$SCAN_INPUT" 2>/dev/null; exit 143
 }
 
@@ -117,11 +119,12 @@ run_worker(){
 	_valid=0; _reachable=0; _failed=0; _idx=0
 	while IFS='|' read -r _kind _source _label _target _epping _tunping _loss _seen _node _loc; do
 		[ -n "$_target" ] || continue; _idx=$((_idx+1)); _display=$(mask_proxy "$_target"); _proxy="$_target"
+		scan_syslog "route=$_idx/$_total kind=$_kind stage=start"
 		if [ "$_kind" = warp ]; then
 			state_write running "$_idx" "$_total" "$_label · $_target" tunnel_start "$_valid" "$_reachable" "$_failed" "$_started"; echo "[tgroutes] ${_idx}/${_total} $_source $_target: starting WARP SOCKS on $_port"
 			stop_scan_socks; ( exec "$BIN" socks -a "$ACCOUNT_FILE" -e "$_target" -p "$_proto" -l 127.0.0.1 -P "$_port" ) >>"$SCAN_LOG" 2>&1 &
 			_spid=$!; printf '%s\n' "$_spid" >"$SCAN_SOCKS_PID"; sleep 3
-			if ! kill -0 "$_spid" 2>/dev/null; then _now=$(date +%s 2>/dev/null || echo 0); append_result "$_kind|$_source|$_label|$_display|FAIL|socks_start_failed|000|0|$_now|$_epping|$_tunping|$_loss|$_seen|$_node|$_loc"; _failed=$((_failed+1)); stop_scan_socks; continue; fi
+			if ! kill -0 "$_spid" 2>/dev/null; then _now=$(date +%s 2>/dev/null || echo 0); append_result "$_kind|$_source|$_label|$_display|FAIL|socks_start_failed|000|0|$_now|$_epping|$_tunping|$_loss|$_seen|$_node|$_loc"; _failed=$((_failed+1)); scan_syslog "route=$_idx/$_total result=FAIL reason=socks_start_failed"; stop_scan_socks; continue; fi
 			_proxy="socks5h://127.0.0.1:$_port"
 		else
 			state_write running "$_idx" "$_total" "$_label" telegram_test "$_valid" "$_reachable" "$_failed" "$_started"; echo "[tgroutes] ${_idx}/${_total} $_source: Telegram Bot API"
@@ -130,10 +133,11 @@ run_worker(){
 		_probe=$(probe_telegram "$_proxy" "$_token"); _status=$(printf '%s' "$_probe"|cut -d'|' -f1); _reason=$(printf '%s' "$_probe"|cut -d'|' -f2); _http=$(printf '%s' "$_probe"|cut -d'|' -f3); _ms=$(printf '%s' "$_probe"|cut -d'|' -f4); _detail=$(printf '%s' "$_probe"|cut -d'|' -f5-); _now=$(date +%s 2>/dev/null || echo 0)
 		append_result "$_kind|$_source|$_label|$_display|$_status|$_reason|$_http|$_ms|$_now|$_epping|$_tunping|$_loss|$_seen|$_node|$_loc"
 		case "$_status" in VALID) _valid=$((_valid+1));; REACHABLE_*) _reachable=$((_reachable+1));; *) _failed=$((_failed+1));; esac
+		case "$_status" in VALID|REACHABLE_RATE_LIMITED|REACHABLE_AUTH|REACHABLE_DENIED|FAIL) scan_syslog "route=$_idx/$_total result=$_status http=$_http latency_ms=$_ms";; *) scan_syslog "route=$_idx/$_total result=unknown";; esac
 		echo "[tgroutes] $_source: $_status reason=$_reason http=$_http latency_ms=$_ms${_detail:+ detail=$_detail}"
 		[ "$_kind" = warp ] && { state_write running "$_idx" "$_total" "$_label · $_target" cleanup "$_valid" "$_reachable" "$_failed" "$_started"; stop_scan_socks; }
 	done <"$SCAN_INPUT"
-	stop_scan_socks; state_write done "$_total" "$_total" "" done "$_valid" "$_reachable" "$_failed" "$_started"; echo "[tgroutes] done: valid=$_valid reachable_nonvalid=$_reachable failed=$_failed total=$_total"; rm -f "$SCAN_PID" "$SCAN_INPUT" 2>/dev/null
+	stop_scan_socks; state_write done "$_total" "$_total" "" done "$_valid" "$_reachable" "$_failed" "$_started"; echo "[tgroutes] done: valid=$_valid reachable_nonvalid=$_reachable failed=$_failed total=$_total"; scan_syslog "result=done valid=$_valid reachable=$_reachable failed=$_failed total=$_total"; rm -f "$SCAN_PID" "$SCAN_INPUT" 2>/dev/null
 }
 
 method_telegram_scan_start(){
@@ -145,7 +149,7 @@ method_telegram_scan_start(){
 	_base=$(cfg_get socks_port); case "$_base" in ''|*[!0-9]*) _base=18191;; esac; _port=$((_base+1)); [ "$_port" -le 65535 ] 2>/dev/null || _port=18192
 	_proto=$(cfg_get protocol); case "$_proto" in wg|awg|masque|masque-h2) :;; *) _proto=awg;; esac
 	_total=$(build_input) || { printf '{"ok":false,"reason":"no_routes"}\n'; return; }
-	: >"$SCAN_LOG"; : >"$SCAN_RESULTS"; _started=$(date +%s 2>/dev/null || echo 0); state_write running 0 "$_total" "" queued 0 0 0 "$_started"
+	: >"$SCAN_LOG"; : >"$SCAN_RESULTS"; _started=$(date +%s 2>/dev/null || echo 0); state_write running 0 "$_total" "" queued 0 0 0 "$_started"; scan_syslog "start total=$_total"
 	run_worker "$_total" "$_port" "$_proto" "$_token" "$_started" >>"$SCAN_LOG" 2>&1 & _pid=$!; printf '%s\n' "$_pid" >"$SCAN_PID"
 	printf '{"ok":true,"pid":%s,"total":%s,"scan_port":%s}\n' "$_pid" "$_total" "$_port"
 }
@@ -167,7 +171,7 @@ parse_pipe_file(){
 }
 method_telegram_scan_results(){ read -r _in 2>/dev/null; [ -s "$SCAN_RESULTS" ] || { printf '{"ok":true,"items":[],"raw_count":0}\n'; return; }; _raw=$(wc -l <"$SCAN_RESULTS"|tr -d ' '); _items=$(parse_pipe_file "$SCAN_RESULTS" results); [ -n "$_items" ] || { printf '{"ok":false,"reason":"parse_error","raw_count":%s,"items":[]}\n' "${_raw:-0}"; return; }; _parsed=$(printf '%s' "$_items"|jq 'length' 2>/dev/null); [ "${_parsed:-0}" -gt 0 ] 2>/dev/null || { printf '{"ok":false,"reason":"parse_error","raw_count":%s,"items":[]}\n' "${_raw:-0}"; return; }; printf '{"ok":true,"raw_count":%s,"items":%s}\n' "${_raw:-0}" "$_items"; }
 method_telegram_scan_plan(){ read -r _in 2>/dev/null; [ -s "$SCAN_PLAN" ] || { printf '{"ok":true,"items":[]}\n'; return; }; _items=$(parse_pipe_file "$SCAN_PLAN" plan); [ -n "$_items" ] || _items='[]'; printf '{"ok":true,"items":%s}\n' "$_items"; }
-method_telegram_scan_cancel(){ read -r _in 2>/dev/null; if _p=$(pid_from_file "$SCAN_PID"); then kill "$_p" 2>/dev/null || true; fi; stop_scan_socks; _cur=$(state_get current); _total=$(state_get total); _route=$(state_get endpoint); _valid=$(state_get passed); _reachable=$(state_get reachable); _failed=$(state_get failed); _started=$(state_get started_at); state_write cancelled "${_cur:-0}" "${_total:-0}" "$_route" cancelled "${_valid:-0}" "${_reachable:-0}" "${_failed:-0}" "${_started:-0}"; rm -f "$SCAN_PID" "$SCAN_INPUT" 2>/dev/null; printf '{"ok":true,"state":"cancelled"}\n'; }
+method_telegram_scan_cancel(){ read -r _in 2>/dev/null; if _p=$(pid_from_file "$SCAN_PID"); then kill "$_p" 2>/dev/null || true; fi; stop_scan_socks; _cur=$(state_get current); _total=$(state_get total); _route=$(state_get endpoint); _valid=$(state_get passed); _reachable=$(state_get reachable); _failed=$(state_get failed); _started=$(state_get started_at); state_write cancelled "${_cur:-0}" "${_total:-0}" "$_route" cancelled "${_valid:-0}" "${_reachable:-0}" "${_failed:-0}" "${_started:-0}"; scan_syslog "result=cancelled checked=${_cur:-0} total=${_total:-0}"; rm -f "$SCAN_PID" "$SCAN_INPUT" 2>/dev/null; printf '{"ok":true,"state":"cancelled"}\n'; }
 method_telegram_scan_log(){ read -r _in 2>/dev/null; _off=$(printf '%s' "$_in"|sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); [ -n "$_off" ] || _off=0; _size=$(wc -c <"$SCAN_LOG" 2>/dev/null|tr -d ' '); [ -n "$_size" ] || _size=0; [ "$_off" -le "$_size" ] 2>/dev/null || _off=0; _bytes=$((_size-_off)); [ "$_bytes" -gt 32768 ] 2>/dev/null && _bytes=32768; if [ "$_bytes" -gt 0 ] 2>/dev/null; then _chunk=$(tail -c +$((_off+1)) "$SCAN_LOG" 2>/dev/null|head -c "$_bytes"| pb_json_log_filter); [ -n "$_chunk" ] || _chunk='""'; else _chunk='""'; fi; printf '{"ok":true,"chunk":%s,"offset":%s}\n' "$_chunk" "$((_off+_bytes))"; }
 
 case "$1" in

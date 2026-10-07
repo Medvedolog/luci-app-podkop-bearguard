@@ -133,7 +133,109 @@ ws_package_installed() {
 	if command -v apk >/dev/null 2>&1; then
 		apk info -e warpscout >/dev/null 2>&1
 	elif command -v opkg >/dev/null 2>&1; then
-		opkg status warpscout 2>/dev/null | grep -q '^Status: .* installed
+		opkg status warpscout 2>/dev/null | grep -q "Status: .* installed"
+	else
+		return 1
+	fi
+}
+ws_remove_package() {
+	if command -v apk >/dev/null 2>&1; then
+		apk del warpscout >/dev/null 2>&1
+	elif command -v opkg >/dev/null 2>&1; then
+		opkg remove warpscout >/dev/null 2>&1
+	else
+		return 1
+	fi
+}
+ws_install_owfeed() {
+	_gw=$(ws_bearhole_proxy 2>/dev/null || true)
+	_sub="$STATE_DIR/owfeed-subscribe.sh"
+	_opkg_tmp=/etc/opkg/99-warpscout-bootstrap.conf
+	rm -f "$_sub" "$_opkg_tmp" 2>/dev/null
+
+	if ! ws_owfeed_subscribed; then
+		ws_fetch_file "$OWFEED_SUBSCRIBE" "$_sub" || return 1
+		if [ -n "$_gw" ]; then
+			HTTP_PROXY="$_gw" HTTPS_PROXY="$_gw" http_proxy="$_gw" https_proxy="$_gw" sh "$_sub" >/dev/null 2>&1 || {
+				rm -f "$_sub"; return 1;
+			}
+		else
+			sh "$_sub" >/dev/null 2>&1 || { rm -f "$_sub"; return 1; }
+		fi
+	fi
+	rm -f "$_sub" 2>/dev/null
+
+	if command -v apk >/dev/null 2>&1; then
+		if [ -n "$_gw" ]; then
+			HTTP_PROXY="$_gw" HTTPS_PROXY="$_gw" http_proxy="$_gw" https_proxy="$_gw" apk update >/dev/null 2>&1 || return 1
+			HTTP_PROXY="$_gw" HTTPS_PROXY="$_gw" http_proxy="$_gw" https_proxy="$_gw" apk add --upgrade warpscout >/dev/null 2>&1 || return 1
+		else
+			apk update >/dev/null 2>&1 || return 1
+			apk add --upgrade warpscout >/dev/null 2>&1 || return 1
+		fi
+	elif command -v opkg >/dev/null 2>&1; then
+		if [ -n "$_gw" ]; then
+			mkdir -p /etc/opkg
+			{
+				printf 'option http_proxy %s\n' "$_gw"
+				printf 'option https_proxy %s\n' "$_gw"
+			} >"$_opkg_tmp"
+		fi
+		opkg update >/dev/null 2>&1 || { rm -f "$_opkg_tmp"; return 1; }
+		opkg install warpscout >/dev/null 2>&1 || { rm -f "$_opkg_tmp"; return 1; }
+		rm -f "$_opkg_tmp"
+	else
+		return 1
+	fi
+	installed_version >/dev/null 2>&1
+}
+ws_install_bearguard_release() {
+	_arch=$(ws_openwrt_arch)
+	_fmt=$(ws_pkg_format)
+	[ "$_fmt" != none ] || return 1
+
+	_api="$STATE_DIR/warpscout-bearguard-release.json"
+	_pkg="$STATE_DIR/warpscout-package.$_fmt"
+	rm -f "$_api" "$_pkg" 2>/dev/null
+	ws_fetch_file "$BEARGUARD_RELEASE_API" "$_api" || return 1
+
+	if [ "$_fmt" = ipk ]; then
+		_url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^warpscout_.*_" + $a + "\\.ipk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+	else
+		_url=$(jq -r '.assets[]? | select(.name | test("^warpscout-.*\\.apk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+	fi
+	[ -n "$_url" ] || { rm -f "$_api"; return 1; }
+	ws_fetch_file "$_url" "$_pkg" || { rm -f "$_api" "$_pkg"; return 1; }
+
+	if [ "$_fmt" = ipk ]; then
+		opkg install "$_pkg" >/dev/null 2>&1 || { rm -f "$_api" "$_pkg"; return 1; }
+	else
+		apk add --allow-untrusted "$_pkg" >/dev/null 2>&1 || { rm -f "$_api" "$_pkg"; return 1; }
+	fi
+	rm -f "$_api" "$_pkg" 2>/dev/null
+	installed_version >/dev/null 2>&1
+}
+ws_packaged_latest_version() {
+	_arch=$(ws_openwrt_arch)
+	_j=$(fetch_stdout "$BEARGUARD_RELEASE_API") || return 1
+	_n=$(printf '%s' "$_j" | jq -r --arg a "$_arch" '.assets[]?.name | select(test("^warpscout_.*_" + $a + "\\.ipk$"))' 2>/dev/null | head -n1)
+	[ -n "$_n" ] || return 1
+	_v=${_n#warpscout_}
+	_v=${_v%_$_arch.ipk}
+	_v=${_v%-r*}
+	[ -n "$_v" ] || return 1
+	printf '%s' "$_v"
+}
+latest_version() {
+	if ws_packaged_mips_target; then
+		_v=$(ws_packaged_latest_version 2>/dev/null || true)
+		[ -n "$_v" ] && { printf '%s' "$_v"; return 0; }
+	fi
+	_j=$(fetch_stdout "$RELEASE_API") || return 1
+	_t=$(printf '%s' "$_j" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+	[ -n "$_t" ] || return 1
+	printf '%s' "${_t#v}"
+}
 latest_cached() {
 	[ -s "$LATEST_CACHE" ] || return 1
 	head -n1 "$LATEST_CACHE" 2>/dev/null | tr -d '\r\n'

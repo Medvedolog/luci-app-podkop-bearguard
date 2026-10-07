@@ -6,6 +6,11 @@ on:
       - dev/0.19.19-warpscout-mipsle
     paths:
       - .github/workflows/warpscout-mipsle.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/warpscout-mipsle.yml
   workflow_dispatch:
     inputs:
       warpscout_ref:

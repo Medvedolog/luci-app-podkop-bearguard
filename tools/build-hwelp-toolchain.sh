@@ -25,9 +25,13 @@ curl -fL --retry 3 --retry-delay 2 -o "$ARCHIVE" "$TC_URL"
 printf '%s  %s\n' "$TC_SHA" "$ARCHIVE" | sha256sum -c -
 
 tar --zstd -xf "$ARCHIVE" -C "$TMP"
-CC="$(find "$TMP" -type f -path '*/bin/*-openwrt-linux-musl-gcc' -print | head -n1)"
-[ -n "$CC" ] || CC="$(find "$TMP" -type f -path '*/bin/*-gcc' -print | head -n1)"
-[ -n "$CC" ] || { echo "cross compiler not found" >&2; exit 1; }
+CC="$(find "$TMP" \( -type f -o -type l \) -path '*/bin/*-openwrt-linux-musl-gcc' -print | head -n1)"
+[ -n "$CC" ] || CC="$(find "$TMP" \( -type f -o -type l \) -path '*/bin/*-openwrt-linux-gcc' -print | head -n1)"
+[ -n "$CC" ] || CC="$(find "$TMP" \( -type f -o -type l \) -path '*/bin/*-gcc' -print | head -n1)"
+[ -n "$CC" ] || { echo "cross compiler not found" >&2; find "$TMP" -path '*/bin/*gcc*' -print >&2; exit 1; }
+echo "Using cross compiler: $CC"
+TC_ROOT="$(dirname "$(dirname "$CC")")"
+export STAGING_DIR="$TC_ROOT"
 
 PAYLOAD="$OUT/hwelp-proxy/$ARCH"
 mkdir -p "$PAYLOAD/usr/bin"

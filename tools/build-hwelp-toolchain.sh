@@ -36,7 +36,7 @@ export STAGING_DIR="$TC_ROOT"
 PAYLOAD="$OUT/hwelp-proxy/$ARCH"
 mkdir -p "$PAYLOAD/usr/bin"
 
-"$CC" -Os -pipe -std=c99 -Wall -Wextra     -DHWELP_VERSION=\"$VERSION\"     -o "$PAYLOAD/usr/bin/hwelp-proxy"     "$ROOT/hwelp-proxy/src/hwelp-proxy.c"
+"$CC" -Os -pipe -std=c99 -Wall -Wextra -Wl,-s     -DHWELP_VERSION=\"$VERSION\"     -o "$PAYLOAD/usr/bin/hwelp-proxy"     "$ROOT/hwelp-proxy/src/hwelp-proxy.c"
 
 chmod 0755 "$PAYLOAD/usr/bin/hwelp-proxy"
 

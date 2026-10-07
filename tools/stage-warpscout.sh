@@ -15,8 +15,10 @@ set -eu
 
 BIN="$1"
 SRC="$2"
-VERSION="${3:-0.16.0-r1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BASE_VERSION="$(tr -d '[:space:]' < "$ROOT/warpscout.version" 2>/dev/null || true)"
+[ -n "$BASE_VERSION" ] || { echo "missing warpscout.version" >&2; exit 1; }
+VERSION="${3:-${BASE_VERSION}-r1}"
 OUT="${OUT:-$ROOT/dist}"
 ARCH="mipsel_24kc"
 PAYLOAD="$OUT/warpscout/$ARCH"

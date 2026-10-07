@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev/0.19.19-warpscout-mipsle]
     tags: ['[0-9]*', 'v[0-9]*']
   pull_request:
   workflow_dispatch:
@@ -31,6 +31,29 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
+      - name: Resolve WARPSCOUT source
+        id: warpscout
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < warpscout.version)"
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "ref=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout upstream WARPSCOUT
+        uses: actions/checkout@v7
+        with:
+          repository: vernette/warpscout
+          ref: ${{ steps.warpscout.outputs.ref }}
+          path: upstream/warpscout
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: upstream/warpscout/go.mod
+          cache-dependency-path: upstream/warpscout/go.sum
+
       - uses: owfeed/owfeed/setup@v0.5.1
         with:
           version: v0.5.1
@@ -46,6 +69,36 @@ jobs:
         run: ./tools/stage.sh
       - name: Version hwelp-proxy with the release
         run: sh tools/hwelp-version.sh dist/VERSION
+
+      - name: Build WARPSCOUT for mipsel_24kc
+        working-directory: upstream/warpscout
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: mipsle
+          GOMIPS: softfloat
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.warpscout.outputs.version }}"
+          go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o warpscout .
+          file warpscout | grep -qi 'MIPS'
+          echo "WARPSCOUT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Stage WARPSCOUT mipsel package
+        run: |
+          sh tools/stage-warpscout.sh \
+            upstream/warpscout/warpscout \
+            upstream/warpscout \
+            "${{ steps.warpscout.outputs.version }}-r1"
+
+      - name: Build and stage HWELP for MT7621
+        run: |
+          sh tools/build-hwelp-toolchain.sh \
+            https://downloads.openwrt.org/releases/24.10.8/targets/ramips/mt7621/openwrt-toolchain-24.10.8-ramips-mt7621_gcc-13.3.0_musl.Linux-x86_64.tar.zst \
+            851d2bc29d29786200f83435e7b0bcc14b1beb8e096ce4c0ce070109932607ca \
+            mipsel_24kc dist
+
       - run: owfeed plan
       - run: owfeed check
       - run: owfeed build
@@ -103,6 +156,10 @@ jobs:
           test -n "$(find dist/aarch64_generic -maxdepth 1 -type f -name 'hwelp-proxy_*_aarch64_generic.ipk' -print -quit)"
           test -n "$(find dist/aarch64_generic -maxdepth 1 -type f -name 'hwelp-proxy-*_aarch64_generic.apk' -print -quit)"
           test -n "$(find dist/x86_64 -maxdepth 1 -type f -name 'hwelp-proxy*' -print -quit)"
+          test -f "dist/mipsel_24kc/hwelp-proxy-$(cat dist/VERSION).apk"
+          test -f "dist/mipsel_24kc/hwelp-proxy_$(cat dist/VERSION)_mipsel_24kc.ipk"
+          test -f "dist/mipsel_24kc/warpscout-${{ steps.warpscout.outputs.version }}-r1.apk"
+          test -f "dist/mipsel_24kc/warpscout_${{ steps.warpscout.outputs.version }}-r1_mipsel_24kc.ipk"
           # owfeed-packages serves the release's source only under names whose
           # assets start with <pkg>-<release version> / <pkg>_<release version>.
           V=$(cat dist/VERSION)

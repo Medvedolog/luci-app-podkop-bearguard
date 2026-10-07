@@ -21,6 +21,8 @@ INSTALLER_TMP="$STATE_DIR/warpscout-install.sh"
 INSTALLER_URL="https://raw.githubusercontent.com/vernette/warpscout/master/install.sh"
 RELEASE_API="https://api.github.com/repos/vernette/warpscout/releases/latest"
 RELEASES_URL="https://github.com/vernette/warpscout/releases"
+BEARGUARD_RELEASE_API="https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest"
+OWFEED_SUBSCRIBE="https://repo.owfeed.org/subscribe.sh"
 
 ACTION_LOG="$STATE_DIR/warpscout_action.log"
 ACTION_STATE="$STATE_DIR/warpscout_action.state"
@@ -84,7 +86,448 @@ fetch_file_url() {
 	if command -v wget >/dev/null 2>&1; then wget -q -T 30 -O "$_dst" "$_url" 2>/dev/null && [ -s "$_dst" ] && return 0; fi
 	rm -f "$_dst" 2>/dev/null; return 1
 }
+ws_openwrt_arch() {
+	. /etc/openwrt_release 2>/dev/null || true
+	if [ -n "${DISTRIB_ARCH:-}" ]; then printf '%s' "$DISTRIB_ARCH"; return; fi
+	if command -v opkg >/dev/null 2>&1; then
+		_a=$(opkg print-architecture 2>/dev/null | awk '$2 ~ /^mipsel_/ {print $2; exit}')
+		[ -n "$_a" ] && { printf '%s' "$_a"; return; }
+	fi
+	case "$(uname -m 2>/dev/null)" in
+		mipsel|mipsle) printf 'mipsel_24kc';;
+		aarch64) printf 'aarch64_generic';;
+		x86_64) printf 'x86_64';;
+		*) uname -m 2>/dev/null;;
+	esac
+}
+ws_packaged_mips_target() { case "$(ws_openwrt_arch)" in mipsel_*) return 0;; esac; return 1; }
+ws_pkg_format() {
+	command -v apk >/dev/null 2>&1 && { printf 'apk'; return; }
+	command -v opkg >/dev/null 2>&1 && { printf 'ipk'; return; }
+	printf 'none'
+}
+ws_owfeed_subscribed() {
+	grep -qs 'repo\.owfeed\.org' /etc/opkg/*.conf /etc/opkg/*feeds.conf 2>/dev/null && return 0
+	grep -Rqs 'repo\.owfeed\.org' /etc/apk/repositories /etc/apk/repositories.d 2>/dev/null && return 0
+	return 1
+}
+ws_fetch_file() {
+	_url="$1"; _dst="$2"; _gw=$(ws_bearhole_proxy 2>/dev/null || true)
+	rm -f "$_dst" 2>/dev/null
+	if command -v curl >/dev/null 2>&1; then
+		if [ -n "$_gw" ]; then
+			curl -fsSL -x "$_gw" --connect-timeout 8 --max-time 45 -o "$_dst" "$_url" 2>/dev/null
+		else
+			curl -fsSL --connect-timeout 8 --max-time 45 -o "$_dst" "$_url" 2>/dev/null
+		fi
+		[ -s "$_dst" ] && return 0
+	fi
+	rm -f "$_dst" 2>/dev/null
+	if command -v wget >/dev/null 2>&1 && [ -z "$_gw" ]; then
+		wget -q -T 45 -O "$_dst" "$_url" 2>/dev/null && [ -s "$_dst" ] && return 0
+	fi
+	rm -f "$_dst" 2>/dev/null
+	return 1
+}
+ws_package_installed() {
+	if command -v apk >/dev/null 2>&1; then
+		apk info -e warpscout >/dev/null 2>&1
+	elif command -v opkg >/dev/null 2>&1; then
+		opkg status warpscout 2>/dev/null | grep -q '^Status: .* installed
+latest_cached() {
+	[ -s "$LATEST_CACHE" ] || return 1
+	head -n1 "$LATEST_CACHE" 2>/dev/null | tr -d '\r\n'
+}
+latest_refresh() {
+	_v=$(latest_version) || return 1
+	[ -n "$_v" ] || return 1
+	printf '%s\n' "$_v" > "$LATEST_CACHE" 2>/dev/null || true
+	printf '%s' "$_v"
+}
+
+shortlist_count() { [ -s "$SHORTLIST_FILE" ] && grep -c '^[0-9]' "$SHORTLIST_FILE" 2>/dev/null || echo 0; }
+shortlist_json() {
+	[ -s "$SHORTLIST_FILE" ] || { printf '[]'; return; }
+	jq -Rn '[inputs | split("|") | select(length >= 8) | {
+		endpoint: .[0], endpoint_ping: .[1], tunnel_ping: .[2], loss: .[3],
+		seen_as: .[4], node: .[5], node_location: .[6], checked_at: .[7]
+	}]' "$SHORTLIST_FILE" 2>/dev/null || printf '[]'
+}
+active_snapshot_json() {
+	_active=$(cfg_get active_endpoint)
+	[ -n "$_active" ] && [ -s "$SHORTLIST_FILE" ] || { printf 'null'; return; }
+	_line=$(grep -F "${_active}|" "$SHORTLIST_FILE" 2>/dev/null | head -n1)
+	[ -n "$_line" ] || { printf 'null'; return; }
+	printf '%s\n' "$_line" | jq -Rn --arg active "$_active" '[inputs | split("|") | select(.[0] == $active) | {
+		endpoint: .[0], endpoint_ping: .[1], tunnel_ping: .[2], loss: .[3],
+		seen_as: .[4], node: .[5], node_location: .[6], checked_at: .[7]
+	}][0] // null' 2>/dev/null || printf 'null'
+}
+
+method_status() {
+	read -r _input 2>/dev/null; cfg_defaults
+	_force=$(printf '%s' "$_input" | jq -r '.force // ""' 2>/dev/null)
+	_cur=""; _latest=""; _installed=false
+	if _cur=$(installed_version); then _installed=true; fi
+	if [ "$_force" = true ] || [ "$_force" = 1 ]; then
+		_latest=$(latest_refresh 2>/dev/null || true)
+	else
+		_latest=$(latest_cached 2>/dev/null || true)
+	fi
+	_upd=false; [ -n "$_cur" ] && [ -n "$_latest" ] && [ "$_cur" != "$_latest" ] && _upd=true
+	_account=false; [ -s "$ACCOUNT_FILE" ] && jq -e 'type=="object"' "$ACCOUNT_FILE" >/dev/null 2>&1 && _account=true
+	_snapshot=$(active_snapshot_json)
+	printf '{"ok":true,"installed":%s,"current":%s,"latest":%s,"update_available":%s,"releases_url":%s,"account_ready":%s,"config":{"enabled":%s,"policy":%s,"protocol":%s,"socks_port":%s,"node":%s,"country":%s,"exclude_node":%s,"exclude_country":%s,"active_endpoint":%s},"shortlist_count":%s,"active_snapshot":%s}\n' \
+		"$_installed" "$(json_str "$_cur")" "$(json_str "$_latest")" "$_upd" "$(json_str "$RELEASES_URL")" "$_account" \
+		"$( [ "$(cfg_get enabled)" = 1 ] && echo true || echo false )" "$(json_str "$(cfg_get policy)")" "$(json_str "$(cfg_get protocol)")" "$(cfg_get socks_port)" \
+		"$(json_str "$(cfg_get node)")" "$(json_str "$(cfg_get country)")" "$(json_str "$(cfg_get exclude_node)")" "$(json_str "$(cfg_get exclude_country)")" "$(json_str "$(cfg_get active_endpoint)")" "$(shortlist_count)" "$_snapshot"
+}
+
+pid_alive() { _pf="$1"; [ -s "$_pf" ] || return 1; _p=$(cat "$_pf" 2>/dev/null); case "$_p" in ''|*[!0-9]*) return 1;; esac; kill -0 "$_p" 2>/dev/null; }
+
+run_update_worker() {
+	{
+		_rc=0
+		if ws_packaged_mips_target; then
+			echo "[warpscout] OpenWrt mipsel detected; installing packaged WARPSCOUT"
+			ws_syslog "install source=package arch=$(ws_openwrt_arch)"
+			if ws_install_owfeed; then
+				echo "[warpscout] installed from owfeed"
+			elif ws_install_bearguard_release; then
+				echo "[warpscout] installed from BearGuard release asset"
+			else
+				_rc=23
+				echo "[warpscout][error] no usable mipsel package found in owfeed or BearGuard release"
+			fi
+		else
+			echo "[warpscout] downloading official installer"
+			ws_syslog "install stage=download source=upstream"
+			if ! fetch_file_url "$INSTALLER_URL" "$INSTALLER_TMP"; then _rc=20
+			elif ! head -n1 "$INSTALLER_TMP" 2>/dev/null | grep -q '^#!'; then _rc=21
+			else
+				echo "[warpscout] running upstream install.sh"; ws_syslog "install start source=upstream"
+				/bin/sh "$INSTALLER_TMP" || _rc=$?
+			fi
+			rm -f "$INSTALLER_TMP"
+		fi
+		if [ "$_rc" -ne 0 ]; then
+			echo "[warpscout][error] install failed with code $_rc"
+			echo "[warpscout-update-exit] $_rc"
+			printf 'error %s\n' "$_rc" > "$UPDATE_STATE"
+			ws_syslog "install result=error code=$_rc"
+			rm -f "$UPDATE_PID" "$INSTALLER_TMP"
+			return
+		fi
+		_v=$(installed_version 2>/dev/null || true)
+		if [ -z "$_v" ]; then echo "[warpscout][error] binary/version check failed after install"; echo "[warpscout-update-exit] 22"; printf 'error 22\n' > "$UPDATE_STATE"; ws_syslog "install result=error code=22"; rm -f "$UPDATE_PID"; return; fi
+		echo "[warpscout] installed version $_v"; echo "[warpscout-update-exit] 0"; printf 'done 0\n' > "$UPDATE_STATE"; ws_syslog "install result=ok version=$_v"; rm -f "$UPDATE_PID"
+	} >> "$UPDATE_LOG" 2>&1
+}
+method_run() {
+	pid_alive "$UPDATE_PID" && { printf '{"ok":false,"reason":"already_running"}\n'; return; }
+	: > "$UPDATE_LOG"; printf 'running\n' > "$UPDATE_STATE"; run_update_worker & _pid=$!; printf '%s\n' "$_pid" > "$UPDATE_PID"; printf '{"ok":true,"pid":%s}\n' "$_pid"
+}
+method_remove() {
+	read -r _input 2>/dev/null
+	pid_alive "$UPDATE_PID" && { printf '{"ok":false,"reason":"update_running"}\n'; return; }
+	pid_alive "$ACTION_PID" && { printf '{"ok":false,"reason":"action_running"}\n'; return; }
+	ws_syslog "remove start"
+	ubus call podkop_bot_warpscout_rescue stop '{}' >/dev/null 2>&1 || true
+	ubus call podkop_bot_warpscout_runtime stop '{}' >/dev/null 2>&1 || true
+	if ws_package_installed; then
+		ws_remove_package || { printf '{"ok":false,"reason":"remove_failed"}\n'; return; }
+	else
+		rm -f "$BIN"
+	fi
+	rm -f "$ACCOUNT_FILE" "$CONFIG_FILE" "$SHORTLIST_FILE" "$UPLOAD_ACCOUNT" "$REPORT_FILE" "$LATEST_CACHE" \
+		"$STATE_DIR"/warpscout_socks.pid "$STATE_DIR"/warpscout_socks.state "$STATE_DIR"/warpscout_socks.log \
+		"$STATE_DIR"/warpscout_rescue_socks.pid "$STATE_DIR"/warpscout_rescue_control.pid "$STATE_DIR"/warpscout_rescue.state "$STATE_DIR"/warpscout_rescue.log "$STATE_DIR"/warpscout_rescue.magazine \
+		"$STATE_DIR"/warpscout_tgscan.pid "$STATE_DIR"/warpscout_tgscan.state "$STATE_DIR"/warpscout_tgscan.results "$STATE_DIR"/warpscout_tgscan.log 2>/dev/null
+	if [ -e "$BIN" ]; then printf '{"ok":false,"reason":"remove_failed"}\n'; return; fi
+	printf '{"ok":true}\n'
+}
+
+log_json() {
+	_log="$1"; _statef="$2"; _off="$3"; [ -n "$_off" ] || _off=0
+	_size=$(wc -c < "$_log" 2>/dev/null | tr -d ' '); [ -n "$_size" ] || _size=0
+	_tail=false; [ "$_off" = -1 ] && { _tail=true; _off=$((_size-32768)); [ "$_off" -ge 0 ] || _off=0; }
+	[ "$_off" -le "$_size" ] 2>/dev/null || _off=0
+	_bytes=$((_size-_off)); [ "$_bytes" -gt 32768 ] 2>/dev/null && _bytes=32768
+	if [ "$_bytes" -gt 0 ] 2>/dev/null; then
+		if [ "$_tail" = true ] && [ "$_off" -gt 0 ]; then
+			_chunk_json=$(tail -c +$((_off+1)) "$_log" 2>/dev/null | head -c "$_bytes" | sed '1d' | pb_json_log_filter)
+		else
+			_chunk_json=$(tail -c +$((_off+1)) "$_log" 2>/dev/null | head -c "$_bytes" | pb_json_log_filter)
+		fi
+		[ -n "$_chunk_json" ] || _chunk_json='""'
+	else
+		_chunk_json='""'
+	fi
+	_new=$((_off+_bytes)); _state=$(cat "$_statef" 2>/dev/null | head -n1); _done=false; _rc=-1
+	case "$_state" in done\ *) _done=true; _rc=${_state#done };; error\ *) _done=true; _rc=${_state#error };; esac
+	printf '{"ok":true,"chunk":%s,"offset":%s,"done":%s,"exit_code":%s}\n' "$_chunk_json" "$_new" "$_done" "$_rc"
+}
+method_log() { read -r _input 2>/dev/null; _off=$(printf '%s' "$_input" | sed -n 's/.*"offset":\([0-9][0-9]*\).*/\1/p'); log_json "$UPDATE_LOG" "$UPDATE_STATE" "$_off"; }
+method_action_log() { read -r _input 2>/dev/null; _off=$(printf '%s' "$_input" | jq -r '.offset // 0' 2>/dev/null); log_json "$ACTION_LOG" "$ACTION_STATE" "$_off"; }
+
+method_config_set() {
+	read -r _in 2>/dev/null
+	_key=$(printf '%s' "$_in" | jq -r '.key // ""' 2>/dev/null); _val=$(printf '%s' "$_in" | jq -r '.value // ""' 2>/dev/null)
+	case "$_key" in
+		enabled) case "$_val" in 0|1) :;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return;; esac;;
+		policy) case "$_val" in manual|reserve|emergency) :;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return;; esac;;
+		protocol) case "$_val" in wg|awg|masque|masque-h2) :;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return;; esac;;
+		socks_port) case "$_val" in ''|*[!0-9]*) printf '{"ok":false,"reason":"bad_value"}\n'; return;; esac; [ "$_val" -ge 1024 ] 2>/dev/null && [ "$_val" -le 65535 ] 2>/dev/null || { printf '{"ok":false,"reason":"bad_value"}\n'; return; };;
+		node|country|exclude_node|exclude_country) valid_filter "$_val" || { printf '{"ok":false,"reason":"bad_value"}\n'; return; };;
+		active_endpoint) [ -z "$_val" ] || valid_endpoint "$_val" || { printf '{"ok":false,"reason":"bad_value"}\n'; return; };;
+		*) printf '{"ok":false,"reason":"bad_key"}\n'; return;;
+	esac
+	cfg_write "$_key" "$_val" || { printf '{"ok":false,"reason":"write_failed"}\n'; return; }
+	printf '{"ok":true}\n'
+}
+
+method_account_import() {
+	[ -s "$UPLOAD_ACCOUNT" ] || { printf '{"ok":false,"reason":"upload_missing"}\n'; return; }
+	if ! jq -e 'type=="object"' "$UPLOAD_ACCOUNT" >/dev/null 2>&1; then rm -f "$UPLOAD_ACCOUNT"; printf '{"ok":false,"reason":"invalid_json"}\n'; return; fi
+	_import_tmp="$PERSIST_DIR/.warpscout-account-import.$$.json"
+	if ! cp "$UPLOAD_ACCOUNT" "$_import_tmp" || ! chmod 600 "$_import_tmp" || ! mv "$_import_tmp" "$ACCOUNT_FILE"; then
+		rm -f "$UPLOAD_ACCOUNT" "$_import_tmp"; printf '{"ok":false,"reason":"write_failed"}\n'; return
+	fi
+	rm -f "$UPLOAD_ACCOUNT"; printf '{"ok":true}\n'
+}
+
+build_scan_args() {
+	_proto=$(cfg_get protocol); [ -n "$_proto" ] || _proto=awg
+	set -- -a "$ACCOUNT_FILE" -p "$_proto" -P -o "$REPORT_FILE"
+	_n=$(cfg_get node); [ -n "$_n" ] && set -- "$@" -node "$_n"
+	_c=$(cfg_get country); [ -n "$_c" ] && set -- "$@" -country "$_c"
+	_en=$(cfg_get exclude_node); [ -n "$_en" ] && set -- "$@" -exclude-node "$_en"
+	_ec=$(cfg_get exclude_country); [ -n "$_ec" ] && set -- "$@" -exclude-country "$_ec"
+	printf '%s\n' "$@"
+}
+
+parse_report() {
+	[ -s "$REPORT_FILE" ] || return 1
+	_now=$(date +%s 2>/dev/null || echo 0); _tmp="$STATE_DIR/warpscout-shortlist.$$"; : > "$_tmp"
+	awk -v now="$_now" '
+		BEGIN{rows=0;stop=0}
+		/^# [0-9]+ torn down/ {stop=1}
+		/^# Best endpoint per node/ {stop=1}
+		stop {next}
+		$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/ {
+			ep=$1; epp=$2; tun=$3; loss=$4; seen="?"; node="?"; loc=""; cc=0;
+			for(i=5;i<=NF;i++) if($i ~ /^[A-Z][A-Z]$/){cc=i;break}
+			if(cc>0){seen=$cc; if(cc+1<=NF) node=$(cc+1); for(i=cc+2;i<=NF;i++) loc=loc (loc?" ":"") $i}
+			else {if(5<=NF) seen=$5; if(6<=NF) node=$6; for(i=7;i<=NF;i++) loc=loc (loc?" ":"") $i}
+			print ep "|" epp "|" tun "|" loss "|" seen "|" node "|" loc "|" now;
+			rows++; if(rows>=3) exit
+		}' "$REPORT_FILE" > "$_tmp"
+	if [ ! -s "$_tmp" ]; then
+		echo "[warpscout][error] report contains no parseable working endpoint rows"
+		echo "[warpscout] report path: $REPORT_FILE"
+		rm -f "$_tmp"; return 1
+	fi
+	mv "$_tmp" "$SHORTLIST_FILE"; chmod 600 "$SHORTLIST_FILE"
+	_count=$(shortlist_count); echo "[warpscout] shortlist saved: $_count endpoint(s)"; ws_syslog "action=scan shortlist_count=$_count"
+	_active=$(cfg_get active_endpoint); if [ -z "$_active" ] || ! grep -q "^${_active}|" "$SHORTLIST_FILE" 2>/dev/null; then _active=$(cut -d'|' -f1 "$SHORTLIST_FILE" | head -n1); cfg_write active_endpoint "$_active"; fi
+	return 0
+}
+
+# Bound a warpscout invocation so a hang (no route out to Cloudflare) cannot
+# leave the worker — and its ACTION_PID — alive forever, which otherwise wedges
+# every later register/scan with "already_running" until reboot. busybox timeout
+# sends SIGTERM on expiry; the non-zero exit is reported as a normal failure.
+ws_bounded() {
+	_t="$1"; shift
+	if command -v timeout >/dev/null 2>&1; then timeout "$_t" "$@"
+	elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -qx timeout; then busybox timeout "$_t" "$@"
+	else echo '[warpscout][error] timeout utility unavailable; refusing an unbounded operation' >&2; return 125
+	fi
+}
+
+# When Bearhole (hwelp) is up, route warpscout's HTTP control-plane calls
+# (account registration, endpoint discovery) through it, so register/scan work
+# on a router where direct GitHub/Cloudflare is blocked — the case this whole
+# app exists for. Only set it when Bearhole reports running: a dead proxy would
+# break register where direct actually works. WireGuard/AWG probes are UDP and
+# ignore this; if warpscout ignores the proxy env it is simply a no-op.
+ws_bearhole_proxy() {
+	command -v jq >/dev/null 2>&1 || return 0
+	_bh=$(ubus call podkop_bot_bearhole status '{}' 2>/dev/null) || return 0
+	[ "$(printf '%s' "$_bh" | jq -r '.running // false' 2>/dev/null)" = true ] || return 0
+	_gw=$(/usr/lib/podkop_bot/bearhole.sh proxy-url 2>/dev/null)
+	case "$_gw" in http://*) printf '%s' "$_gw";; esac
+}
+
+# Mirror WARPSCOUT operations to the system log (logread) so account/discovery
+# activity is visible there and in the LuCI Logs tab. No account secret,
+# subscription or token is logged — only the action and its result code.
+ws_syslog() { logger -t podkop-warpscout "$*" 2>/dev/null || true; }
+
+run_action_worker() {
+	_act="$1"; _target="$2"
+	ws_syslog "action=$_act start"
+	{
+		_rc=0
+		_gw=$(ws_bearhole_proxy)
+		if [ -n "$_gw" ]; then
+			echo "[warpscout] routing ${_act} HTTP through Bearhole"
+			ws_syslog "action=$_act route=bearhole"
+			export HTTPS_PROXY="$_gw" HTTP_PROXY="$_gw" https_proxy="$_gw" http_proxy="$_gw" NO_PROXY="127.0.0.1,localhost,::1" no_proxy="127.0.0.1,localhost,::1"
+		fi
+		case "$_act" in
+			register)
+				echo "[warpscout] registering WARP account"
+				ws_syslog "action=register stage=account_request timeout=90s"
+				_account_tmp="$PERSIST_DIR/.warpscout-account.$$.json"
+				rm -f "$_account_tmp"
+				ws_bounded 90 "$BIN" register -a "$_account_tmp" || _rc=$?
+				if [ "$_rc" -eq 0 ]; then
+					if [ -s "$_account_tmp" ] && jq -e 'type=="object"' "$_account_tmp" >/dev/null 2>&1; then
+						chmod 600 "$_account_tmp" && mv "$_account_tmp" "$ACCOUNT_FILE" || _rc=32
+					else _rc=33; fi
+				fi
+				rm -f "$_account_tmp"
+				if [ "$_rc" -ne 0 ]; then
+					case "$_rc" in
+						124|143) echo "[warpscout] register timed out after 90s (no route to Cloudflare?)";;
+						33) echo "[warpscout] register returned no valid account JSON";;
+					esac
+					echo "[warpscout] register needs a working outbound route; if direct GitHub/Cloudflare is blocked, bring up Bearhole or a proxy first, or import an account JSON."
+				else
+					ws_syslog "action=register stage=account_saved"
+				fi
+				;;
+			scan|target)
+				echo "[warpscout] starting ${_act}"
+				ws_syslog "action=$_act stage=discovery timeout=300s"
+				rm -f "$REPORT_FILE"
+				_proto=$(cfg_get protocol); [ -n "$_proto" ] || _proto=awg
+				set -- -a "$ACCOUNT_FILE" -p "$_proto" -P -o "$REPORT_FILE"
+				_n=$(cfg_get node); [ -n "$_n" ] && set -- "$@" -node "$_n"
+				_c=$(cfg_get country); [ -n "$_c" ] && set -- "$@" -country "$_c"
+				_en=$(cfg_get exclude_node); [ -n "$_en" ] && set -- "$@" -exclude-node "$_en"
+				_ec=$(cfg_get exclude_country); [ -n "$_ec" ] && set -- "$@" -exclude-country "$_ec"
+				[ "$_act" = target ] && set -- "$@" -target "${_target%:*}"
+				ws_bounded 300 "$BIN" scan "$@" || _rc=$?
+				if [ "$_rc" -eq 0 ]; then parse_report || _rc=31; fi
+				;;
+			*) _rc=30;;
+		esac
+		if [ "$_rc" -eq 0 ]; then echo "[warpscout-action-exit] 0"; printf 'done 0\n' > "$ACTION_STATE"; ws_syslog "action=$_act result=ok"; else echo "[warpscout-action-exit] $_rc"; printf 'error %s\n' "$_rc" > "$ACTION_STATE"; case "$_rc" in 124|143) ws_syslog "action=$_act result=timeout code=$_rc";; *) ws_syslog "action=$_act result=error code=$_rc";; esac; fi
+		rm -f "$ACTION_PID"
+	} >> "$ACTION_LOG" 2>&1
+}
+method_action_run() {
+	read -r _in 2>/dev/null; _act=$(printf '%s' "$_in" | jq -r '.action // ""' 2>/dev/null); _target=$(printf '%s' "$_in" | jq -r '.target // ""' 2>/dev/null)
+	[ -x "$BIN" ] || { printf '{"ok":false,"reason":"not_installed"}\n'; return; }
+	pid_alive "$ACTION_PID" && { printf '{"ok":false,"reason":"already_running"}\n'; return; }
+	case "$_act" in register) :;; scan) [ -s "$ACCOUNT_FILE" ] || { printf '{"ok":false,"reason":"account_missing"}\n'; return; };; target) [ -n "$_target" ] || _target=$(cfg_get active_endpoint); valid_endpoint "$_target" || { printf '{"ok":false,"reason":"bad_target"}\n'; return; };; *) printf '{"ok":false,"reason":"bad_action"}\n'; return;; esac
+	: > "$ACTION_LOG"; printf 'running\n' > "$ACTION_STATE"; run_action_worker "$_act" "$_target" & _pid=$!; printf '%s\n' "$_pid" > "$ACTION_PID"; printf '{"ok":true,"pid":%s}\n' "$_pid"
+}
+
+method_shortlist() {
+	read -r _in 2>/dev/null
+	_items=$(shortlist_json)
+	_active=$(cfg_get active_endpoint)
+	printf '{"ok":true,"active":%s,"items":%s}\n' "$(json_str "$_active")" "$_items"
+}
+method_select() { read -r _in 2>/dev/null; _ep=$(printf '%s' "$_in" | jq -r '.endpoint // ""' 2>/dev/null); valid_endpoint "$_ep" || { printf '{"ok":false,"reason":"bad_endpoint"}\n'; return; }; grep -q "^${_ep}|" "$SHORTLIST_FILE" 2>/dev/null || { printf '{"ok":false,"reason":"not_in_shortlist"}\n'; return; }; cfg_write active_endpoint "$_ep"; printf '{"ok":true}\n'; }
+
+case "$1" in
+	list)
+		echo '{ "status": { "force": "x" }, "run": {}, "remove": {}, "log": { "offset": 0 }, "config_set": { "key":"x", "value":"x" }, "account_import": {}, "action_run": { "action":"x", "target":"x" }, "action_log": { "offset":0 }, "shortlist": {}, "select": { "endpoint":"x" } }'
+		;;
+	call)
+		case "$2" in
+			status) method_status;; run) method_run;; remove) method_remove;; log) method_log;; config_set) method_config_set;; account_import) method_account_import;; action_run) method_action_run;; action_log) method_action_log;; shortlist) method_shortlist;; select) method_select;;
+			*) echo '{"error":"unknown method"}'; exit 1;;
+		esac
+		;;
+	*) echo '{"error":"unknown command"}'; exit 1;;
+esac
+
+	else
+		return 1
+	fi
+}
+ws_remove_package() {
+	if command -v apk >/dev/null 2>&1; then apk del warpscout >/dev/null 2>&1
+	elif command -v opkg >/dev/null 2>&1; then opkg remove warpscout >/dev/null 2>&1
+	else return 1; fi
+}
+ws_install_owfeed() {
+	_gw=$(ws_bearhole_proxy 2>/dev/null || true)
+	_sub="$STATE_DIR/owfeed-subscribe.sh"
+	_opkg_tmp=/etc/opkg/99-warpscout-bootstrap.conf
+	rm -f "$_sub" "$_opkg_tmp" 2>/dev/null
+	if ! ws_owfeed_subscribed; then
+		ws_fetch_file "$OWFEED_SUBSCRIBE" "$_sub" || return 1
+		if [ -n "$_gw" ]; then
+			HTTP_PROXY="$_gw" HTTPS_PROXY="$_gw" http_proxy="$_gw" https_proxy="$_gw" sh "$_sub" >/dev/null 2>&1 || { rm -f "$_sub"; return 1; }
+		else
+			sh "$_sub" >/dev/null 2>&1 || { rm -f "$_sub"; return 1; }
+		fi
+	fi
+	rm -f "$_sub" 2>/dev/null
+	if command -v apk >/dev/null 2>&1; then
+		if [ -n "$_gw" ]; then
+			HTTP_PROXY="$_gw" HTTPS_PROXY="$_gw" http_proxy="$_gw" https_proxy="$_gw" apk update >/dev/null 2>&1 || return 1
+			HTTP_PROXY="$_gw" HTTPS_PROXY="$_gw" http_proxy="$_gw" https_proxy="$_gw" apk add --upgrade warpscout >/dev/null 2>&1 || return 1
+		else
+			apk update >/dev/null 2>&1 || return 1
+			apk add --upgrade warpscout >/dev/null 2>&1 || return 1
+		fi
+	elif command -v opkg >/dev/null 2>&1; then
+		if [ -n "$_gw" ]; then
+			mkdir -p /etc/opkg
+			{ printf 'option http_proxy %s\n' "$_gw"; printf 'option https_proxy %s\n' "$_gw"; } >"$_opkg_tmp"
+		fi
+		opkg update >/dev/null 2>&1 || { rm -f "$_opkg_tmp"; return 1; }
+		opkg install warpscout >/dev/null 2>&1 || { rm -f "$_opkg_tmp"; return 1; }
+		rm -f "$_opkg_tmp"
+	else
+		return 1
+	fi
+	installed_version >/dev/null 2>&1
+}
+ws_install_bearguard_release() {
+	_arch=$(ws_openwrt_arch); _fmt=$(ws_pkg_format)
+	[ "$_fmt" != none ] || return 1
+	_api="$STATE_DIR/warpscout-bearguard-release.json"
+	_pkg="$STATE_DIR/warpscout-package.$_fmt"
+	rm -f "$_api" "$_pkg" 2>/dev/null
+	ws_fetch_file "$BEARGUARD_RELEASE_API" "$_api" || return 1
+	if [ "$_fmt" = ipk ]; then
+		_url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^warpscout_.*_" + $a + "\\.ipk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+	else
+		_url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^warpscout-.*(_" + $a + ")?\\.apk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+	fi
+	[ -n "$_url" ] || { rm -f "$_api"; return 1; }
+	ws_fetch_file "$_url" "$_pkg" || { rm -f "$_api" "$_pkg"; return 1; }
+	if [ "$_fmt" = ipk ]; then
+		opkg install "$_pkg" >/dev/null 2>&1 || { rm -f "$_api" "$_pkg"; return 1; }
+	else
+		apk add --allow-untrusted "$_pkg" >/dev/null 2>&1 || { rm -f "$_api" "$_pkg"; return 1; }
+	fi
+	rm -f "$_api" "$_pkg" 2>/dev/null
+	installed_version >/dev/null 2>&1
+}
+ws_packaged_latest_version() {
+	_arch=$(ws_openwrt_arch)
+	_j=$(fetch_stdout "$BEARGUARD_RELEASE_API") || return 1
+	_n=$(printf '%s' "$_j" | jq -r --arg a "$_arch" '.assets[]?.name | select(test("^warpscout_.*_" + $a + "\\.ipk$"))' 2>/dev/null | head -n1)
+	if [ -n "$_n" ]; then
+		_v=${_n#warpscout_}; _v=${_v%_${_arch}.ipk}; _v=${_v%-r*}
+		[ -n "$_v" ] && { printf '%s' "$_v"; return 0; }
+	fi
+	return 1
+}
 latest_version() {
+	if ws_packaged_mips_target; then
+		_v=$(ws_packaged_latest_version 2>/dev/null || true)
+		[ -n "$_v" ] && { printf '%s' "$_v"; return 0; }
+	fi
 	_j=$(fetch_stdout "$RELEASE_API") || return 1
 	_t=$(printf '%s' "$_j" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
 	[ -n "$_t" ] || return 1

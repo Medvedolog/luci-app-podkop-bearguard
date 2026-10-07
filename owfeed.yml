@@ -49,3 +49,16 @@ packages:
       pre-install: ./dist/scripts/preinst
       post-install: ./dist/scripts/postinst
       post-deinstall: ./dist/scripts/postrm
+
+
+  - name: warpscout
+    build: mkpkg
+    arch: [mipsel_24kc]
+    version-from: file:./dist/WARPSCOUT_VERSION
+    files: ./dist/warpscout/{arch}
+
+    description: "WARPSCOUT command-line network scanner and WARP/WireGuard endpoint testing utility."
+    license: MIT
+    url: https://github.com/vernette/warpscout
+    maintainer: "Medvedolog <Medvedolog@github.com>"
+    repo-commit: env:WARPSCOUT_COMMIT

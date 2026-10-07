@@ -100,7 +100,7 @@ ws_openwrt_arch() {
 		*) uname -m 2>/dev/null;;
 	esac
 }
-ws_packaged_mips_target() { case "$(ws_openwrt_arch)" in mipsel_*) return 0;; esac; return 1; }
+ws_packaged_mips_target() { [ "$(ws_openwrt_arch)" = mipsel_24kc ]; }
 ws_pkg_format() {
 	command -v apk >/dev/null 2>&1 && { printf 'apk'; return; }
 	command -v opkg >/dev/null 2>&1 && { printf 'ipk'; return; }

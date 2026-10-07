@@ -19,6 +19,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: sh tools/check-sources.sh
+      - run: sh -n root/usr/libexec/rpcd/podkop_bot_warpscout
       - run: sh tools/check-async-wrappers.sh
 
   build:

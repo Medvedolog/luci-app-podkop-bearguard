@@ -62,3 +62,20 @@ packages:
     url: https://github.com/vernette/warpscout
     maintainer: "Medvedolog <Medvedolog@github.com>"
     repo-commit: env:WARPSCOUT_COMMIT
+
+
+  - name: hwelp-proxy
+    build: mkpkg
+    arch: [mipsel_24kc]
+    version-from: file:./dist/VERSION
+    files: ./dist/hwelp-proxy/{arch}
+
+    description: "Small HTTP to SOCKS/HTTP/direct failover proxy used by Bearhole on OpenWrt."
+    depends: [libc]
+    license: GPL-2.0-or-later
+    url: https://github.com/Medvedolog/luci-app-podkop-bearguard
+    maintainer: "Medvedolog <Medvedolog@github.com>"
+    repo-commit: env:GITHUB_SHA
+
+    scripts:
+      pre-deinstall: ./scripts/hwelp-prerm

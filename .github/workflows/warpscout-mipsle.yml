@@ -1,4 +1,4 @@
-name: WARPSCOUT MIPSLE via owfeed
+name: MIPSLE native packages via owfeed
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
         required: false
         default: "v0.16.0"
       warpscout_version:
-        description: "OpenWrt package version"
+        description: "WARPSCOUT OpenWrt package version"
         required: false
         default: "0.16.0-r1"
 
@@ -20,11 +20,13 @@ permissions:
 
 jobs:
   build:
-    name: owfeed package for mipsel_24kc
+    name: owfeed packages for mipsel_24kc
     runs-on: ubuntu-latest
     env:
       DEFAULT_WARPSCOUT_REF: v0.16.0
       DEFAULT_WARPSCOUT_VERSION: 0.16.0-r1
+      MT7621_TOOLCHAIN_URL: https://downloads.openwrt.org/releases/24.10.8/targets/ramips/mt7621/openwrt-toolchain-24.10.8-ramips-mt7621_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+      MT7621_TOOLCHAIN_SHA256: 851d2bc29d29786200f83435e7b0bcc14b1beb8e096ce4c0ce070109932607ca
     steps:
       - name: Checkout BearGuard
         uses: actions/checkout@v7
@@ -65,6 +67,9 @@ jobs:
       - name: Reproducible package timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
+      - name: Stage LuCI package
+        run: sh tools/stage.sh
+
       - name: Build upstream WARPSCOUT for mipsle
         working-directory: upstream/warpscout
         shell: bash
@@ -81,15 +86,19 @@ jobs:
           file warpscout
           readelf -h warpscout
           file warpscout | grep -qi 'MIPS'
-          COMMIT="$(git rev-parse HEAD)"
-          echo "WARPSCOUT_COMMIT=$COMMIT" >> "$GITHUB_ENV"
+          echo "WARPSCOUT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
-      - name: Stage LuCI and WARPSCOUT payloads
+      - name: Stage WARPSCOUT payload
         shell: bash
         run: |
           set -euo pipefail
-          sh tools/stage.sh
           sh tools/stage-warpscout.sh             upstream/warpscout/warpscout             upstream/warpscout             "${{ steps.ws.outputs.version }}"
+
+      - name: Build and stage HWELP for MT7621
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh tools/build-hwelp-toolchain.sh             "$MT7621_TOOLCHAIN_URL"             "$MT7621_TOOLCHAIN_SHA256"             mipsel_24kc             dist
 
       - name: Build packages with owfeed
         shell: bash
@@ -98,13 +107,16 @@ jobs:
           owfeed plan
           owfeed check
           owfeed build
-          echo "=== WARPSCOUT packages ==="
-          find dist -type f \( -name 'warpscout_*.ipk' -o -name 'warpscout-*.apk' \) -print -exec ls -lh {} \;
+
+          echo "=== mipsel_24kc packages ==="
+          find dist -type f \(             -name 'warpscout_*.ipk' -o -name 'warpscout-*.apk' -o             -name 'hwelp-proxy_*.ipk' -o -name 'hwelp-proxy-*.apk'           \) -print -exec ls -lh {} \;
+
           test -n "$(find dist -type f -name 'warpscout_*_mipsel_24kc.ipk' -print -quit)"
+          test -n "$(find dist -type f -name 'hwelp-proxy_*_mipsel_24kc.ipk' -print -quit)"
 
       - name: Upload owfeed output
         uses: actions/upload-artifact@v7
         with:
-          name: warpscout-owfeed-mipsel_24kc
+          name: bearguard-owfeed-mipsel_24kc
           path: dist/
           if-no-files-found: error

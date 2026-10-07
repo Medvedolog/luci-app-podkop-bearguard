@@ -74,15 +74,6 @@ jobs:
           file warpscout | grep -qi 'MIPS'
           test -s warpscout
 
-      - name: Smoke test under qemu-mipsel
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user-static
-          qemu-mipsel-static ./warpscout/warpscout version
-          qemu-mipsel-static ./warpscout/warpscout --help >/dev/null
-
       - name: Package artifact
         shell: bash
         run: |

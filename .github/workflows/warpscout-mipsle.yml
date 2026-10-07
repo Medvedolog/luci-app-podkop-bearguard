@@ -1,0 +1,98 @@
+name: WARPSCOUT MIPSLE experiment
+
+on:
+  push:
+    branches:
+      - dev/0.19.19-warpscout-mipsle
+    paths:
+      - .github/workflows/warpscout-mipsle.yml
+  workflow_dispatch:
+    inputs:
+      warpscout_ref:
+        description: "Upstream WARPSCOUT tag/commit"
+        required: false
+        default: "v0.16.0"
+
+permissions:
+  contents: read
+
+jobs:
+  build-mipsle:
+    name: Build WARPSCOUT for OpenWrt mipsel_24kc
+    runs-on: ubuntu-latest
+    env:
+      DEFAULT_WARPSCOUT_REF: v0.16.0
+    steps:
+      - name: Resolve upstream ref
+        id: ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF="${{ github.event.inputs.warpscout_ref }}"
+          if [ -z "$REF" ]; then
+            REF="$DEFAULT_WARPSCOUT_REF"
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Building vernette/warpscout at $REF"
+
+      - name: Checkout WARPSCOUT
+        uses: actions/checkout@v7
+        with:
+          repository: vernette/warpscout
+          ref: ${{ steps.ref.outputs.ref }}
+          path: warpscout
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: warpscout/go.mod
+          cache-dependency-path: warpscout/go.sum
+
+      - name: Build linux/mipsle softfloat
+        working-directory: warpscout
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: mipsle
+          GOMIPS: softfloat
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ref.outputs.ref }}"
+          VERSION="${VERSION#v}"
+          go version
+          go env GOOS GOARCH GOMIPS CGO_ENABLED
+          go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o warpscout .
+          file warpscout
+          readelf -h warpscout
+          file warpscout | grep -qi 'MIPS'
+          test -s warpscout
+
+      - name: Smoke test under qemu-mipsel
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+          qemu-mipsel-static ./warpscout/warpscout version
+          qemu-mipsel-static ./warpscout/warpscout --help >/dev/null
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF="${{ steps.ref.outputs.ref }}"
+          VERSION="${REF#v}"
+          mkdir -p dist
+          tar -C warpscout -czf "dist/warpscout_${VERSION}_linux_mipsle.tar.gz" warpscout
+          sha256sum "dist/warpscout_${VERSION}_linux_mipsle.tar.gz" > "dist/warpscout_${VERSION}_linux_mipsle.tar.gz.sha256"
+          ls -lh dist
+          cat dist/*.sha256
+
+      - name: Upload MIPSLE build
+        uses: actions/upload-artifact@v7
+        with:
+          name: warpscout-v0.16.0-linux-mipsle-softfloat
+          path: dist/
+          if-no-files-found: error

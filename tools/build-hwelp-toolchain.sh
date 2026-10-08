@@ -21,7 +21,11 @@ VERSION="$(cat "$OUT/VERSION" 2>/dev/null || true)"
 
 ARCHIVE="$TMP/toolchain.tar.zst"
 echo "Downloading OpenWrt toolchain: $TC_URL"
-curl -fL --retry 3 --retry-delay 2 -o "$ARCHIVE" "$TC_URL"
+curl -fL \
+    --connect-timeout 15 --max-time 300 \
+    --speed-limit 1024 --speed-time 30 \
+    --retry 3 --retry-delay 3 --retry-all-errors \
+    -o "$ARCHIVE" "$TC_URL"
 printf '%s  %s\n' "$TC_SHA" "$ARCHIVE" | sha256sum -c -
 
 tar --zstd -xf "$ARCHIVE" -C "$TMP"

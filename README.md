@@ -49,6 +49,7 @@ BearGuard помогает установить, восстановить и о�
 - опциональное автовосстановление tsnet после перегенерации Podkop/Forkop X с readiness-проверкой через Main/Backup Mixed Proxy;
 - WARP Rescue и Warpscout для резервного доступа и диагностики;
 - Bearhole для аварийного многопрокси-доступа и `hwelp-proxy` с автоматической установкой из owfeed или GitHub Releases;
+- WARPSCOUT и `hwelp-proxy` для `mipsel_24kc` / MT7621 выпускаются вместе с BearGuard как IPK/APK;
 - работа с OpenWrt 24.10 через IPK и с OpenWrt 25.12+ через APK.
 
 ## Скриншоты
@@ -229,14 +230,14 @@ Bearhole не ведёт отдельный список прокси. Он со
 **OpenWrt 25.12 и новее (apk):**
 
 ```sh
-wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-23/luci-app-podkop-bot-0.19.19-r23.apk
+wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-24/luci-app-podkop-bot-0.19.19-r24.apk
 apk update && apk add --allow-untrusted /tmp/bearguard.apk
 ```
 
 **OpenWrt 24.10 и старее (opkg):**
 
 ```sh
-wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-23/luci-app-podkop-bot_0.19.19-r23_all.ipk
+wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-24/luci-app-podkop-bot_0.19.19-r24_all.ipk
 opkg update && opkg install /tmp/bearguard.ipk
 ```
 

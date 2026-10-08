@@ -16,7 +16,15 @@
 
 ## luci-app-podkop-bot
 
-### В разработке после 0.19.19-r22
+### 0.19.19-r24 — WARPSCOUT/HWELP для mipsel_24kc
+
+- **[MIPS / WARPSCOUT]** Добавлена штатная сборка WARPSCOUT 0.16.0 для OpenWrt `mipsel_24kc` / MT7621: `GOARCH=mipsle`, `GOMIPS=softfloat`, `CGO_ENABLED=0`. Пакет выпускается в IPK для OpenWrt 24.10 и APK для 25.12+ через owfeed.
+- **[MIPS / HWELP]** `hwelp-proxy` теперь также собирается для `mipsel_24kc` официальным OpenWrt toolchain и входит в тот же релизный комплект.
+- **[WARP]** На `mipsel_24kc` BearGuard больше не вызывает upstream `warpscout/install.sh`, где MIPS отсутствует: установка/обновление идёт пакетным путём через owfeed с fallback на asset BearGuard Release. Удаление учитывает opkg/apk.
+- **[CI]** MIPS перестал быть отдельным экспериментальным workflow и включён в основной release pipeline. Добавлена ранняя проверка `sh -n` для WARPSCOUT RPC.
+- **[Проверка]** Полный owfeed build/check, OpenWrt 24.10/25.12 userspace smoke и реальный запуск WARPSCOUT/WARP на MT7621 Xiaomi Mi Router 3G подтверждены.
+
+### 0.19.19-r23 — status, Bearhole and WARP first-run fixes
 
 - **[Обзор и обновления]** Версия sing-box определяется по установленному бинарнику, если пакета нет в opkg/apk; неудачные сетевые проверки версий кэшируются на пять минут. Проверка BearGuard использует актуальный репозиторий, короткий тайм-аут и настроенный порт/авторизацию Bearhole.
 - **[Bearhole]** Кнопка запуска снова допускает предусмотренную backend автоматическую установку hwelp proxy. Диагностика маршрутов использует актуальные URL BearGuard.

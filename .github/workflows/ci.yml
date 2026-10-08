@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev/0.19.19-warpscout-mipsle]
+    branches: [main]
     tags: ['[0-9]*', 'v[0-9]*']
   pull_request:
   workflow_dispatch:

@@ -16,13 +16,39 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM HUP
 
+download_with_resume() {
+    _url="$1"
+    _dst="$2"
+    _attempt=1
+    while [ "$_attempt" -le 4 ]; do
+        if [ -s "$_dst" ]; then
+            echo "Resuming download (attempt $_attempt/4): $_url"
+            _resume="-C -"
+        else
+            echo "Starting download (attempt $_attempt/4): $_url"
+            _resume=""
+        fi
+
+        # Keep partial data on transient CDN stalls and resume it on the next attempt.
+        # A single attempt is bounded, but a slow mirror is allowed to make progress.
+        # shellcheck disable=SC2086
+        if curl -fL $_resume \
+            --connect-timeout 15 --max-time 600 \
+            --speed-limit 128 --speed-time 120 \
+            -o "$_dst" "$_url"
+        then
+            return 0
+        fi
+
+        _attempt=$((_attempt + 1))
+        [ "$_attempt" -le 4 ] && sleep 5
+    done
+    return 1
+}
+
 SDK_ARCHIVE="$TMP/sdk.tar.zst"
 echo "Downloading OpenWrt SDK: $SDK_URL"
-curl -fL \
-    --connect-timeout 15 --max-time 300 \
-    --speed-limit 1024 --speed-time 30 \
-    --retry 3 --retry-delay 3 --retry-all-errors \
-    -o "$SDK_ARCHIVE" "$SDK_URL"
+download_with_resume "$SDK_URL" "$SDK_ARCHIVE"
 printf '%s  %s\n' "$SDK_SHA" "$SDK_ARCHIVE" | sha256sum -c -
 
 tar --zstd -xf "$SDK_ARCHIVE" -C "$TMP"

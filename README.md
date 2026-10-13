@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🐻 Podkop BearGuard 0.19.19
+# 🐻 Podkop BearGuard 0.19.22
 
 **LuCI-комплекс для управления podkop_bot, Podkop/Forkop, Tailscale/tsnet, WARP, аварийным транспортом и диагностикой OpenWrt**
 
-`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.19.19` · OpenWrt · LuCI · opkg / apk
+`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.19.22` · OpenWrt · LuCI · opkg / apk
 
 [![Release](https://img.shields.io/github/v/release/Medvedolog/luci-app-podkop-bearguard?style=flat-square&label=release&color=0969da)](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/Medvedolog/luci-app-podkop-bearguard/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/Medvedolog/luci-app-podkop-bearguard/actions/workflows/ci.yml)
@@ -230,14 +230,14 @@ Bearhole не ведёт отдельный список прокси. Он со
 **OpenWrt 25.12 и новее (apk):**
 
 ```sh
-wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-24/luci-app-podkop-bot-0.19.19-r24.apk
+wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.22-1/luci-app-podkop-bot-0.19.22-r1.apk
 apk update && apk add --allow-untrusted /tmp/bearguard.apk
 ```
 
 **OpenWrt 24.10 и старее (opkg):**
 
 ```sh
-wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.19-24/luci-app-podkop-bot_0.19.19-r24_all.ipk
+wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.22-1/luci-app-podkop-bot_0.19.22-r1_all.ipk
 opkg update && opkg install /tmp/bearguard.ipk
 ```
 

@@ -181,13 +181,14 @@ method_telegram_test() {
 	is_running || { printf '{"ok":false,"reason":"socks_not_running","status":"NETWORK_FAIL"}\n'; return; }
 	_port=$(cfg_get socks_port); case "$_port" in ''|*[!0-9]*) _port=18191;; esac
 	_proxy="socks5h://127.0.0.1:$_port"
+	# No bot token yet: WARP Rescue as a bootstrap proxy. getMe with a placeholder
+	# token; a JSON error from api.telegram.org over verified TLS proves the route.
 	_token=$(uci -q get podkop_bot.settings.bot_token 2>/dev/null)
-	[ -n "$_token" ] || { printf '{"ok":false,"reason":"bot_token_missing","status":"AUTH_ERROR"}\n'; return; }
 	command -v curl >/dev/null 2>&1 || { printf '{"ok":false,"reason":"curl_missing","status":"NETWORK_FAIL"}\n'; return; }
 
 	_body="$STATE_DIR/warpscout_telegram_body.$$"
 	_err="$STATE_DIR/warpscout_telegram_error.$$"
-	_meta=$(curl -sS -o "$_body" -w '%{http_code}|%{time_total}' --proxy "$_proxy" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_token}/getMe" 2>"$_err")
+	_meta=$(curl -sS -o "$_body" -w '%{http_code}|%{time_total}' --proxy "$_proxy" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_token:-0:bootstrap}/getMe" 2>"$_err")
 	_rc=$?
 	_http=${_meta%%|*}; _secs=${_meta#*|}
 	_ms=$(awk -v t="$_secs" 'BEGIN{if(t+0>=0)printf "%d",(t*1000)+0.5;else print 0}' 2>/dev/null); case "$_ms" in ''|*[!0-9]*) _ms=0;; esac
@@ -201,6 +202,8 @@ method_telegram_test() {
 		_status="NETWORK_FAIL"; _reason="curl_error_${_rc}"; _reachable=false; _http=000
 	elif [ "$_http" = 200 ] && jq -e '.ok == true' "$_body" >/dev/null 2>&1; then
 		_status="OK"; _reason="ok"; _verified=true
+	elif [ -z "$_token" ] && { [ "$_http" = 401 ] || [ "$_http" = 404 ]; } && jq -e '.ok == false and (.error_code | type == "number")' "$_body" >/dev/null 2>&1; then
+		_status="OK"; _reason="bootstrap_no_token"; _verified=true
 	elif [ "$_http" = 429 ]; then
 		_status="RATE_LIMITED"; _reason="http_429"
 	elif [ "$_http" = 401 ]; then

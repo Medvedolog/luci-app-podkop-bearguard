@@ -274,6 +274,15 @@ return view.extend({
 		o.depends('weekly_report', '1');
 		o.validate = qhValidate;
 
+		/* Вид отчётов: classic — обычный HTML (sendMessage); rich — таблицы и
+		 * заголовки через sendRichMessage (Bot API 10.1, Premium не нужен). Если
+		 * Telegram rich-сообщение отклонит, бот пришлёт отчёт в обычном виде. */
+		o = s.option(form.ListValue, 'report_style', _('Вид отчётов'),
+			_('«Таблицы» — новый формат Telegram с таблицами и сворачиваемыми блоками; нужен свежий клиент Telegram. Если Telegram его не примет, отчёт придёт в классическом виде.'));
+		o.value('classic', _('Классический'));
+		o.value('rich', _('Таблицы'));
+		o.default = 'classic';
+
 		/* ===== Группа 3: Транспорт (кратко; полная цепочка — на вкладке «Транспорт») ===== */
 		group(_('Транспорт'));
 

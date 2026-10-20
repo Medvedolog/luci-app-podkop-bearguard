@@ -371,7 +371,8 @@ return view.extend({
 			if(!r||!r.ok)throw new Error((r&&r.reason)||'warp_start_failed');
 			return callWarpRtTelegram();
 		}).then(function(t){
-			if(t&&t.verified_bot_api)dom.content(status,dot('green',_('Telegram VALID · HTTP ')+(t.http||'200')+(t.latency_ms?(' · '+t.latency_ms+' мс'):'')));
+			if(t&&t.verified_bot_api&&t.reason==='bootstrap_no_token')dom.content(status,dot('green',_('Telegram API доступен · без токена бота')+(t.latency_ms?(' · '+t.latency_ms+' мс'):'')));
+			else if(t&&t.verified_bot_api)dom.content(status,dot('green',_('Telegram VALID · HTTP ')+(t.http||'200')+(t.latency_ms?(' · '+t.latency_ms+' мс'):'')));
 			else if(t&&t.telegram_reached)dom.content(status,dot('yellow',_('Telegram достижим, но не VALID · HTTP ')+(t.http||'—')));
 			else dom.content(status,dot('red',_('Telegram FAIL · ')+((t&&t.reason)||'?')));
 		}).catch(function(e){

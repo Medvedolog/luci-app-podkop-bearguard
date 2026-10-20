@@ -87,11 +87,15 @@ magazine_count(){ restore_magazine >/dev/null 2>&1 || true; _n=0; [ -f "$RESCUE_
 magazine_index(){ restore_magazine >/dev/null 2>&1 || true; _ep="$1"; awk -F'|' -v e="$_ep" '$1==e{print NR;exit}' "$RESCUE_MAG" 2>/dev/null; }
 magazine_has(){ restore_magazine >/dev/null 2>&1 || true; _ep="$1"; awk -F'|' -v e="$_ep" '$1==e{f=1;exit}END{exit(f?0:1)}' "$RESCUE_MAG" 2>/dev/null; }
 
+# Without a bot token (WARP Rescue working as a bootstrap proxy before the bot
+# is set up) getMe goes out with a placeholder token: a JSON error from
+# api.telegram.org over verified TLS still proves the route reaches the Bot API.
 probe_tg(){
-	_port="$1"; _tok=$(uci -q get podkop_bot.settings.bot_token 2>/dev/null); [ -n "$_tok" ] || return 2
+	_port="$1"; _tok=$(uci -q get podkop_bot.settings.bot_token 2>/dev/null)
 	_b="$STATE_DIR/rescue_tg_body.$$"
-	_h=$(curl -sS -o "$_b" -w '%{http_code}' --proxy "socks5h://127.0.0.1:$_port" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_tok}/getMe" 2>/dev/null); _rc=$?
+	_h=$(curl -sS -o "$_b" -w '%{http_code}' --proxy "socks5h://127.0.0.1:$_port" --connect-timeout 5 --max-time 12 "https://api.telegram.org/bot${_tok:-0:bootstrap}/getMe" 2>/dev/null); _rc=$?
 	_ok=1; [ "$_rc" -eq 0 ] && [ "$_h" = 200 ] && jq -e '.ok==true' "$_b" >/dev/null 2>&1 && _ok=0
+	if [ -z "$_tok" ] && [ "$_rc" -eq 0 ] && { [ "$_h" = 401 ] || [ "$_h" = 404 ]; } && jq -e '.ok == false and (.error_code | type == "number")' "$_b" >/dev/null 2>&1; then _ok=0; fi
 	rm -f "$_b"; return "$_ok"
 }
 

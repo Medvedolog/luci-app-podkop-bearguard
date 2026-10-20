@@ -4,7 +4,7 @@ PKG_NAME:=hwelp-proxy
 # Always the release version of luci-app-podkop-bot (see tools/hwelp-version.sh,
 # which CI runs from the tag before building). Kept in sync here for local builds;
 # tools/check-sources.sh enforces it.
-PKG_VERSION:=0.19.22
+PKG_VERSION:=0.19.23
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_MAINTAINER:=Medvedolog

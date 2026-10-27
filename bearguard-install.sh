@@ -3,7 +3,7 @@
 # straight from the OpenWrt console.
 #
 #   wget -qO- https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard/main/bearguard-install.sh | sh
-#   (pin a version: ... | sh -s -- --version 0.19.23-2)
+#   (pin a version: ... | sh -s -- --version 0.19.24-1)
 #
 # OpenWrt 25.12+ (apk) gets the .apk asset, OpenWrt 24.10 and older (opkg)
 # the _all.ipk. The BearGuard package is architecture-independent; the same

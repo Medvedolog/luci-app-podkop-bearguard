@@ -51,14 +51,18 @@ function pbFooter() {
 }
 
 return view.extend({
+	/* The version check may go to GitHub (up to ~25 s when it is blocked and the
+	 * cached answer has expired), so it must not hold the page: render at once
+	 * and fill the line when the answer arrives. */
 	load: function() {
 		pbInjectCss();
-		return callCheckUpdate('').catch(function(){ return { ok:false }; });
+		return Promise.resolve(null);
 	},
 
 	render: function(data) {
 		var self = this;
-		var verLine = E('div', { 'style':'margin:.5em 0;' }, this.verNode(data));
+		var verLine = E('div', { 'style':'margin:.5em 0;' }, dot('grey', _('Проверка…')));
+		callCheckUpdate('').catch(function(){ return { ok:false }; }).then(function(d){ dom.content(verLine, self.verNode(d)); });
 		var recheckBtn = E('button', {
 			'class':'cbi-button',
 			'click': function() {

@@ -101,23 +101,37 @@ podkop_variant_display() {
 	esac
 }
 
-# -- cached install.sh status. Each `install.sh --action status` re-parses the
-# whole installer and runs ~12 `opkg list-installed` scans, which is slow on
-# opkg systems (noticeable Wizard/Overview lag). Multiple rpc methods call it on
-# a single page open, so cache the JSON for a few seconds and reuse it. Fresh
-# enough for UI, avoids the N× multiplier.
+# -- cached install.sh status. Each `install.sh --action status` reads the
+# package database and walks /proc, which takes seconds on a router, and most
+# pages ask for it — several methods per page. The JSON is cached for 30 s
+# (every action that changes it — service, installer, updates — deletes the
+# file), and only one process computes it: a caller that finds a computation in
+# progress waits for its result instead of starting a second installer, so a
+# batch of page calls never runs the installer in parallel.
 _STATUS_CACHE="/tmp/podkop_bot/luci_status_cache.json"
-_STATUS_TTL=5
+_STATUS_LOCK="/tmp/podkop_bot/luci_status_cache.lock"
+_STATUS_TTL=30
+_status_cache_fresh() {
+	[ -s "$_STATUS_CACHE" ] || return 1
+	_age=$(( $(date +%s 2>/dev/null || echo 0) - $(date -r "$_STATUS_CACHE" +%s 2>/dev/null || echo 0) ))
+	[ "$_age" -ge 0 ] 2>/dev/null && [ "$_age" -lt "$_STATUS_TTL" ]
+}
 _cached_status() {
 	mkdir -p /tmp/podkop_bot 2>/dev/null
-	if [ -f "$_STATUS_CACHE" ]; then
-		_age=$(( $(date +%s 2>/dev/null || echo 0) - $(date -r "$_STATUS_CACHE" +%s 2>/dev/null || echo 0) ))
-		if [ "$_age" -ge 0 ] 2>/dev/null && [ "$_age" -lt "$_STATUS_TTL" ]; then
-			cat "$_STATUS_CACHE"; return
+	_status_cache_fresh && { cat "$_STATUS_CACHE"; return; }
+	if ! mkdir "$_STATUS_LOCK" 2>/dev/null; then
+		# Someone is computing it. A lock older than a minute is a crashed run.
+		_lage=$(( $(date +%s 2>/dev/null || echo 0) - $(date -r "$_STATUS_LOCK" +%s 2>/dev/null || echo 0) ))
+		if [ "$_lage" -lt 60 ] 2>/dev/null; then
+			_w=0
+			while [ -d "$_STATUS_LOCK" ] && [ "$_w" -lt 40 ]; do sleep 0.5 2>/dev/null || sleep 1; _w=$((_w + 1)); done
+			_status_cache_fresh && { cat "$_STATUS_CACHE"; return; }
 		fi
+		rm -rf "$_STATUS_LOCK" 2>/dev/null; mkdir "$_STATUS_LOCK" 2>/dev/null
 	fi
 	_s=$(sh "$INSTALLER_PATH" --unattended --action status 2>/dev/null)
-	[ -n "$_s" ] && printf '%s' "$_s" > "$_STATUS_CACHE" 2>/dev/null
+	[ -n "$_s" ] && printf '%s' "$_s" > "$_STATUS_CACHE.$$" 2>/dev/null && mv -f "$_STATUS_CACHE.$$" "$_STATUS_CACHE" 2>/dev/null
+	rmdir "$_STATUS_LOCK" 2>/dev/null
 	printf '%s' "$_s"
 }
 
@@ -182,8 +196,10 @@ emit_mixed_proxy() {
 # stopped bot. The bot runs as `/bin/sh /usr/bin/podkop_bot` and forks a child,
 # so there may be several matching PIDs — one live match is enough. We exclude
 # the init wrapper and rc.common so we don't count the service manager itself.
+# One grep over every cmdline finds the candidates (a `tr` per process was a
+# hundred-plus forks per call); only those few are inspected further.
 bot_is_running() {
-	for _c in /proc/[0-9]*/cmdline; do
+	for _c in $(grep -l -s -F '/usr/bin/podkop_bot' /proc/[0-9]*/cmdline 2>/dev/null); do
 		_cl=$(tr '\0' ' ' < "$_c" 2>/dev/null) || continue
 		case "$_cl" in
 			*"/etc/init.d/podkop_bot"*) continue ;;
@@ -295,6 +311,22 @@ _read_input() { read -r _input 2>/dev/null; }
 _field() { printf '%s' "$_input" | sed -n 's/.*"'"$1"'":"\([^"]*\)".*/\1/p'; }
 # extract a numeric field
 _field_num() { printf '%s' "$_input" | sed -n 's/.*"'"$1"'":\([0-9][0-9]*\).*/\1/p'; }
+
+# _bg_refresh METHOD — re-run an rpc method of this script with force=true in
+# the background, one at a time per method, detached from rpcd's pipe. Network
+# checks (GitHub versions) answer from their cache at once and refresh it this
+# way: a blocked GitHub used to hold the page's whole ubus batch — and one of
+# uhttpd's few request slots — for 30-40 s, so the next tab would not open.
+_bg_refresh() {
+	_bl="/tmp/podkop_bot/bg_$1.lock"
+	mkdir -p /tmp/podkop_bot 2>/dev/null
+	if ! mkdir "$_bl" 2>/dev/null; then
+		_ba=$(( $(date +%s 2>/dev/null || echo 0) - $(date -r "$_bl" +%s 2>/dev/null || echo 0) ))
+		[ "$_ba" -gt 120 ] 2>/dev/null || return 0
+		rm -rf "$_bl" 2>/dev/null; mkdir "$_bl" 2>/dev/null || return 0
+	fi
+	( printf '{"force":"true"}\n' | sh "$0" call "$1" >/dev/null 2>&1; rmdir "$_bl" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
+}
 
 # -- installer: launch install/update/uninstall in background, poll via logs --
 method_installer() {
@@ -590,15 +622,23 @@ method_ensure_mixed_proxy() {
 
 # -- test_github: reachability of raw.githubusercontent.com ------------------
 method_test_github() {
-	_url="https://raw.githubusercontent.com/Medvedolog/podkop_bot/main/version.txt"
-	if command -v curl >/dev/null 2>&1; then
-		if curl -fsS --connect-timeout 3 --max-time 5 -o /dev/null "$_url" 2>/dev/null; then
-			printf '{"reachable":true,"route":"direct"}\n'; return
-		fi
-	elif wget -q -T 5 -O /dev/null "$_url" 2>/dev/null; then
-		printf '{"reachable":true,"route":"direct"}\n'; return
+	_read_input
+	_gh_cache=/tmp/podkop_bot/test_github.json
+	if [ "$(_field force)" != "true" ] && [ -s "$_gh_cache" ]; then
+		_ga=$(( $(date +%s 2>/dev/null || echo 0) - $(date -r "$_gh_cache" +%s 2>/dev/null || echo 0) ))
+		[ "$_ga" -ge 0 ] 2>/dev/null && [ "$_ga" -lt 120 ] 2>/dev/null || _bg_refresh test_github
+		cat "$_gh_cache"; return
 	fi
-	printf '{"reachable":false,"route":"none"}\n'
+	_url="https://raw.githubusercontent.com/Medvedolog/podkop_bot/main/version.txt"
+	_gh='{"reachable":false,"route":"none"}'
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsS --connect-timeout 3 --max-time 5 -o /dev/null "$_url" 2>/dev/null && _gh='{"reachable":true,"route":"direct"}'
+	elif wget -q -T 5 -O /dev/null "$_url" 2>/dev/null; then
+		_gh='{"reachable":true,"route":"direct"}'
+	fi
+	mkdir -p /tmp/podkop_bot 2>/dev/null
+	printf '%s\n' "$_gh" > "$_gh_cache" 2>/dev/null
+	printf '%s\n' "$_gh"
 }
 
 # -- JSON string escaper (for embedding arbitrary text as a JSON string) -----
@@ -767,7 +807,9 @@ method_check_update() {
 			_c_latest=$(sed -n 's/.*"latest":"\([^"]*\)".*/\1/p' "$UPDATE_CACHE")
 			_c_via=$(sed -n 's/.*"via":"\([^"]*\)".*/\1/p' "$UPDATE_CACHE")
 			_ttl=$UPDATE_CACHE_TTL; [ "$_c_latest" = unknown ] && _ttl=$UPDATE_FAILURE_TTL
-			if [ -n "$_c_latest" ] && [ "$((_now - _ts))" -ge 0 ] && [ "$((_now - _ts))" -lt "$_ttl" ] 2>/dev/null; then
+			if [ -n "$_c_latest" ]; then
+				# Stale: answer with it anyway and refresh in the background.
+				[ "$((_now - _ts))" -ge 0 ] 2>/dev/null && [ "$((_now - _ts))" -lt "$_ttl" ] 2>/dev/null || _bg_refresh check_update
 				_c_avail="false"
 				[ "$_cur" != "unknown" ] && [ "$_c_latest" != "unknown" ] && _ver_gt "$_c_latest" "$_cur" && _c_avail="true"
 				printf '{"ok":true,"current":"%s","latest":"%s","update_available":%s,"via":"%s","checked_at":%s}\n' \
@@ -831,7 +873,9 @@ method_luci_update_check() {
 			_c_latest=$(sed -n 's/.*"latest":"\([^"]*\)".*/\1/p' "$LUCI_UPDATE_CACHE")
 			_c_via=$(sed -n 's/.*"via":"\([^"]*\)".*/\1/p' "$LUCI_UPDATE_CACHE")
 			_ttl=$UPDATE_CACHE_TTL; [ "$_c_latest" = unknown ] && _ttl=$UPDATE_FAILURE_TTL
-			if [ -n "$_c_latest" ] && [ "$((_now - _ts))" -ge 0 ] && [ "$((_now - _ts))" -lt "$_ttl" ] 2>/dev/null; then
+			if [ -n "$_c_latest" ]; then
+				# Stale: answer with it anyway and refresh in the background.
+				[ "$((_now - _ts))" -ge 0 ] 2>/dev/null && [ "$((_now - _ts))" -lt "$_ttl" ] 2>/dev/null || _bg_refresh luci_update_check
 				_c_avail="false"
 				[ "$_cur" != "unknown" ] && [ "$_c_latest" != "unknown" ] && _ver_gt "$_c_latest" "$_cur" && _c_avail="true"
 				printf '{"ok":true,"current":"%s","latest":"%s","update_available":%s,"via":"%s","releases_url":"https://github.com/Medvedolog/luci-app-podkop-bearguard/releases","checked_at":%s}\n' \
@@ -1523,8 +1567,10 @@ method_set_transport_policy() {
 		*) printf '{"ok":false,"reason":"bad_policy","detail":"%s"}\n' "$_pol"; return ;;
 	esac
 	uci_txn_begin
-	uci set podkop_bot.settings.transport="$_pol" 2>/dev/null
-	uci commit podkop_bot 2>/dev/null
+	if ! _ensure_bot_settings || ! uci set podkop_bot.settings.transport="$_pol" 2>/dev/null \
+	   || ! uci commit podkop_bot 2>/dev/null; then
+		uci_txn_end; _uci_write_failed; return
+	fi
 	uci_txn_end
 	[ -x "$INIT_PATH" ] && "$INIT_PATH" restart >/dev/null 2>&1
 	sleep 1
@@ -1550,6 +1596,7 @@ _fb_rewrite() {
 	# last add_list the list is incomplete, and a commit from the bot lands
 	# exactly that.
 	uci_txn_begin
+	_ensure_bot_settings
 	uci -q delete podkop_bot.settings.fallback_socks 2>/dev/null
 	while IFS= read -r _e; do
 		[ -n "$_e" ] && uci add_list podkop_bot.settings.fallback_socks="$_e" 2>/dev/null
@@ -1557,6 +1604,20 @@ _fb_rewrite() {
 	uci commit podkop_bot 2>/dev/null
 	uci_txn_end
 }
+# The transport chain (custom proxy, reserve proxies, policy) is useful before
+# the bot exists: WARP Rescue and Bearhole use it as a bootstrap path. Without
+# /etc/config/podkop_bot every `uci set podkop_bot.settings.*` failed silently
+# and the UI reported success, so create the file and its `settings` section.
+_ensure_bot_settings() {
+	[ -f /etc/config/podkop_bot ] || { touch /etc/config/podkop_bot 2>/dev/null || return 1; }
+	uci -q get podkop_bot.settings >/dev/null 2>&1 && return 0
+	uci set podkop_bot.settings=settings 2>/dev/null
+}
+_uci_write_failed() {
+	uci -q revert podkop_bot 2>/dev/null
+	printf '{"ok":false,"reason":"uci_set_failed","detail":"could not write /etc/config/podkop_bot"}\n'
+}
+
 _valid_port() {
 	# 1..65535
 	case "$1" in (*[!0-9]*|"") return 1;; esac
@@ -1614,8 +1675,10 @@ method_fallback_crud() {
 				[ "$(_fb_endpoint "$_e")" = "$_new_ep" ] && { _dup=1; break; }
 			done
 			[ "$_dup" = "1" ] && { printf '{"ok":false,"reason":"duplicate","detail":"%s already in list"}\n' "$_new_ep"; return; }
-			uci add_list podkop_bot.settings.fallback_socks="$_clean" 2>/dev/null
-			uci commit podkop_bot 2>/dev/null
+			if ! _ensure_bot_settings || ! uci add_list podkop_bot.settings.fallback_socks="$_clean" 2>/dev/null \
+			   || ! uci commit podkop_bot 2>/dev/null; then
+				_uci_write_failed; return
+			fi
 			printf '{"ok":true,"op":"add","value":%s}\n' "$(_json_str "$_clean")"
 			;;
 		edit)
@@ -1759,6 +1822,10 @@ method_set_uci_field() {
 	# shared lock across both so the bot cannot commit this package in between.
 	# The case has early `return` paths — each releases the lock explicitly.
 	uci_txn_begin
+	case "$_field_name" in custom_proxy|bind_interface)
+		_ensure_bot_settings || { uci_txn_end; _uci_write_failed; return; } ;;
+	esac
+	_set_ok=1
 	case "$_field_name" in
 		custom_proxy)
 			_clean=$(printf '%s' "$_val" | tr -d '\r\n')
@@ -1771,7 +1838,7 @@ method_set_uci_field() {
 				_valid_port "$_p" || { uci_txn_end; printf '{"ok":false,"reason":"bad_port","detail":"port must be 1-65535"}\n'; return; }
 			fi
 			if [ -z "$_clean" ]; then uci -q delete podkop_bot.settings.custom_proxy 2>/dev/null
-			else uci set podkop_bot.settings.custom_proxy="$_clean" 2>/dev/null; fi
+			else uci set podkop_bot.settings.custom_proxy="$_clean" 2>/dev/null || _set_ok=0; fi
 			;;
 		bind_interface)
 			_clean=$(printf '%s' "$_val" | tr -d '\r\n' | sed 's/[[:space:]]//g')
@@ -1782,16 +1849,17 @@ method_set_uci_field() {
 				fi
 			fi
 			if [ -z "$_clean" ] || [ "$_clean" = "auto" ]; then uci -q delete podkop_bot.settings.bind_interface 2>/dev/null
-			else uci set podkop_bot.settings.bind_interface="$_clean" 2>/dev/null; fi
+			else uci set podkop_bot.settings.bind_interface="$_clean" 2>/dev/null || _set_ok=0; fi
 			;;
 		*)
 			uci_txn_end
 			printf '{"ok":false,"reason":"bad_field","detail":"%s"}\n' "$_field_name"; return ;;
 	esac
-	uci commit podkop_bot 2>/dev/null
+	if [ "$_set_ok" != 1 ] || ! uci commit podkop_bot 2>/dev/null; then
+		uci_txn_end; _uci_write_failed; return
+	fi
 	uci_txn_end
-	[ -x "$INIT_PATH" ] && "$INIT_PATH" restart >/dev/null 2>&1
-	sleep 1
+	[ -x "$INIT_PATH" ] && { "$INIT_PATH" restart >/dev/null 2>&1; sleep 1; }
 	printf '{"ok":true,"field":"%s","value":%s}\n' "$_field_name" "$(_json_str "$_clean")"
 }
 
@@ -2046,7 +2114,9 @@ method_podkop_update_check() {
 		_ts=$(sed -n 's/.*"checked_at":\([0-9]*\).*/\1/p' "$_pc_cache")
 		_pc_ttl=$UPDATE_CACHE_TTL
 		grep -q '"available":false' "$_pc_cache" && _pc_ttl=$UPDATE_FAILURE_TTL
-		if [ -n "$_ts" ] && [ "$((_now - _ts))" -ge 0 ] && [ "$((_now - _ts))" -lt "$_pc_ttl" ] 2>/dev/null; then
+		if [ -n "$_ts" ]; then
+			# Stale: answer with it anyway and refresh in the background.
+			[ "$((_now - _ts))" -ge 0 ] 2>/dev/null && [ "$((_now - _ts))" -lt "$_pc_ttl" ] 2>/dev/null || _bg_refresh podkop_update_check
 			cat "$_pc_cache"; printf '\n'; return
 		fi
 	fi

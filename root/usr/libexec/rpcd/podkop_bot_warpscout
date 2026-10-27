@@ -67,10 +67,20 @@ cfg_write() {
 valid_filter() { case "$1" in *[!A-Za-z0-9,_-]*) return 1;; esac; return 0; }
 valid_endpoint() { printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$'; }
 
+# Starting the Go binary takes up to a couple of seconds on a MIPS router, and
+# every page that shows WARP asks for the status, so the answer is kept per
+# binary: the cache line carries the binary's mtime and size.
 installed_version() {
 	[ -x "$BIN" ] || return 1
-	_v=$($BIN version 2>/dev/null | head -n1 | tr -d '\r')
-	[ -n "$_v" ] || return 1
+	_vkey="$(date -r "$BIN" +%s 2>/dev/null)-$(wc -c < "$BIN" 2>/dev/null | tr -d ' ')"
+	_vcache=/tmp/podkop_bot/warpscout_version
+	_v=$(sed -n "s/^${_vkey}|//p" "$_vcache" 2>/dev/null | head -n1)
+	if [ -z "$_v" ]; then
+		_v=$($BIN version 2>/dev/null | head -n1 | tr -d '\r')
+		[ -n "$_v" ] || return 1
+		mkdir -p /tmp/podkop_bot 2>/dev/null
+		printf '%s|%s\n' "$_vkey" "$_v" > "$_vcache" 2>/dev/null
+	fi
 	printf '%s' "$_v"
 }
 fetch_stdout() {

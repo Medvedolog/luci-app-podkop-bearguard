@@ -787,7 +787,7 @@ method_check_update() {
 	# bot's primary SOCKS (tier1 mixed_proxy) — the same path `update from GitHub`
 	# uses — so the check doesn't falsely report "unknown" while update works.
 	if [ -z "$_latest" ]; then
-		_sb_ip=$(uci -q get network.lan.ipaddr 2>/dev/null)
+		_sb_ip=$(_lan_ipv4)
 		_sb_port=""
 		_v=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 		_pk=$(podkop_uci_pkg "${_v:-podkop}")
@@ -1266,12 +1266,18 @@ _primary_section() {
 	uci -q get "$_pkg.main" >/dev/null 2>&1 && printf 'main'
 }
 
+# LAN IPv4 of the router. OpenWrt 25.12 stores network.lan.ipaddr in CIDR form
+# ("192.168.1.1/24", possibly a list): keep the first address without the mask.
+_lan_ipv4() {
+	uci -q get network.lan.ipaddr 2>/dev/null | awk '{print $1}' | cut -d/ -f1
+}
+
 # Resolve the SOCKS listen IP for a mixed_proxy port, the way the bot does:
 # look up the inbound in sing-box config.json by listen_port; if listen is
 # 0.0.0.0/:: or absent, use the LAN IP. (TZ 12.4 get_proxy_ip equivalent.)
 _resolve_proxy_ip() {
 	_port="$1"
-	_ip=$(uci -q get network.lan.ipaddr 2>/dev/null); [ -z "$_ip" ] && _ip="192.168.1.1"
+	_ip=$(_lan_ipv4); [ -z "$_ip" ] && _ip="192.168.1.1"
 	_cfg="/etc/sing-box/config.json"
 	if [ -f "$_cfg" ] && command -v jq >/dev/null 2>&1; then
 		_sb=$(jq -r --arg p "$_port" '.inbounds[]? | select(.listen_port==($p|tonumber)) | .listen // empty' "$_cfg" 2>/dev/null | head -1)
@@ -1930,7 +1936,7 @@ method_runtime_sections() {
 	[ -z "$_variant" ] && _variant="podkop"
 	_pkg=$(podkop_uci_pkg "$_variant")
 	_active=$(_active_section)
-	_lan=$(uci -q get network.lan.ipaddr 2>/dev/null); [ -z "$_lan" ] && _lan="192.168.1.1"
+	_lan=$(_lan_ipv4); [ -z "$_lan" ] && _lan="192.168.1.1"
 
 	# degraded if the variant's UCI package doesn't exist (clean/migrating system)
 	if ! uci -q show "$_pkg" >/dev/null 2>&1; then
@@ -2503,7 +2509,7 @@ method_active_probe() {
 	_srv_count=0
 	_srv_delay=""
 	_clash_addr=$(jq -r '.experimental.clash_api.external_controller // empty' /etc/sing-box/config.json 2>/dev/null)
-	[ -z "$_clash_addr" ] && _clash_addr="$(uci -q get network.lan.ipaddr 2>/dev/null):9090"
+	[ -z "$_clash_addr" ] && _clash_addr="$(_lan_ipv4):9090"
 	_clash_secret=$(uci -q get "$_pkg.settings.yacd_secret_key" 2>/dev/null)
 	_clash_hdr=""
 	[ -n "$_clash_secret" ] && _clash_hdr="Authorization: Bearer $_clash_secret"

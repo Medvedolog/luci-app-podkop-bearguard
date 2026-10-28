@@ -88,11 +88,11 @@ podkop_variant_display() {
 		. /usr/lib/podkop_bot/tsnet-provider.sh
 		case "$(tsnet_provider 2>/dev/null)" in
 			forkop-x) printf 'Forkop X'; return ;;
-			forkop-native) printf 'Forkop'; return ;;
+			forkop-native) if _fk2 forkop; then printf 'Forkop 2'; else printf 'Forkop'; fi; return ;;
 		esac
 	fi
 	case "$_variant" in
-		forkop) printf 'Forkop' ;;
+		forkop) if _fk2 forkop; then printf 'Forkop 2'; else printf 'Forkop'; fi ;;
 		plus) printf 'Podkop Plus' ;;
 		netshift) printf 'NetShift' ;;
 		evolution) printf 'Podkop Evolution' ;;
@@ -152,6 +152,104 @@ podkop_active_section() {
 	printf '%s' "$_sec"
 }
 
+# -- Forkop 2 mixed proxy -----------------------------------------------------
+# Forkop 2.0 (forkop.settings.config_version 2.x) has no mixed_proxy_* options:
+# a section's mixed proxy is a `server` with protocol=mixed, routing_mode=section,
+# routing_section=<section>, listen_port and enabled (off unless 1). The helpers
+# below read and write either schema, so every caller stays variant-agnostic.
+_fk2() {
+	[ "$1" = "forkop" ] || return 1
+	case "$(uci -q get forkop.settings.config_version 2>/dev/null)" in 2.*|[3-9].*|[1-9][0-9].*) return 0 ;; esac
+	return 1
+}
+# _fk2_mixed PKG SEC — "name|enabled|port" of the mixed server routed to SEC, enabled first.
+_fk2_mixed() {
+	uci -q show "$1" 2>/dev/null | awk -v p="$1." -v want="$2" '
+		{ eq = index($0, "="); k = substr($0, 1, eq - 1); v = substr($0, eq + 1)
+		  sub("^" p, "", k); gsub(/\047/, "", v); dot = index(k, ".")
+		  if (!dot) { if (v == "server") order[++n] = k; next }
+		  opt[substr(k, 1, dot - 1) SUBSEP substr(k, dot + 1)] = v }
+		END { for (i = 1; i <= n; i++) { s = order[i]
+			if (opt[s SUBSEP "protocol"] != "mixed" || opt[s SUBSEP "routing_mode"] != "section" || opt[s SUBSEP "routing_section"] != want) continue
+			en = opt[s SUBSEP "enabled"]; if (en == "") en = "0"
+			line = s "|" en "|" opt[s SUBSEP "listen_port"]
+			if (en == "1") { print line; f = 1; exit } if (d == "") d = line }
+		  if (!f && d != "") print d }'
+}
+# _sec_mixed_en PKG SEC / _sec_mixed_port PKG SEC — print the value, fail when unset.
+_sec_mixed_en() {
+	if _fk2 "$1"; then
+		case "$(_fk2_mixed "$1" "$2" | cut -d'|' -f2)" in 1) echo 1 ;; *) echo 0 ;; esac
+		return 0
+	fi
+	uci -q get "$1.$2.mixed_proxy_enabled" 2>/dev/null
+}
+_sec_mixed_port() {
+	if _fk2 "$1"; then
+		_smp=$(_fk2_mixed "$1" "$2" | cut -d'|' -f3)
+		[ -n "$_smp" ] || return 1
+		echo "$_smp"; return 0
+	fi
+	uci -q get "$1.$2.mixed_proxy_port" 2>/dev/null
+}
+# _mixed_used_ports PKG — every mixed proxy port, one per line.
+_mixed_used_ports() {
+	if _fk2 "$1"; then
+		uci -q show "$1" 2>/dev/null | awk -v p="$1." '
+			{ eq = index($0, "="); k = substr($0, 1, eq - 1); v = substr($0, eq + 1)
+			  sub("^" p, "", k); gsub(/\047/, "", v); dot = index(k, ".")
+			  if (!dot) { if (v == "server") srv[k] = 1; next }
+			  opt[substr(k, 1, dot - 1) SUBSEP substr(k, dot + 1)] = v }
+			END { for (s in srv) if (opt[s SUBSEP "protocol"] == "mixed" && opt[s SUBSEP "listen_port"] ~ /^[0-9]+$/) print opt[s SUBSEP "listen_port"] }'
+		return 0
+	fi
+	uci -q show "$1" 2>/dev/null | sed -n 's/.*\.mixed_proxy_port=.\(.*\).$/\1/p'
+}
+# _sec_mixed_stage PKG SEC PORT [ENABLED] — stage port (and enabled) of the
+# section's mixed proxy; on Forkop 2 the server is created when missing.
+_sec_mixed_stage() {
+	if _fk2 "$1"; then
+		_sms=$(_fk2_mixed "$1" "$2" | cut -d'|' -f1)
+		if [ -z "$_sms" ]; then
+			_sms="server_$(printf '%s' "$2" | tr -c 'A-Za-z0-9_\n' '_')_mixed"
+			_sml=$(uci -q get "$1.$2.label" 2>/dev/null); [ -n "$_sml" ] || _sml="$2"
+			uci set "$1.$_sms=server" 2>/dev/null || return 1
+			uci set "$1.$_sms.label=$_sml - Mixed proxy" && uci set "$1.$_sms.protocol=mixed" \
+				&& uci set "$1.$_sms.listen=::" && uci set "$1.$_sms.open_firewall=0" \
+				&& uci set "$1.$_sms.routing_mode=section" && uci set "$1.$_sms.routing_section=$2" \
+				&& uci set "$1.$_sms.mixed_auth_enabled=0" && uci set "$1.$_sms.enabled=0" 2>/dev/null || return 1
+		fi
+		uci set "$1.$_sms.listen_port=$3" 2>/dev/null || return 1
+		[ -n "$4" ] && { uci set "$1.$_sms.enabled=$4" 2>/dev/null || return 1; }
+		return 0
+	fi
+	uci set "$1.$2.mixed_proxy_port=$3" 2>/dev/null || return 1
+	[ -n "$4" ] && { uci set "$1.$2.mixed_proxy_enabled=$4" 2>/dev/null || return 1; }
+	return 0
+}
+
+# _sec_clash_tag PKG SEC — the section's group in the Clash API: its label on
+# Forkop 2 (links run as "<label>/<name>"), its name everywhere else.
+_sec_clash_tag() {
+	if _fk2 "$1"; then
+		_sct=$(uci -q get "$1.$2.label" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		[ -n "$_sct" ] && { printf '%s' "$_sct"; return; }
+	fi
+	printf '%s' "$2"
+}
+# _fk2_link_uris PKG SEC — Forkop 2 manual links (connection_link children), one per line.
+_fk2_link_uris() {
+	uci -q show "$1" 2>/dev/null | awk -v p="$1." -v want="$2" '
+		{ eq = index($0, "="); k = substr($0, 1, eq - 1); v = substr($0, eq + 1)
+		  sub("^" p, "", k); sub(/^\047/, "", v); sub(/\047$/, "", v); gsub(/\047\\\047\047/, "\047", v); dot = index(k, ".")
+		  if (!dot) { if (v == "connection_link") order[++n] = k; next }
+		  opt[substr(k, 1, dot - 1) SUBSEP substr(k, dot + 1)] = v }
+		END { for (i = 1; i <= n; i++) { c = order[i]
+			if (opt[c SUBSEP "section"] != want) continue
+			o = opt[c SUBSEP "order"]; if (o !~ /^-?[0-9]+$/) o = 0
+			printf "%s\t%s\n", o, opt[c SUBSEP "uri"] } }' | sort -n -k1,1 | cut -f2-
+}
+
 # -- mixed_proxy sub-object as a JSON fragment (no outer braces) --------------
 emit_mixed_proxy() {
 	_variant="$1"
@@ -173,8 +271,8 @@ emit_mixed_proxy() {
 		return
 	fi
 	_sec=$(podkop_active_section "$_pkg")
-	_en=$(uci -q get "${_pkg}.${_sec}.mixed_proxy_enabled" 2>/dev/null)
-	_port=$(uci -q get "${_pkg}.${_sec}.mixed_proxy_port" 2>/dev/null)
+	_en=$(_sec_mixed_en "${_pkg}" "${_sec}")
+	_port=$(_sec_mixed_port "${_pkg}" "${_sec}")
 
 	if [ -z "$_en" ] && [ -z "$_port" ]; then
 		printf '"mixed_proxy":{"available":false,"reason":"field_absent","detail":"Поле mixed_proxy не найдено в %s.%s"}' "$_pkg" "$_sec"
@@ -534,8 +632,9 @@ method_ensure_mixed_proxy() {
 	fi
 
 	# --- save old state for rollback ---
-	_old_en=$(uci -q get "$_pkg.$_sec.mixed_proxy_enabled" 2>/dev/null); [ -z "$_old_en" ] && _old_en=""
-	_old_port=$(uci -q get "$_pkg.$_sec.mixed_proxy_port" 2>/dev/null)
+	_old_en=$(_sec_mixed_en "$_pkg" "$_sec"); [ -z "$_old_en" ] && _old_en=""
+	_old_port=$(_sec_mixed_port "$_pkg" "$_sec")
+	_old_srv=""; _fk2 "$_pkg" && _old_srv=$(_fk2_mixed "$_pkg" "$_sec" | cut -d'|' -f1)
 
 	# already enabled AND has a real port? report and stop (idempotent). If it's
 	# enabled but the port is empty, fall through to the auto-port apply branch so
@@ -551,7 +650,7 @@ method_ensure_mixed_proxy() {
 	# port already used by another section's mixed_proxy_port (no collisions) ---
 	_port="$_old_port"
 	if [ -z "$_port" ]; then
-		_used_ports=$(uci -q show "$_pkg" 2>/dev/null | sed -n 's/.*\.mixed_proxy_port=.\(.*\).$/\1/p')
+		_used_ports=$(_mixed_used_ports "$_pkg")
 		_port=2080
 		while :; do
 			_collision=0
@@ -570,8 +669,7 @@ method_ensure_mixed_proxy() {
 	# discard anything the bot had staged for this package. Hold the shared lock
 	# for the whole thing.
 	uci_txn_begin
-	if ! uci set "$_pkg.$_sec.mixed_proxy_enabled=1" 2>/dev/null \
-	  || ! uci set "$_pkg.$_sec.mixed_proxy_port=$_port" 2>/dev/null; then
+	if ! _sec_mixed_stage "$_pkg" "$_sec" "$_port" 1; then
 		uci -q revert "$_pkg" 2>/dev/null
 		uci_txn_end
 		printf '{"ok":false,"reason":"uci_set_failed","detail":"could not stage mixed_proxy on %s"}\n' "$_sec"; return
@@ -603,10 +701,22 @@ method_ensure_mixed_proxy() {
 	# successful commit would leave config partially restored while we claim
 	# "rolled back". _rb_ok tracks that every restore op succeeded.
 	_rb_ok=1
+	if _fk2 "$_pkg"; then
+		# Forkop 2: drop a server this call created, else put back its port and switch.
+		_new_srv=$(_fk2_mixed "$_pkg" "$_sec" | cut -d'|' -f1)
+		if [ -z "$_old_srv" ]; then
+			[ -n "$_new_srv" ] && { uci -q delete "$_pkg.$_new_srv" 2>/dev/null || _rb_ok=0; }
+		else
+			uci set "$_pkg.$_old_srv.enabled=${_old_en:-0}" 2>/dev/null || _rb_ok=0
+			if [ -n "$_old_port" ]; then uci set "$_pkg.$_old_srv.listen_port=$_old_port" 2>/dev/null || _rb_ok=0
+			else uci -q delete "$_pkg.$_old_srv.listen_port" 2>/dev/null; fi
+		fi
+	else
 	if [ -z "$_old_en" ]; then uci -q delete "$_pkg.$_sec.mixed_proxy_enabled" 2>/dev/null
 	else uci set "$_pkg.$_sec.mixed_proxy_enabled=$_old_en" 2>/dev/null || _rb_ok=0; fi
 	if [ -z "$_old_port" ]; then uci -q delete "$_pkg.$_sec.mixed_proxy_port" 2>/dev/null
 	else uci set "$_pkg.$_sec.mixed_proxy_port=$_old_port" 2>/dev/null || _rb_ok=0; fi
+	fi
 	# A delete of an absent option is a harmless no-op (may return non-zero), so
 	# it does not affect _rb_ok — only a failed set or commit is fatal.
 	if [ "$_rb_ok" = "1" ] && uci commit "$_pkg" 2>/dev/null; then
@@ -834,7 +944,7 @@ method_check_update() {
 		_v=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 		_pk=$(podkop_uci_pkg "${_v:-podkop}")
 		_psec=$(_primary_section "$_pk" 2>/dev/null)
-		[ -n "$_psec" ] && _sb_port=$(uci -q get "$_pk.$_psec.mixed_proxy_port" 2>/dev/null)
+		[ -n "$_psec" ] && _sb_port=$(_sec_mixed_port "$_pk" "$_psec")
 		if [ -n "$_sb_port" ] && [ -n "$_sb_ip" ]; then
 			_latest=$(curl -fsS --proxy "socks5h://$_sb_ip:$_sb_port" --connect-timeout 6 --max-time 12 "$_url" 2>/dev/null | head -1 | tr -d '\r\n\t ')
 			[ -n "$_latest" ] && _via="socks"
@@ -974,8 +1084,8 @@ _core_fetch() {
 	_pkg=$(podkop_uci_pkg "${_v:-podkop}")
 	_policy=$(uci -q get podkop_bot.settings.transport 2>/dev/null); [ -z "$_policy" ] && _policy="auto"
 	_sec=$(_primary_section "$_pkg")
-	if [ "$_policy" != "direct" ] && [ -n "$_sec" ] && [ "$(uci -q get "$_pkg.$_sec.mixed_proxy_enabled" 2>/dev/null)" = "1" ]; then
-		_port=$(uci -q get "$_pkg.$_sec.mixed_proxy_port" 2>/dev/null); [ -z "$_port" ] && _port="2080"
+	if [ "$_policy" != "direct" ] && [ -n "$_sec" ] && [ "$(_sec_mixed_en "$_pkg" "$_sec")" = "1" ]; then
+		_port=$(_sec_mixed_port "$_pkg" "$_sec"); [ -z "$_port" ] && _port="2080"
 		_ip=$(_resolve_proxy_ip "$_port")
 		_proxy="socks5h://$_ip:$_port"
 		if curl -q -fsSL --proxy "$_proxy" --connect-timeout 8 --max-time "$_fetch_timeout" -o "$_dest" "$_url" 2>/dev/null; then
@@ -1305,7 +1415,7 @@ _primary_section() {
 	# first section with mixed_proxy_enabled=1 (the bot's key name — NOT
 	# "mixed_proxy"), else the section named 'main', else empty.
 	for _s in $(uci -q show "$_pkg" 2>/dev/null | sed -n "s/^$_pkg\.\([^.=]*\)=section/\1/p"); do
-		[ "$(uci -q get "$_pkg.$_s.mixed_proxy_enabled" 2>/dev/null)" = "1" ] && { printf '%s' "$_s"; return; }
+		[ "$(_sec_mixed_en "$_pkg" "$_s")" = "1" ] && { printf '%s' "$_s"; return; }
 	done
 	uci -q get "$_pkg.main" >/dev/null 2>&1 && printf 'main'
 }
@@ -1375,8 +1485,8 @@ method_transport_state() {
 	_sec=$(_primary_section "$_pkg")
 	_mp_enabled="0"; _mp_port=""; _mp_endpoint=""
 	if [ -n "$_sec" ]; then
-		_mp_enabled=$(uci -q get "$_pkg.$_sec.mixed_proxy_enabled" 2>/dev/null); [ -z "$_mp_enabled" ] && _mp_enabled="0"
-		_mp_port=$(uci -q get "$_pkg.$_sec.mixed_proxy_port" 2>/dev/null); [ -z "$_mp_port" ] && _mp_port="2080"
+		_mp_enabled=$(_sec_mixed_en "$_pkg" "$_sec"); [ -z "$_mp_enabled" ] && _mp_enabled="0"
+		_mp_port=$(_sec_mixed_port "$_pkg" "$_sec"); [ -z "$_mp_port" ] && _mp_port="2080"
 		if [ "$_mp_enabled" = "1" ]; then
 			_mp_ip=$(_resolve_proxy_ip "$_mp_port")
 			_mp_endpoint="socks5h://$_mp_ip:$_mp_port"
@@ -1800,8 +1910,7 @@ method_set_tier1_port() {
 	if [ -z "$_sec" ] || ! uci -q get "$_pkg.$_sec" >/dev/null 2>&1; then
 		printf '{"ok":false,"reason":"no_section","detail":"primary section not found"}\n'; return
 	fi
-	if ! uci set "$_pkg.$_sec.mixed_proxy_port=$_clean" 2>/dev/null \
-	  || ! uci set "$_pkg.$_sec.mixed_proxy_enabled=1" 2>/dev/null; then
+	if ! _sec_mixed_stage "$_pkg" "$_sec" "$_clean" 1; then
 		uci -q revert "$_pkg" 2>/dev/null
 		printf '{"ok":false,"reason":"uci_set_failed","detail":"could not stage tier1 port on %s"}\n' "$_sec"; return
 	fi
@@ -1921,6 +2030,10 @@ _section_proxy_links() {
 	# Forkop keeps manual links in the parent selector_proxy_links even in
 	# urltest mode (URLTest itself is a separate child config). So for forkop
 	# the fallback link source is always selector_*, regardless of mode.
+	if _fk2 "$_pkg_l"; then
+		_fk2_link_uris "$_pkg_l" "$_sec_l"
+		return
+	fi
 	if [ "$_var_l" = "forkop" ]; then
 		uci -q show "$_pkg_l.$_sec_l.selector_proxy_links" 2>/dev/null | cut -d= -f2- | tr "'" ' '
 		uci -q get "$_pkg_l.$_sec_l.selector_proxy_links_text" 2>/dev/null
@@ -2044,8 +2157,8 @@ method_runtime_sections() {
 
 		[ -z "$_primary" ] && _primary="$_s"
 		_mode=$(_section_mode "$_variant" "$_pkg" "$_s")
-		_mpe=$(uci -q get "$_pkg.$_s.mixed_proxy_enabled" 2>/dev/null)
-		_port=$(uci -q get "$_pkg.$_s.mixed_proxy_port" 2>/dev/null)
+		_mpe=$(_sec_mixed_en "$_pkg" "$_s")
+		_port=$(_sec_mixed_port "$_pkg" "$_s")
 		_role="extra"; [ "$_s" = "$_primary" ] && _role="primary"
 
 		if [ "$_mpe" = "1" ] && [ -n "$_port" ]; then
@@ -2140,7 +2253,7 @@ method_podkop_update_check() {
 			else _ct=$(uci -q get "$_pkg.$_cand.connection_type" 2>/dev/null); [ -z "$_ct" ] && _ct="proxy"; fi
 			{ [ "$_ct" = "proxy" ] || [ "$_ct" = "connection" ]; } && { _psec="$_cand"; break; }
 		done
-		_sp=$(uci -q get "$_pkg.$_psec.mixed_proxy_port" 2>/dev/null)
+		_sp=$(_sec_mixed_port "$_pkg" "$_psec")
 		if [ -n "$_sp" ] && command -v curl >/dev/null 2>&1; then
 			_sip=$(_resolve_proxy_ip "$_sp")
 			_latest=$(curl -fsS --proxy "socks5h://$_sip:$_sp" --connect-timeout 4 --max-time 8 "$_api" 2>/dev/null | sed -n 's/.*"tag_name"[: ]*"\([^"]*\)".*/\1/p' | head -1)
@@ -2283,8 +2396,8 @@ method_active_probe() {
 		printf '{"ok":true,"available":false,"reason":"no_section","detail":"no valid proxy section found","action":"configure_podkop"}\n'
 		return
 	fi
-	_mp_en=$(uci -q get "$_pkg.$_sec.mixed_proxy_enabled" 2>/dev/null)
-	_port=$(uci -q get "$_pkg.$_sec.mixed_proxy_port" 2>/dev/null)
+	_mp_en=$(_sec_mixed_en "$_pkg" "$_sec")
+	_port=$(_sec_mixed_port "$_pkg" "$_sec")
 
 	# per-section cache key (roadmap 4): section + port, so main/youtube/discord
 	# never share a cache entry.
@@ -2594,7 +2707,7 @@ method_active_probe() {
 	fi
 	_proxy_name=""
 	if [ -n "$_proxies" ] && [ "$_proxies" != "null" ] && command -v jq >/dev/null 2>&1; then
-		_sel=$(printf '%s' "$_proxies" | jq -r --arg s "$_sec" '
+		_sel=$(printf '%s' "$_proxies" | jq -r --arg s "$(_sec_clash_tag "$_pkg" "$_sec")" '
 			.proxies as $p |
 			if ($p[$s] and (($p[$s].type == "Selector") or ($p[$s].type == "URLTest") or ($p[$s].type == "Fallback") or ($p[$s].type == "LoadBalance"))) then $s
 			elif $p[$s + "-out"] then ($s + "-out")

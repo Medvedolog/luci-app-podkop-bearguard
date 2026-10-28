@@ -176,7 +176,7 @@ return view.extend({
 					link('Podkop', 'https://github.com/itdoginfo/podkop', _('оригинал.')),
 					link('Podkop Plus', 'https://github.com/ushan0v/podkop-plus', _('форк с расширенными возможностями.')),
 					link('NetShift', 'https://github.com/yandexru45/netshift', _('форк со своей структурой файлов и настроек.')),
-					link('Forkop', 'https://github.com/ushan0v/forkop', _('продолжение Podkop Plus под новым именем.'))
+					link('Forkop', 'https://github.com/ushan0v/forkop', _('продолжение Podkop Plus под новым именем. Поддерживаются Forkop 1.x и Forkop 2: в Forkop 2 Mixed Proxy — это отдельный «Сервер», BearGuard и бот создают его сами.'))
 				]),
 				p(_('На вкладке «Обновление» видно версию установленного Podkop и наличие свежего выпуска. Там же его можно обновить: приложение запускает штатный установщик и показывает журнал.'))
 			]),

@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🐻 Podkop BearGuard 0.19.24
+# 🐻 Podkop BearGuard 0.20.0
 
 **LuCI-комплекс для управления podkop_bot, Podkop/Forkop, Tailscale/tsnet, WARP, аварийным транспортом и диагностикой OpenWrt**
 
-`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.19.24` · OpenWrt · LuCI · opkg / apk
+`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.20.0` · OpenWrt · LuCI · opkg / apk
 
 [![Release](https://img.shields.io/github/v/release/Medvedolog/luci-app-podkop-bearguard?style=flat-square&label=release&color=0969da)](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/Medvedolog/luci-app-podkop-bearguard/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/Medvedolog/luci-app-podkop-bearguard/actions/workflows/ci.yml)
@@ -39,7 +39,7 @@ BearGuard помогает установить, восстановить и о�
 
 - установка, восстановление, обновление и удаление `podkop_bot`;
 - настройка Telegram-бота и проверка токена;
-- автоматическое определение Podkop (включая Podkop 0.8 experimental — пакет `podkop-exp`), Podkop Plus, Forkop, Forkop X и NetShift;
+- автоматическое определение Podkop (включая Podkop 0.8 experimental — пакет `podkop-exp`), Podkop Plus, Forkop 1.x и Forkop 2, Forkop X и NetShift;
 - выбор пути к Telegram и GitHub через прямое соединение или прокси;
 - диагностика активных маршрутов, выходного IP, страны, провайдера и задержек;
 - проверка доступности популярных служб через выбранный маршрут;
@@ -232,14 +232,14 @@ Bearhole не ведёт отдельный список прокси. Он со
 **OpenWrt 25.12 и новее (apk):**
 
 ```sh
-wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.24-1/luci-app-podkop-bot-0.19.24-r1.apk
+wget -O /tmp/bearguard.apk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.20.0-1/luci-app-podkop-bot-0.20.0-r1.apk
 apk update && apk add --allow-untrusted /tmp/bearguard.apk
 ```
 
 **OpenWrt 24.10 и старее (opkg):**
 
 ```sh
-wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.19.24-1/luci-app-podkop-bot_0.19.24-r1_all.ipk
+wget -O /tmp/bearguard.ipk https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/download/0.20.0-1/luci-app-podkop-bot_0.20.0-r1_all.ipk
 opkg update && opkg install /tmp/bearguard.ipk
 ```
 
@@ -270,6 +270,8 @@ wget -qO- https://raw.githubusercontent.com/Medvedolog/luci-app-podkop-bearguard
 Приложение распознаёт несколько вариантов семейства Podkop и учитывает различия между их конфигурациями. Часть возможностей зависит от конкретного форка и версии sing-box. Для встроенного Tailscale/tsnet требуется сборка sing-box с соответствующей поддержкой.
 
 Функции, которых нет в установленной версии Podkop/Forkop или sing-box, должны отображаться как недоступные, а не включаться принудительно.
+
+Forkop 2.0 (`config_version` 2.x) поддерживается с 0.20.0. Mixed-прокси секции в нём — отдельный «Сервер» (`protocol=mixed`, маршрут в секцию): «Транспорт», «Порт tier1» и мастер настройки читают и создают такой сервер, ручные ссылки — дочерние `connection_link`, а группа секции в Clash API называется её меткой. Forkop 1.x работает как раньше.
 
 ## Связанные проекты
 

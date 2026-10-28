@@ -1,6 +1,6 @@
 #!/bin/sh
 # ==============================================================================
-# Podkop Telegram Bot v0.19.24
+# Podkop Telegram Bot v0.20.0
 # Variant-aware (original / evolution / netshift / plus / forkop), OpenWrt/BusyBox ash.
 # ==============================================================================
 
@@ -33,7 +33,7 @@ mkdir -p "$BOT_DIR"
 
 # Bot version. NOTE: also update the "Podkop Telegram Bot vX.Y.Z" line in the
 # header comment at the top of this file when bumping (it is not auto-derived).
-BOT_VERSION="0.19.24"
+BOT_VERSION="0.20.0"
 
 # ==============================================================================
 # PODKOP VARIANT AUTO-DETECTION
@@ -986,6 +986,9 @@ links_add() {
         uci add_list "${PODKOP_UCI}.${_sec}.${_key}=${_link}"
         return
     fi
+    # Forkop 2 has one list: a URLTest takes the section's links, so a copy
+    # "into the URLTest list" would only duplicate them.
+    [ "$_key" = "selector_proxy_links" ] || return 1
     # Name: the decoded #fragment, else "Node #N"; no "/", unique among all the
     # section's children (links, URLTests, fallback groups, tunnels...).
     _name=$(get_proxy_human_name_from_link "$_link" 2>/dev/null | tr '/' '-' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -1010,6 +1013,7 @@ links_del() {
         uci del_list "${PODKOP_UCI}.${_sec}.${_key}=${_link}"
         return
     fi
+    [ "$_key" = "selector_proxy_links" ] || return 1
     _id=$(fk2_links "$_sec" | awk -F'|' -v u="$_link" '{ c = $1; sub(/^[^|]*\|[^|]*\|[^|]*\|/, "") } $0 == u { print c; exit }')
     [ -n "$_id" ] && uci delete "${PODKOP_UCI}.${_id}"
 }

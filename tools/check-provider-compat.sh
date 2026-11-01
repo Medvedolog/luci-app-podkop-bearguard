@@ -17,4 +17,8 @@ grep -Fq 'embedded_core_unsupported' root/usr/libexec/rpcd/podkop_bot_tailscale
 grep -Fq 'podkop-exp) return 1' root/usr/lib/podkop_bot/tsnet-provider.sh
 grep -Fq 'podkop|forkop-x)' root/usr/lib/podkop_bot/tsnet-runtime-apply.sh
 sh tools/test-forkop2-mixed-port.sh
+# Ensure the embedded bot is the exact validated dev5 build.
+(cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256)
+grep -Fq '_group_selected_human_name()' root/usr/lib/podkop_bot/podkop_bot
+grep -Fq '_forkop_native_human_label()' root/usr/lib/podkop_bot/podkop_bot
 printf '%s\n' 'BearGuard embedded/native compatibility guards OK'

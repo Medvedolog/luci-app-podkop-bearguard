@@ -324,15 +324,17 @@ emit_mixed_proxy() {
 	fi
 	_sec=$(podkop_active_section "$_pkg")
 	if [ "$_variant" = forkop ] && _forkop_v2; then
+		_sec=$(_bg_first_section)
+		[ -n "$_sec" ] || { printf '"mixed_proxy":{"available":false,"reason":"no_connection_section","auto_create":false}'; return; }
 		_srv=$(_forkop_mixed_server "$_sec")
 		_port=$(uci -q get "forkop.$_srv.listen_port" 2>/dev/null)
 		_enabled=false
 		[ -n "$_srv" ] && [ "$(uci -q get "forkop.$_srv.enabled" 2>/dev/null)" != 0 ] && _enabled=true
 		case "$_port" in ''|*[!0-9]*) _port= ;; esac
 		if [ -n "$_port" ]; then
-			printf '"mixed_proxy":{"available":true,"enabled":%s,"section":"%s","port":%s,"read_only":true,"server":%s}' "$_enabled" "$_sec" "$_port" "$(_json_str "$_srv")"
+			printf '"mixed_proxy":{"available":true,"enabled":%s,"section":"%s","port":%s,"read_only":false,"auto_create":true,"native_server":true,"server":%s}' "$_enabled" "$_sec" "$_port" "$(_json_str "$_srv")"
 		else
-			printf '"mixed_proxy":{"available":false,"reason":"mixed_server_missing","detail":"Create a routed mixed server in Forkop LuCI"}'
+			printf '"mixed_proxy":{"available":false,"reason":"mixed_server_missing","auto_create":true,"detail":"BearGuard может создать Mixed Proxy для первой секции Forkop 2.0"}'
 		fi
 		return
 	fi
@@ -2304,8 +2306,8 @@ method_runtime_sections() {
 		_secs_json="$_secs_json$_row"
 	done
 
-	printf '{"ok":true,"available":true,"variant":"%s","uci_pkg":"%s","active_section":%s,"primary_section":%s,"sections":[%s]}\n' \
-		"$_variant" "$_pkg" "$(_json_str "$_active")" "$(_json_str "$_primary")" "$_secs_json"
+	printf '{"ok":true,"available":true,"variant":"%s","uci_pkg":"%s","forkop_v2":%s,"active_section":%s,"primary_section":%s,"sections":[%s]}\n' \
+		"$_variant" "$_pkg" "$([ "$_variant" = forkop ] && _forkop_v2 && echo true || echo false)" "$(_json_str "$_active")" "$(_json_str "$_primary")" "$_secs_json"
 }
 
 # -- podkop_update_check: check the installed Podkop/fork for a newer release.

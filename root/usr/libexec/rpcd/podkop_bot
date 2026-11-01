@@ -725,6 +725,12 @@ method_ensure_mixed_proxy() {
 	# --- auto-port: if unset, pick the first free port from 2080 up, skipping any
 	# port already used by another section's mixed_proxy_port (no collisions) ---
 	_port="$_old_port"
+	# Forkop 1.x also gets a socket-aware allocator. A configured but disabled
+	# port is not blindly reused: another service may have taken it meanwhile.
+	if [ "$_variant" = forkop ]; then
+		_port=$(_bg_pick_port "")
+		[ -n "$_port" ] || { printf '{"ok":false,"reason":"no_free_port"}\n'; return; }
+	fi
 	if [ -z "$_port" ]; then
 		_used_ports=$(uci -q show "$_pkg" 2>/dev/null | sed -n 's/.*\.mixed_proxy_port=.\(.*\).$/\1/p')
 		_port=2080

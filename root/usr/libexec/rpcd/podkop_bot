@@ -177,6 +177,131 @@ _forkop_v2_read_only() {
     return 0
 }
 
+# Forkop 2: create a routed mixed server (upstream 2.0 UCI model).
+_bg_port_used() {
+    _candidate="$1"; _skip="$2"
+    case "$_candidate" in ''|*[!0-9]*) return 0 ;; esac
+    for _item in $(uci -q show forkop 2>/dev/null | sed -n 's/^forkop\.\([^.=]*\)=server$/\1/p'); do
+        [ "$_item" = "$_skip" ] && continue
+        [ "$(uci -q get "forkop.$_item.listen_port" 2>/dev/null)" != "$_candidate" ] || return 0
+    done
+    for _pkg in forkop podkop netshift podkop-plus; do
+        uci -q show "$_pkg" 2>/dev/null | grep -Eq "\.mixed_proxy_port='?$_candidate'?$" && return 0
+    done
+    _hex=$(printf '%04X' "$_candidate")
+    for _file in /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6; do
+        [ -r "$_file" ] || continue
+        awk -v p="$_hex" 'NR>1 && substr($2,length($2)-3)==p && (FILENAME ~ /udp/ || $4=="0A") {found=1;exit} END {exit !found}' "$_file" && return 0
+    done
+    return 1
+}
+_bg_pick_port() {
+    _candidate=2080
+    while [ "$_candidate" -le 2280 ]; do
+        if ! _bg_port_used "$_candidate" "$1"; then printf '%s' "$_candidate"; return; fi
+        _candidate=$((_candidate+1))
+    done
+    return 1
+}
+_bg_first_section() {
+    for _item in $(uci -q show forkop 2>/dev/null | sed -n 's/^forkop\.\([^.=]*\)=section$/\1/p'); do
+        [ "$(uci -q get "forkop.$_item.action" 2>/dev/null)" = connection ] || continue
+        [ "$(uci -q get "forkop.$_item.enabled" 2>/dev/null)" != 0 ] || continue
+        printf '%s' "$_item"; return
+    done
+    return 1
+}
+_bg_ensure_forkop2_mixed() {
+    _sec="$1"
+    case "$_sec" in ''|*[!A-Za-z0-9_-]*)
+        printf '{"ok":false,"reason":"no_section","detail":"Нет подходящей секции Forkop"}\n'; return ;;
+    esac
+    [ "$(uci -q get "forkop.$_sec" 2>/dev/null)" = section ] &&
+    [ "$(uci -q get "forkop.$_sec.action" 2>/dev/null)" = connection ] &&
+    [ "$(uci -q get "forkop.$_sec.enabled" 2>/dev/null)" != 0 ] || {
+        printf '{"ok":false,"reason":"not_proxy_section","detail":"Секция должна быть включена и иметь action=connection"}\n'; return;
+    }
+    uci_txn_begin || { printf '{"ok":false,"reason":"uci_busy"}\n'; return; }
+    _existing=$(_forkop_mixed_server "$_sec")
+    _created=false; _reenabled=false
+    if [ -n "$_existing" ]; then
+        _port=$(uci -q get "forkop.$_existing.listen_port" 2>/dev/null)
+        if [ "$(uci -q get "forkop.$_existing.enabled" 2>/dev/null)" != 0 ]; then
+            case "$_port" in ''|*[!0-9]*) uci_txn_end; printf '{"ok":false,"reason":"invalid_existing_port"}\n'; return ;; esac
+            uci_txn_end
+            jq -cn --arg section "$_sec" --arg server "$_existing" --argjson port "$_port" \
+                '{ok:true,already_enabled:true,section:$section,server:$server,port:$port}'
+            return
+        fi
+        _reenabled=true
+        if _bg_port_used "$_port" "$_existing"; then _port=$(_bg_pick_port "$_existing"); fi
+    else
+        _port=$(_bg_pick_port "")
+    fi
+    [ -n "$_port" ] || { uci_txn_end; printf '{"ok":false,"reason":"no_free_port","detail":"Нет свободного порта 2080–2280"}\n'; return; }
+    _backup="/tmp/forkop-bearguard-mixed.$.bak"
+    cp -p /etc/config/forkop "$_backup" 2>/dev/null || { uci_txn_end; printf '{"ok":false,"reason":"backup_failed"}\n'; return; }
+    _ok=1
+    if [ -n "$_existing" ]; then
+        _server="$_existing"
+        uci -q set "forkop.$_server.enabled=1" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.listen_port=$_port" || _ok=0
+    else
+        _name=$(printf 'bg_%s_mixed' "$_sec" | cut -c 1-48)
+        _server="$_name"; _num=1
+        while uci -q get "forkop.$_server" >/dev/null 2>&1; do
+            _server="$_name""_""$_num"; _num=$((_num+1))
+            [ "$_num" -le 99 ] || break
+        done
+        [ "$_num" -le 99 ] || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server=server" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.label=BearGuard Mixed Proxy" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.enabled=1" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.protocol=mixed" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.listen=::" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.listen_port=$_port" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.open_firewall=0" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.routing_mode=section" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.routing_section=$_sec" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.mixed_auth_enabled=0" || _ok=0
+        _created=true
+    fi
+    if [ "$_ok" != 1 ] || ! uci -q commit forkop; then
+        cp -p "$_backup" /etc/config/forkop 2>/dev/null || true
+        uci -q revert forkop >/dev/null 2>&1 || true
+        rm -f "$_backup"; uci_txn_end
+        printf '{"ok":false,"reason":"uci_write_failed","rolled_back":true}\n'; return
+    fi
+    _reload=1
+    if [ -x /etc/init.d/forkop ]; then
+        if command -v timeout >/dev/null 2>&1; then
+            timeout 60 /etc/init.d/forkop reload >/dev/null 2>&1 || _reload=0
+        else
+            /etc/init.d/forkop reload >/dev/null 2>&1 || _reload=0
+        fi
+    else _reload=0; fi
+    if [ "$_reload" != 1 ]; then
+        _restored=true
+        cp -p "$_backup" /etc/config/forkop 2>/dev/null || _restored=false
+        uci -q revert forkop >/dev/null 2>&1 || true
+        [ "$_restored" != true ] || /etc/init.d/forkop reload >/dev/null 2>&1 || true
+        rm -f "$_backup"; uci_txn_end
+        jq -cn --argjson rolled_back "$_restored" '{ok:false,reason:"reload_failed",rolled_back:$rolled_back}'
+        return
+    fi
+    rm -f "$_backup" "$_STATUS_CACHE" 2>/dev/null
+    uci_txn_end
+    _ip=$(_lan_ipv4); [ -n "$_ip" ] || _ip=127.0.0.1
+    # WAN reachability is independent: a blocked Telegram must not undo a valid UCI server.
+    _probe=unverified
+    if command -v curl >/dev/null 2>&1 &&
+       curl -sS -o /dev/null --connect-timeout 2 --max-time 5 \
+            --proxy "socks5h://127.0.0.1:$_port" https://api.telegram.org 2>/dev/null; then _probe=ok; fi
+    jq -cn --arg section "$_sec" --arg server "$_server" --arg ip "$_ip" \
+        --argjson port "$_port" --argjson created "$_created" --argjson reenabled "$_reenabled" --arg probe "$_probe" \
+        '{ok:true,section:$section,server:$server,port:$port,created:$created,reenabled:$reenabled,probe:$probe,endpoint:("socks5h://"+$ip+":"+($port|tostring))}'
+}
+
 # -- mixed_proxy sub-object as a JSON fragment (no outer braces) --------------
 emit_mixed_proxy() {
 	_variant="$1"
@@ -533,7 +658,16 @@ method_ensure_mixed_proxy() {
 		_variant=$(printf '%s' "$_st" | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	fi
 	[ -z "$_variant" ] && _variant="unknown"
-	_forkop_v2_read_only "$_variant" && return
+	if [ "$_variant" = forkop ] && _forkop_v2; then
+		_sec="$_req_sec"
+		[ -n "$_sec" ] || _sec=$(_bg_first_section)
+		_bg_ensure_forkop2_mixed "$_sec"
+		return
+	fi
+	if [ "$_variant" != forkop ] && [ "$_variant" != plus ] && [ "$_variant" != unknown ]; then
+		printf '{"ok":false,"reason":"manual_enable_required","detail":"Включите Mixed Proxy в настройках первой прокси-секции движка"}\n'
+		return
+	fi
 	if [ "$_variant" = "unknown" ]; then
 		printf '{"ok":false,"reason":"variant_unknown","detail":"podkop variant not detected"}\n'; return
 	fi

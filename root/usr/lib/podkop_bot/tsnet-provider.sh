@@ -32,12 +32,12 @@ tsnet_provider() {
     # Experimental 0.8 has a Go supervisor with an embedded sing-box core.
     # Its UCI namespace and binary name are inherited from stable Podkop.
     if _ts_pkg_installed podkop-exp; then
-        printf '%s\\n' podkop-exp
+        printf '%s\n' podkop-exp
         return 0
     fi
     if [ -f /etc/config/forkop ]; then
         if tsnet_forkop_v2; then
-            printf '%s\\n' forkop-native
+            printf '%s\n' forkop-native
             return 0
         fi
         # Forkop X has a dedicated migration helper. Check the positive marker
@@ -161,7 +161,7 @@ tsnet_version_hint() {
                 elif command -v apk >/dev/null 2>&1; then
                     _ver=$(apk info -v "$_pkg" 2>/dev/null | sed -n "s/^$_pkg-//p" | head -n 1)
                 fi
-                [ -z "${_ver:-}" ] || { printf '%s %s\\n' "$_pkg" "$_ver"; return 0; }
+                [ -z "${_ver:-}" ] || { printf '%s %s\n' "$_pkg" "$_ver"; return 0; }
             fi
             ;;
     esac

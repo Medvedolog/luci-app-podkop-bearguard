@@ -271,7 +271,7 @@ grep -Fq "curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8" "$RUNTIME_R
 grep -Fq 'Selector|URLTest|Fallback|LoadBalance)' "$RUNTIME_RPC" || {
     echo "Runtime: selector-like Clash group coverage regressed" >&2; fail=1
 }
-grep -Fq "curl -q --noproxy '*' -s" "$BOT_SRC" || {
+{ grep -Fq "curl -q --noproxy '*' -s" "$BOT_SRC" || grep -Fq "curl -q --noproxy '*' -fsS" "$BOT_SRC"; } || {
     echo "Bot: local Clash API must bypass Bearhole/curlrc" >&2; fail=1
 }
 RESCUE_RPC="root/usr/libexec/rpcd/podkop_bot_warpscout_rescue"

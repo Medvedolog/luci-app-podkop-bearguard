@@ -3019,6 +3019,121 @@ method_active_probe() {
 	printf '%s\n' "$_out"
 }
 
+
+# Native read-only inventory for Forkop 2.0 and Podkop Experimental 0.8.
+# Never return raw Forkop config / UCI exports: they contain subscription
+# URLs and secret connection links. Do not mutate either routing engine.
+method_provider_inventory() {
+    if _forkop_v2; then
+        command -v ubus >/dev/null 2>&1 || { printf '{"ok":false,"available":false,"reason":"ubus_missing"}\n'; return; }
+        local _config _state _state_summary
+        _config=$(ubus -t 4 call forkop config '{}' 2>/dev/null) || {
+            printf '{"ok":false,"available":false,"backend":"forkop2","reason":"forkop_ubus_unavailable"}\n'; return;
+        }
+        _state=$(ubus -t 4 call forkop state '{}' 2>/dev/null) || _state='{}'
+        _state_summary=$(printf '%s' "$_state" | jq -c '{revision:(.revision // 0),running:(.service.forkop.running // 0),enabled:(.service.forkop.enabled // 0),core_running:(.service.sing_box.running // 0)}' 2>/dev/null)
+        [ -n "$_state_summary" ] || _state_summary='{}'
+        printf '%s' "$_config" | jq -ce --argjson state "$_state_summary" '
+          (.sections // []) as $all |
+          {ok:true,available:true,backend:"forkop2",state:$state,
+           sections:[ $all[] | select(.".type" == "section") | . as $p |
+             {id:$p[".name"],label:($p.label // $p[".name"]),
+              action:($p.action // "connection"),enabled:($p.enabled // "1"),
+              sources:{
+                 links:([$all[]|select(.".type"=="connection_link" and .section==$p[".name"])]|length),
+                 subscriptions:([$all[]|select(.".type"=="subscription_url" and .section==$p[".name"])]|length),
+                 urltests:([$all[]|select(.".type"=="urltest" and .section==$p[".name"])]|length),
+                 fallbacks:([$all[]|select(.".type"=="fallback_group" and .section==$p[".name"])]|length),
+                 tunnels:([$all[]|select(.".type"=="tunnel" and .section==$p[".name"])]|length),
+                 mixed:([$all[]|select(.".type"=="server" and .protocol=="mixed" and .routing_mode=="section" and .routing_section==$p[".name"])]|length)
+              }} ]}
+        ' 2>/dev/null || printf '{"ok":false,"available":false,"backend":"forkop2","reason":"invalid_ubus_config"}\n'
+        return
+    fi
+    case "$(uci -q get podkop.settings.config_version 2>/dev/null)" in 2|2.*) ;; *) printf '{"ok":false,"available":false,"reason":"not_modern_provider"}\n'; return ;; esac
+    if command -v apk >/dev/null 2>&1 && apk info -e podkop-exp >/dev/null 2>&1; then
+        :
+    elif command -v opkg >/dev/null 2>&1 && opkg status podkop-exp 2>/dev/null | grep -q '^Status: .* installed
+		echo '{ "list": {}, "status": {}, "service": { "action": "start_bot" }, "installer": { "action": "status", "config_path": "x", "config_inline": "x" }, "logs": { "offset": 0 }, "bot_logs": { "lines": 200 }, "resources": {}, "transport_state": {}, "transport_probe": { "target": "x" }, "set_transport_policy": { "policy": "x" }, "fallback_crud": { "op": "x", "value": "x", "index": 0 }, "list_interfaces": {}, "set_uci_field": { "field": "x", "value": "x" }, "set_tier1_port": { "value": "x" }, "active_probe": { "cached": "x", "section": "x", "proxy": "x", "label": "x" }, "runtime_sections": {}, "provider_inventory": {}, "podkop_update_check": {}, "app_info": {}, "singbox_info": {}, "check_update": { "force": "x" }, "luci_update_check": { "force": "x" }, "luci_update_run": {}, "luci_update_log": { "offset": "x" }, "podkop_update_run": {}, "podkop_update_log": { "offset": 0 }, "update_upload": {}, "update_paste": { "body": "x" }, "test_telegram": { "token": "x" }, "ensure_mixed_proxy": { "section": "x" }, "test_github": {} }'
+		;;
+	call)
+		case "$2" in
+			status)               method_status ;;
+			service)              method_service ;;
+			installer)            method_installer ;;
+			logs)                 method_logs ;;
+			bot_logs)             method_bot_logs ;;
+			resources)            method_resources ;;
+			transport_state)      method_transport_state ;;
+			transport_probe)      method_transport_probe ;;
+			set_transport_policy) method_set_transport_policy ;;
+			fallback_crud)        method_fallback_crud ;;
+			list_interfaces)      method_list_interfaces ;;
+			set_uci_field)        method_set_uci_field ;;
+			set_tier1_port)       method_set_tier1_port ;;
+			active_probe)         method_active_probe ;;
+			runtime_sections)     method_runtime_sections ;;
+			provider_inventory)   method_provider_inventory ;;
+			podkop_update_check)  method_podkop_update_check ;;
+			app_info)             method_app_info ;;
+			singbox_info)         method_singbox_info ;;
+			check_update)         method_check_update ;;
+			luci_update_check)    method_luci_update_check ;;
+			luci_update_run)      method_luci_update_run ;;
+			luci_update_log)      method_luci_update_log ;;
+			podkop_update_run)    method_podkop_update_run ;;
+			podkop_update_log)    method_podkop_update_log ;;
+			update_upload)        method_update_upload ;;
+			update_paste)         method_update_paste ;;
+			test_telegram)        method_test_telegram ;;
+			ensure_mixed_proxy)   method_ensure_mixed_proxy ;;
+			test_github)          method_test_github ;;
+			*) echo '{"error":"unknown method"}'; exit 1 ;;
+		esac
+		;;
+	*)
+		echo '{"error":"unknown command"}'; exit 1
+		;;
+esac
+; then
+        :
+    else
+        printf '{"ok":false,"available":false,"reason":"podkop_exp_not_installed"}\n'; return
+    fi
+    uci -q show podkop 2>/dev/null | awk -F= '
+       {key=$1; sub(/^podkop\./,"",key); value=$2
+        for(i=3;i<=NF;i++)value=value "=" $i
+        gsub(/\047/,"",value); gsub(/[\t\r\n]/," ",value)
+        dot=index(key,".")
+        if(!dot){ ids[++n]=key; kind[key]=value }
+        else { id=substr(key,1,dot-1); opt=substr(key,dot+1)
+            if(opt=="label") label[id]=value
+            else if(opt=="enabled") enabled[id]=value
+            else if(opt=="section") owner[id]=value
+            else if(opt=="source") source[id]=value
+            else if(opt=="role") role[id]=value
+            else if(opt=="type") stype[id]=value
+        }
+       }
+       END {for(i=1;i<=n;i++){
+          id=ids[i]
+          if(kind[id]=="section") printf "section\t%s\t%s\t%s\t\t\t\n",id,label[id],enabled[id]
+          else if(kind[id]=="source") printf "source\t%s\t%s\t%s\t\t\t\n",id,label[id],stype[id]
+          else if(kind[id]=="member") printf "member\t%s\t\t\t%s\t%s\t%s\n",id,owner[id],source[id],role[id]
+       }}' | jq -Rs '
+         [split("\n")[] | select(length>0) | split("\t") |
+           {type:.[0],id:.[1],label:.[2],value:.[3],owner:.[4],source:.[5],role:.[6]}] as $all |
+         {ok:true,available:true,backend:"podkop-exp-v2",
+          sections:[$all[]|select(.type=="section")|. as $sec|
+            {id:$sec.id,label:(if $sec.label=="" then $sec.id else $sec.label end),
+             enabled:(if $sec.value=="" then "1" else $sec.value end),
+             members:[ $all[]|select(.type=="member" and .owner==$sec.id)|
+                . as $m|{source:$m.source,role:(if $m.role=="" then "server" else $m.role end),
+                source_type:([ $all[]|select(.type=="source" and .id==$m.source)|.value][0] // "builtin"),
+                source_label:([ $all[]|select(.type=="source" and .id==$m.source)|.label][0] // $m.source)}]}]}
+       ' 2>/dev/null || printf '{"ok":false,"available":false,"backend":"podkop-exp-v2","reason":"parse_failed"}\n'
+}
+
 case "$1" in
 	list)
 		echo '{ "list": {}, "status": {}, "service": { "action": "start_bot" }, "installer": { "action": "status", "config_path": "x", "config_inline": "x" }, "logs": { "offset": 0 }, "bot_logs": { "lines": 200 }, "resources": {}, "transport_state": {}, "transport_probe": { "target": "x" }, "set_transport_policy": { "policy": "x" }, "fallback_crud": { "op": "x", "value": "x", "index": 0 }, "list_interfaces": {}, "set_uci_field": { "field": "x", "value": "x" }, "set_tier1_port": { "value": "x" }, "active_probe": { "cached": "x", "section": "x", "proxy": "x", "label": "x" }, "runtime_sections": {}, "podkop_update_check": {}, "app_info": {}, "singbox_info": {}, "check_update": { "force": "x" }, "luci_update_check": { "force": "x" }, "luci_update_run": {}, "luci_update_log": { "offset": "x" }, "podkop_update_run": {}, "podkop_update_log": { "offset": 0 }, "update_upload": {}, "update_paste": { "body": "x" }, "test_telegram": { "token": "x" }, "ensure_mixed_proxy": { "section": "x" }, "test_github": {} }'

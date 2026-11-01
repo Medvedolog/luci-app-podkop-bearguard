@@ -153,6 +153,30 @@ podkop_active_section() {
 	printf '%s' "$_sec"
 }
 
+# Forkop 2.0 migrated per-section mixed_proxy_* into routed mixed servers.
+# Read the new model; writes remain disabled until there is a native adapter.
+_forkop_v2() {
+    case "$(uci -q get forkop.settings.config_version 2>/dev/null)" in 2.*) return 0 ;; esac
+    [ -r /usr/share/sing-box-forkop/variant ]
+}
+_forkop_mixed_server() {
+    _owner="$1"
+    uci -q show forkop 2>/dev/null |
+        sed -n 's/^forkop\.\([^.=]*\)=server$/\1/p' |
+        while IFS= read -r _srv; do
+            [ "$(uci -q get "forkop.$_srv.protocol" 2>/dev/null)" = mixed ] || continue
+            [ "$(uci -q get "forkop.$_srv.routing_mode" 2>/dev/null)" = section ] || continue
+            [ "$(uci -q get "forkop.$_srv.routing_section" 2>/dev/null)" = "$_owner" ] || continue
+            printf '%s\n' "$_srv"
+            break
+        done
+}
+_forkop_v2_read_only() {
+    [ "$1" = forkop ] && _forkop_v2 || return 1
+    printf '{"ok":false,"reason":"forkop_v2_mixed_server","detail":"Forkop 2 uses a routed mixed server. Configure it in Forkop LuCI."}\n'
+    return 0
+}
+
 # -- mixed_proxy sub-object as a JSON fragment (no outer braces) --------------
 emit_mixed_proxy() {
 	_variant="$1"
@@ -174,6 +198,19 @@ emit_mixed_proxy() {
 		return
 	fi
 	_sec=$(podkop_active_section "$_pkg")
+	if [ "$_variant" = forkop ] && _forkop_v2; then
+		_srv=$(_forkop_mixed_server "$_sec")
+		_port=$(uci -q get "forkop.$_srv.listen_port" 2>/dev/null)
+		_enabled=false
+		[ -n "$_srv" ] && [ "$(uci -q get "forkop.$_srv.enabled" 2>/dev/null)" != 0 ] && _enabled=true
+		case "$_port" in ''|*[!0-9]*) _port= ;; esac
+		if [ -n "$_port" ]; then
+			printf '"mixed_proxy":{"available":true,"enabled":%s,"section":"%s","port":%s,"read_only":true,"server":%s}' "$_enabled" "$_sec" "$_port" "$(_json_str "$_srv")"
+		else
+			printf '"mixed_proxy":{"available":false,"reason":"mixed_server_missing","detail":"Create a routed mixed server in Forkop LuCI"}'
+		fi
+		return
+	fi
 	_en=$(uci -q get "${_pkg}.${_sec}.mixed_proxy_enabled" 2>/dev/null)
 	_port=$(uci -q get "${_pkg}.${_sec}.mixed_proxy_port" 2>/dev/null)
 
@@ -496,6 +533,7 @@ method_ensure_mixed_proxy() {
 		_variant=$(printf '%s' "$_st" | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	fi
 	[ -z "$_variant" ] && _variant="unknown"
+	_forkop_v2_read_only "$_variant" && return
 	if [ "$_variant" = "unknown" ]; then
 		printf '{"ok":false,"reason":"variant_unknown","detail":"podkop variant not detected"}\n'; return
 	fi
@@ -1328,6 +1366,11 @@ _wan_if() {
 # mixed_proxy_port, default 2080.
 _primary_section() {
 	_pkg="$1"
+	if [ "$_pkg" = forkop ] && _forkop_v2; then
+		for _candidate in $(uci -q show forkop 2>/dev/null | sed -n 's/^forkop\.\([^.=]*\)=section$/\1/p'); do
+			[ -z "$(_forkop_mixed_server "$_candidate")" ] || { printf '%s' "$_candidate"; return; }
+		done
+	fi
 	# first section with mixed_proxy_enabled=1 (the bot's key name — NOT
 	# "mixed_proxy"), else the section named 'main', else empty.
 	for _s in $(uci -q show "$_pkg" 2>/dev/null | sed -n "s/^$_pkg\.\([^.=]*\)=section/\1/p"); do
@@ -1400,7 +1443,18 @@ method_transport_state() {
 	# --- tier1: primary mixed_proxy ---
 	_sec=$(_primary_section "$_pkg")
 	_mp_enabled="0"; _mp_port=""; _mp_endpoint=""
-	if [ -n "$_sec" ]; then
+	if [ "$_variant" = forkop ] && _forkop_v2 && [ -n "$_sec" ]; then
+		_t1srv=$(_forkop_mixed_server "$_sec")
+		if [ -n "$_t1srv" ] && [ "$(uci -q get "forkop.$_t1srv.enabled" 2>/dev/null)" != 0 ]; then
+			_mp_enabled="1"
+			_mp_port=$(uci -q get "forkop.$_t1srv.listen_port" 2>/dev/null)
+			case "$_mp_port" in ''|*[!0-9]*) _mp_enabled=0; _mp_port= ;; esac
+			if [ "$_mp_enabled" = 1 ]; then
+				_mp_ip=$(_resolve_proxy_ip "$_mp_port")
+				_mp_endpoint="socks5h://$_mp_ip:$_mp_port"
+			fi
+		fi
+	elif [ -n "$_sec" ]; then
 		_mp_enabled=$(uci -q get "$_pkg.$_sec.mixed_proxy_enabled" 2>/dev/null); [ -z "$_mp_enabled" ] && _mp_enabled="0"
 		_mp_port=$(uci -q get "$_pkg.$_sec.mixed_proxy_port" 2>/dev/null); [ -z "$_mp_port" ] && _mp_port="2080"
 		if [ "$_mp_enabled" = "1" ]; then
@@ -1820,6 +1874,8 @@ method_list_interfaces() {
 # this is the one Mixed-Proxy parameter we already manage for the bot's sake.
 method_set_tier1_port() {
 	_read_input
+	_tp_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
+	_forkop_v2_read_only "$_tp_variant" && return
 	_val=$(_field value)
 	_clean=$(printf '%s' "$_val" | tr -d '\r\n' | sed 's/[[:space:]]//g')
 	if ! printf '%s' "$_clean" | grep -qE '^[0-9]+$' || ! _valid_port "$_clean"; then

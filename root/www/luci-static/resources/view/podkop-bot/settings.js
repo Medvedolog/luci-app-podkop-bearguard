@@ -47,7 +47,7 @@ function mixedProxySettings() {
 				blocks.push(E('p',{'style':'color:#e8a33d;'},_('Mixed Proxy выключен или не найден.')));
 				if(auto) {
 					blocks.push(E('p',{},v==='forkop'
-						?_('Forkop: создать Mixed Proxy для первой включённой секции connection. Для Forkop 2.0 BearGuard создаёт отдельный сервер, проверяя 2080 и выбирая свободный порт. Для Forkop 1.x используется штатная настройка секции.')
+						?_('Forkop: создать Mixed Proxy для первой включённой секции connection. Для Forkop 2.0 BearGuard создаёт отдельный сервер, проверяя 2080 и выбирая свободный порт. Для Forkop 1.x используется штатная настройка секции. Новый Forkop 2.0 Mixed Proxy без пароля доступен из LAN, но не открывает порт в WAN.')
 						:_('Podkop Plus: Mixed Proxy включается в основной секции.')));
 					var result=E('span',{'style':'margin-left:.6em;'});
 					blocks.push(E('div',{},[

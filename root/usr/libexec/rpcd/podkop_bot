@@ -181,6 +181,7 @@ _forkop_v2_read_only() {
 _bg_port_used() {
     _candidate="$1"; _skip="$2"
     case "$_candidate" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$_candidate" -ge 1 ] 2>/dev/null && [ "$_candidate" -le 65535 ] 2>/dev/null || return 0
     for _item in $(uci -q show forkop 2>/dev/null | sed -n 's/^forkop\.\([^.=]*\)=server$/\1/p'); do
         [ "$_item" = "$_skip" ] && continue
         [ "$(uci -q get "forkop.$_item.listen_port" 2>/dev/null)" != "$_candidate" ] || return 0
@@ -228,6 +229,9 @@ _bg_ensure_forkop2_mixed() {
         _port=$(uci -q get "forkop.$_existing.listen_port" 2>/dev/null)
         if [ "$(uci -q get "forkop.$_existing.enabled" 2>/dev/null)" != 0 ]; then
             case "$_port" in ''|*[!0-9]*) uci_txn_end; printf '{"ok":false,"reason":"invalid_existing_port"}\n'; return ;; esac
+            [ "$_port" -ge 1 ] 2>/dev/null && [ "$_port" -le 65535 ] 2>/dev/null || {
+                uci_txn_end; printf '{"ok":false,"reason":"invalid_existing_port"}\n'; return;
+            }
             uci_txn_end
             jq -cn --arg section "$_sec" --arg server "$_existing" --argjson port "$_port" \
                 '{ok:true,already_enabled:true,section:$section,server:$server,port:$port}'

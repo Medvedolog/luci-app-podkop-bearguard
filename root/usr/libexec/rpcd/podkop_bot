@@ -3053,49 +3053,7 @@ method_provider_inventory() {
     case "$(uci -q get podkop.settings.config_version 2>/dev/null)" in 2|2.*) ;; *) printf '{"ok":false,"available":false,"reason":"not_modern_provider"}\n'; return ;; esac
     if command -v apk >/dev/null 2>&1 && apk info -e podkop-exp >/dev/null 2>&1; then
         :
-    elif command -v opkg >/dev/null 2>&1 && opkg status podkop-exp 2>/dev/null | grep -q '^Status: .* installed
-		echo '{ "list": {}, "status": {}, "service": { "action": "start_bot" }, "installer": { "action": "status", "config_path": "x", "config_inline": "x" }, "logs": { "offset": 0 }, "bot_logs": { "lines": 200 }, "resources": {}, "transport_state": {}, "transport_probe": { "target": "x" }, "set_transport_policy": { "policy": "x" }, "fallback_crud": { "op": "x", "value": "x", "index": 0 }, "list_interfaces": {}, "set_uci_field": { "field": "x", "value": "x" }, "set_tier1_port": { "value": "x" }, "active_probe": { "cached": "x", "section": "x", "proxy": "x", "label": "x" }, "runtime_sections": {}, "provider_inventory": {}, "podkop_update_check": {}, "app_info": {}, "singbox_info": {}, "check_update": { "force": "x" }, "luci_update_check": { "force": "x" }, "luci_update_run": {}, "luci_update_log": { "offset": "x" }, "podkop_update_run": {}, "podkop_update_log": { "offset": 0 }, "update_upload": {}, "update_paste": { "body": "x" }, "test_telegram": { "token": "x" }, "ensure_mixed_proxy": { "section": "x" }, "test_github": {} }'
-		;;
-	call)
-		case "$2" in
-			status)               method_status ;;
-			service)              method_service ;;
-			installer)            method_installer ;;
-			logs)                 method_logs ;;
-			bot_logs)             method_bot_logs ;;
-			resources)            method_resources ;;
-			transport_state)      method_transport_state ;;
-			transport_probe)      method_transport_probe ;;
-			set_transport_policy) method_set_transport_policy ;;
-			fallback_crud)        method_fallback_crud ;;
-			list_interfaces)      method_list_interfaces ;;
-			set_uci_field)        method_set_uci_field ;;
-			set_tier1_port)       method_set_tier1_port ;;
-			active_probe)         method_active_probe ;;
-			runtime_sections)     method_runtime_sections ;;
-			provider_inventory)   method_provider_inventory ;;
-			podkop_update_check)  method_podkop_update_check ;;
-			app_info)             method_app_info ;;
-			singbox_info)         method_singbox_info ;;
-			check_update)         method_check_update ;;
-			luci_update_check)    method_luci_update_check ;;
-			luci_update_run)      method_luci_update_run ;;
-			luci_update_log)      method_luci_update_log ;;
-			podkop_update_run)    method_podkop_update_run ;;
-			podkop_update_log)    method_podkop_update_log ;;
-			update_upload)        method_update_upload ;;
-			update_paste)         method_update_paste ;;
-			test_telegram)        method_test_telegram ;;
-			ensure_mixed_proxy)   method_ensure_mixed_proxy ;;
-			test_github)          method_test_github ;;
-			*) echo '{"error":"unknown method"}'; exit 1 ;;
-		esac
-		;;
-	*)
-		echo '{"error":"unknown command"}'; exit 1
-		;;
-esac
-; then
+    elif command -v opkg >/dev/null 2>&1 && opkg status podkop-exp 2>/dev/null | grep -q '^Status: .* installed$'; then
         :
     else
         printf '{"ok":false,"available":false,"reason":"podkop_exp_not_installed"}\n'; return
@@ -3136,7 +3094,7 @@ esac
 
 case "$1" in
 	list)
-		echo '{ "list": {}, "status": {}, "service": { "action": "start_bot" }, "installer": { "action": "status", "config_path": "x", "config_inline": "x" }, "logs": { "offset": 0 }, "bot_logs": { "lines": 200 }, "resources": {}, "transport_state": {}, "transport_probe": { "target": "x" }, "set_transport_policy": { "policy": "x" }, "fallback_crud": { "op": "x", "value": "x", "index": 0 }, "list_interfaces": {}, "set_uci_field": { "field": "x", "value": "x" }, "set_tier1_port": { "value": "x" }, "active_probe": { "cached": "x", "section": "x", "proxy": "x", "label": "x" }, "runtime_sections": {}, "podkop_update_check": {}, "app_info": {}, "singbox_info": {}, "check_update": { "force": "x" }, "luci_update_check": { "force": "x" }, "luci_update_run": {}, "luci_update_log": { "offset": "x" }, "podkop_update_run": {}, "podkop_update_log": { "offset": 0 }, "update_upload": {}, "update_paste": { "body": "x" }, "test_telegram": { "token": "x" }, "ensure_mixed_proxy": { "section": "x" }, "test_github": {} }'
+		echo '{ "list": {}, "status": {}, "service": { "action": "start_bot" }, "installer": { "action": "status", "config_path": "x", "config_inline": "x" }, "logs": { "offset": 0 }, "bot_logs": { "lines": 200 }, "resources": {}, "transport_state": {}, "transport_probe": { "target": "x" }, "set_transport_policy": { "policy": "x" }, "fallback_crud": { "op": "x", "value": "x", "index": 0 }, "list_interfaces": {}, "set_uci_field": { "field": "x", "value": "x" }, "set_tier1_port": { "value": "x" }, "active_probe": { "cached": "x", "section": "x", "proxy": "x", "label": "x" }, "runtime_sections": {}, "provider_inventory": {}, "podkop_update_check": {}, "app_info": {}, "singbox_info": {}, "check_update": { "force": "x" }, "luci_update_check": { "force": "x" }, "luci_update_run": {}, "luci_update_log": { "offset": "x" }, "podkop_update_run": {}, "podkop_update_log": { "offset": 0 }, "update_upload": {}, "update_paste": { "body": "x" }, "test_telegram": { "token": "x" }, "ensure_mixed_proxy": { "section": "x" }, "test_github": {} }'
 		;;
 	call)
 		case "$2" in
@@ -3155,6 +3113,7 @@ case "$1" in
 			set_tier1_port)       method_set_tier1_port ;;
 			active_probe)         method_active_probe ;;
 			runtime_sections)     method_runtime_sections ;;
+			provider_inventory)   method_provider_inventory ;;
 			podkop_update_check)  method_podkop_update_check ;;
 			app_info)             method_app_info ;;
 			singbox_info)         method_singbox_info ;;

@@ -2145,6 +2145,14 @@ method_runtime_sections() {
 		_mode=$(_section_mode "$_variant" "$_pkg" "$_s")
 		_mpe=$(uci -q get "$_pkg.$_s.mixed_proxy_enabled" 2>/dev/null)
 		_port=$(uci -q get "$_pkg.$_s.mixed_proxy_port" 2>/dev/null)
+		if [ "$_variant" = forkop ] && _forkop_v2; then
+			_mpe=0; _port=
+			_server=$(_forkop_mixed_server "$_s")
+			if [ -n "$_server" ] && [ "$(uci -q get "forkop.$_server.enabled" 2>/dev/null)" != 0 ]; then
+				_port=$(uci -q get "forkop.$_server.listen_port" 2>/dev/null)
+				case "$_port" in ''|*[!0-9]*) _port= ;; *) _mpe=1 ;; esac
+			fi
+		fi
 		_role="extra"; [ "$_s" = "$_primary" ] && _role="primary"
 
 		if [ "$_mpe" = "1" ] && [ -n "$_port" ]; then

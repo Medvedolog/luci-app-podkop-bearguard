@@ -708,7 +708,7 @@ method_bot_logs() {
 # available/total. Read-only and cheap, safe to poll every few seconds.
 method_resources() {
 	# For podkop-exp the Go daemon embeds sing-box; it is the dataplane process.
-	_rs_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\\([^"]*\\)".*/\\1/p')
+	_rs_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	# sing-box: pidof may return several PIDs (forks) — sum their RSS.
 	if [ "$_rs_variant" = podkop-exp ]; then
 		_sb_pids=$(pidof podkop 2>/dev/null)
@@ -1075,7 +1075,7 @@ method_podkop_update_run() {
 	# consent. Do not run it unattended from an RPC call.
 	if [ "$_repo_variant" = podkop-exp ]; then
 		rm -rf "$_lock" 2>/dev/null
-		printf '{"ok":false,"reason":"manual_update_required","detail":"Podkop Experimental must be updated interactively over SSH"}\\n'
+		printf '{"ok":false,"reason":"manual_update_required","detail":"Podkop Experimental must be updated interactively over SSH"}\n'
 		return
 	fi
 	_repo=$(_podkop_repo_for "$_repo_variant")
@@ -1514,7 +1514,7 @@ method_app_info() {
 method_singbox_info() {
 	_ver=""; _flavour="standard"; _pkgname=""
 	# Resolve the true owning package before inspecting an unrelated sing-box.
-	_sb_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\\([^"]*\\)".*/\\1/p')
+	_sb_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	if [ "$_sb_variant" = podkop-exp ]; then
 		_ver=$(opkg status podkop-exp 2>/dev/null | sed -n 's/^Version: //p' | head -n 1)
 		[ -n "$_ver" ] || _ver=$(apk info -v podkop-exp 2>/dev/null | sed -n 's/^podkop-exp-//p' | head -n 1)

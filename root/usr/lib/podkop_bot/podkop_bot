@@ -871,6 +871,47 @@ forkop_child_counts() {
     '
 }
 
+# Forkop 2: catalog child sources without reading out secret values.
+forkop_v2_section_catalog() {
+    _forkop_v2 || return 1
+    uci -q show "$PODKOP_UCI" 2>/dev/null | awk -F= -v p="$PODKOP_UCI." '
+        {
+            k=$1
+            sub("^" p, "", k)
+            v=$2
+            for (z=3;z<=NF;z++) v=v "=" $z
+            gsub(/\047/,"",v)
+            dot=index(k,".")
+            if (dot==0) {order[++n]=k;typ[k]=v}
+            else {
+                sec=substr(k,1,dot-1); opt=substr(k,dot+1)
+                if (opt=="section") owner[sec]=v
+                if (opt=="action") act[sec]=v
+                if (opt=="enabled") en[sec]=v
+                if (opt=="label") lbl[sec]=v
+            }
+        }
+        END {
+            for (i=1;i<=n;i++) {
+                sec=order[i]
+                if (typ[sec]!="section") continue
+                subn=ln=utn=fbn=tn=ifn=0
+                for (j=1;j<=n;j++) {
+                    ch=order[j]
+                    if (owner[ch]!=sec) continue
+                    if (typ[ch]=="subscription_url") subn++
+                    else if (typ[ch]=="connection_link") ln++
+                    else if (typ[ch]=="urltest") utn++
+                    else if (typ[ch]=="fallback_group") fbn++
+                    else if (typ[ch]=="tunnel") tn++
+                    else if (typ[ch]=="section_interface") ifn++
+                }
+                name=lbl[sec]; gsub(/[|\r\n]/," ",name)
+                printf "%s|%s|%s|%s|%d|%d|%d|%d|%d|%d\n",sec,name,act[sec],en[sec],subn,ln,utn,fbn,tn,ifn
+            }
+        }'
+}
+
 forkop_child_count() {
     local _count
     _count=$(forkop_children_by_type_and_owner "$1" "$2" 2>/dev/null | awk 'NF { n++ } END { print n+0 }')
@@ -7436,7 +7477,7 @@ start_health_daemon() {
 _handle_sections() {
     local cmd="$1" mid="$2"
     if _forkop_v2; then
-        case "$cmd" in sections_menu|set_sec_*) ;; *) _forkop_v2_ui_guard "$mid" && return ;; esac
+        case "$cmd" in sections_menu|set_sec_*|do_set_sec_*) ;; *) _forkop_v2_ui_guard "$mid" && return ;; esac
     fi
     local sec=$(get_active_section)
 
@@ -7452,6 +7493,23 @@ _handle_sections() {
                 | grep -v '_routing$')
             rows=""
             local _sec_count=0
+            local _v2_catalog="" _v2_count=0
+            if _forkop_v2; then
+                while IFS='|' read -r _cn _cl _ca _ce _cs _ck _cu _cf _ct _ci; do
+                    [ -n "$_cn" ] || continue
+                    _v2_count=$((_v2_count + 1))
+                    [ "$_v2_count" -le 8 ] || continue
+                    _ico="$E_ON"
+                    [ "$_ce" = 0 ] && _ico="$E_OFF"
+                    [ -n "$_cl" ] || _cl="$_cn"
+                    _v2_catalog=$(printf '%s\n%s <b>%s</b> <code>%s</code> · %s\n    Подписки %s · ссылки %s · URLTest %s · Fallback %s · туннели %s · интерфейсы %s' \
+                        "$_v2_catalog" "$_ico" "$(html_escape "$_cl")" "$(html_escape "$_cn")" \
+                        "$(html_escape "$_ca")" "$_cs" "$_ck" "$_cu" "$_cf" "$_ct" "$_ci")
+                done <<FORKOP_V2_SECTIONS
+$(forkop_v2_section_catalog)
+FORKOP_V2_SECTIONS
+                [ "$_v2_count" -le 8 ] || _v2_catalog=$(printf '%s\n<i>Остальные секции доступны в LuCI.</i>' "$_v2_catalog")
+            fi
             for s in $sections; do
                 _sec_count=$((_sec_count + 1))
                 # Only inactive sections get a button (Variant C: no spinning active button)
@@ -7467,7 +7525,8 @@ ${E_WARN} <i>Секции не найдены. Конфигурация Podkop �
 EOF
 )
                 kb="{\"inline_keyboard\":[[{\"text\":\"${E_BACK} Назад\",\"callback_data\":\"main_settings_menu\"},{\"text\":\"🏠 Меню\",\"callback_data\":\"/menu\"}]]}"
-                send_or_edit "$mid" "$text" "$kb"
+                [ -z "$_v2_catalog" ] || text=$(printf '%s\n\n<b>Состав Forkop 2.0:</b>%s' "$text" "$_v2_catalog")
+            send_or_edit "$mid" "$text" "$kb"
                 return
             elif [ "$_sec_count" -eq 1 ]; then
                 # Only one section — nothing to switch to. Avoid showing an empty picker.
@@ -7480,7 +7539,8 @@ ${E_CLIP} <b>Управление секциями</b>
 EOF
 )
                 kb="{\"inline_keyboard\":[[{\"text\":\"${E_BACK} Назад\",\"callback_data\":\"main_settings_menu\"},{\"text\":\"🏠 Меню\",\"callback_data\":\"/menu\"}]]}"
-                send_or_edit "$mid" "$text" "$kb"
+                [ -z "$_v2_catalog" ] || text=$(printf '%s\n\n<b>Состав Forkop 2.0:</b>%s' "$text" "$_v2_catalog")
+            send_or_edit "$mid" "$text" "$kb"
                 return
             fi
             text=$(cat <<EOF
@@ -7492,6 +7552,7 @@ ${E_CLIP} <b>Управление секциями</b>
 EOF
 )
             kb="{\"inline_keyboard\":[${rows}[{\"text\":\"${E_BACK} Назад\",\"callback_data\":\"main_settings_menu\"},{\"text\":\"🏠 Меню\",\"callback_data\":\"/menu\"}]]}"
+            [ -z "$_v2_catalog" ] || text=$(printf '%s\n\n<b>Состав Forkop 2.0:</b>%s' "$text" "$_v2_catalog")
             send_or_edit "$mid" "$text" "$kb"
             ;;
         "do_set_sec_"*)
@@ -7769,11 +7830,11 @@ SUBURLS
                 fi
             fi
 
-            total=$(echo "$proxies" | jq -r --arg sel "$selector" '
+            total=$(echo "$proxies" | jq -r --arg sel "$selector" --argjson groups "$(_forkop_v2 && echo true || echo false)" '
                 . as $root |
                 [$root.proxies[$sel].all[]? |
-                  select(($root.proxies[.].type // "") |
-                    (. != "Selector" and . != "URLTest" and . != "Fallback" and . != "LoadBalance"))
+                  select($groups or (($root.proxies[.].type // "") |
+                    (. != "Selector" and . != "URLTest" and . != "Fallback" and . != "LoadBalance")))
                 ] | length // 0' 2>/dev/null)
 
             total_pages=$(( (total + per_page - 1) / per_page ))
@@ -7788,22 +7849,23 @@ SUBURLS
             # Resolves leaf proxy for type/delay (follows Selector->URLTest chains).
             # This replaces 4 jq forks per proxy with a single call — ~10x faster on MIPS.
             # depth counter prevents infinite recursion on cyclic A->B->A proxy references.
-            # Group nodes (URLTest/Selector/Fallback/LoadBalance) are filtered out —
-            # they are internal sing-box routing nodes, not real outbounds to display.
-            # orig_idx is the position in .all[] — used for px_view_N / ask_del_px_N callbacks.
+            # Forkop 2 groups are first-class user-visible objects, especially
+            # when a section only has URLTest/Fallback child groups. Keep their
+            # original indexes for px_view_N while showing the group's members
+            # read-only in its detail card. Older providers retain leaf-only UX.
+            # orig_idx is the position in .all[] — used for px_view_N callbacks.
             page_tsv=$(echo "$proxies" | jq -r \
                 --arg sel "$selector" \
                 --argjson s 0 \
                 --argjson e 9999 \
+                --argjson groups "$(_forkop_v2 && echo true || echo false)" \
                 '
                 . as $root |
-                $root.proxies[$sel].all | to_entries[$s:$e][] |
+                ($root.proxies[$sel].all // []) | to_entries[$s:$e][] |
                 .key as $orig_idx | .value as $name |
-                # Skip internal group nodes — not real proxies
-                select(
-                    ($root.proxies[$name].type // "") |
-                    (. != "Selector" and . != "URLTest" and . != "Fallback" and . != "LoadBalance")
-                ) |
+                # Forkop 2 presents nested groups; older providers keep leaf-only.
+                select($groups or (($root.proxies[$name].type // "") |
+                    (. != "Selector" and . != "URLTest" and . != "Fallback" and . != "LoadBalance"))) |
                 # Walk chain with depth limit (max 5 hops) to guard against cycles
                 def leaf(n; depth):
                     if depth <= 0 then n
@@ -7818,7 +7880,8 @@ SUBURLS
                 [
                     ($orig_idx | tostring),
                     $name,
-                    ($root.proxies[$lf].type // $root.proxies[$lf].adapterType // "Unknown"),
+                    (if $groups then ($root.proxies[$name].type // $root.proxies[$lf].type // "Unknown")
+                     else ($root.proxies[$lf].type // $root.proxies[$lf].adapterType // "Unknown") end),
                     (($root.proxies[$name].history[-1].delay //
                       $root.proxies[$lf].history[-1].delay // 0) | tostring)
                 ] | @tsv
@@ -7917,6 +7980,19 @@ EOF
                 kb="${kb}[{\"text\":\"${E_BOLT} Проверить задержки\",\"callback_data\":\"cmd_all_delay_test\"}],"
                 kb="${kb}[{\"text\":\"${E_ADD} Прокси\",\"callback_data\":\"cmd_proxy_add\"},{\"text\":\"${E_RST} Обновить\",\"callback_data\":\"proxy_menu_p_${page}\"}],[{\"text\":\"${E_TEST} Диагностика\",\"callback_data\":\"cmd_diagnostics\"},{\"text\":\"🏠 Меню\",\"callback_data\":\"main_menu\"}]]}"
             fi
+            # Forkop 2 has a different write schema: do not advertise
+            # legacy "add proxy" or "edit subscription" buttons that cannot
+            # safely mutate native connection_link / subscription_url records.
+            if _forkop_v2; then
+                kb=$(printf '%s' "$kb" | jq -c '
+                    .inline_keyboard |= [
+                        .[] | [ .[] |
+                          select(.callback_data != "cmd_proxy_add"
+                              and .callback_data != "cmd_edit_sub_url"
+                              and .callback_data != "do_px_auto_urltest")
+                        ] | select(length > 0)
+                    ]' 2>/dev/null)
+            fi
             local _card_title _sub_url_line=""
             # Show subscription URL(s) for subscription sections
             if section_is_subscription "$sec"; then
@@ -7978,6 +8054,9 @@ PMURLEOF
                     proxy:urltest_text)  _card_title="${E_INFO} <b>URLTest (текстовый режим)</b>" ;;
                     *)                   _card_title="${E_GLOB} <b>Прокси · Selector</b>" ;;
                 esac
+            fi
+            if _forkop_v2; then
+                _card_title="$E_GLOB <b>Прокси и группы Forkop 2.0</b> · $total"
             fi
             # NetShift selector_text/urltest_text: links live in a multiline
             # scalar (not a UCI list) — full add/delete editor in _handle_text_links.
@@ -8061,8 +8140,11 @@ EOF
 
             p_display_name=$(html_escape "$(display_proxy_name "$p_name")")
             leaf_name=$(_resolve_leaf "$p_name" "$proxies"); [ -z "$leaf_name" ] && leaf_name="$p_name"
-            p_type=$(echo "$proxies" | jq -r --arg n "$leaf_name" \
-                '.proxies[$n].type // .proxies[$n].adapterType // "Неизвестно"' 2>/dev/null)
+            if _forkop_v2; then
+                p_type=$(echo "$proxies" | jq -r --arg n "$p_name" '.proxies[$n].type // .proxies[$n].adapterType // "Неизвестно"' 2>/dev/null)
+            else
+                p_type=$(echo "$proxies" | jq -r --arg n "$leaf_name" '.proxies[$n].type // .proxies[$n].adapterType // "Неизвестно"' 2>/dev/null)
+            fi
 
             tag_idx=$(get_proxy_index_by_tag "$p_name")
             [ -n "$tag_idx" ] && raw_link=$(get_selector_link_by_index "$tag_idx")
@@ -8105,6 +8187,24 @@ ${E_GLOB} <b>Карточка прокси</b> [<code>${sec}</code>]
 EOF
 )
             [ "$leaf_name" != "$p_name" ] && text=$(printf '%s\n<b>Конечный прокси:</b> <code>%s</code>' "$text" "$leaf_name_esc")
+            if _forkop_v2; then
+                local _group_members _group_current _group_count
+                _group_members=$(printf '%s' "$proxies" | jq -r --arg n "$p_name" '
+                    .proxies[$n].all // [] | .[:12][]?' 2>/dev/null)
+                _group_count=$(printf '%s' "$proxies" | jq -r --arg n "$p_name" '(.proxies[$n].all // []) | length' 2>/dev/null)
+                _group_current=$(printf '%s' "$proxies" | jq -r --arg n "$p_name" '.proxies[$n].now // empty' 2>/dev/null)
+                if [ -n "$_group_members" ]; then
+                    text=$(printf '%s\n\n<b>Участники группы (%s):</b>' "$text" "${_group_count:-0}")
+                    while IFS= read -r _group_member; do
+                        [ -n "$_group_member" ] || continue
+                        text=$(printf '%s\n • <code>%s</code>' "$text" "$(html_escape "$_group_member")")
+                    done <<FORKOP_GROUP_MEMBERS
+$_group_members
+FORKOP_GROUP_MEMBERS
+                    [ -z "$_group_current" ] || text=$(printf '%s\n<b>Выбран:</b> <code>%s</code>' "$text" "$(html_escape "$_group_current")")
+                    [ "${_group_count:-0}" -le 12 ] 2>/dev/null || text=$(printf '%s\n<i>Показаны первые 12 участников; полный список доступен в Forkop LuCI.</i>' "$text")
+                fi
+            fi
             text=$(printf '%s\n<code>────────────────────</code>\n<b>Ссылка для подключения:</b>\n<code>%s</code>' "$text" "$(html_escape "$share_uri")")
             [ "$_pview_mode" = "proxy:urltest" ] && \
                 text=$(printf '%s\n\n<i>«Выбрать прокси» временно отключит автоматический выбор URLTest.</i>' "$text")
@@ -8141,6 +8241,11 @@ EOF
                     [{"text":$menu,"callback_data":"/menu"}]
                 ] | map(select(length > 0))
                 }')
+            if _forkop_v2; then
+                # The Forkop 2 schema is read-only here. Never offer buttons
+                # that only open an incompatible legacy mutation handler.
+                kb=$(jq -nc --arg i "$p_idx" --arg p "$ret_page" --arg test "$E_BOLT Проверить задержку" --arg back "$E_BACK Назад" --arg menu "🏠 Меню" '{inline_keyboard:[[{"text":$test,"callback_data":("test_px_"+$i)}],[{"text":$back,"callback_data":("proxy_menu_p_"+$p)}],[{"text":$menu,"callback_data":"/menu"}]]}')
+            fi
             send_or_edit "$mid" "$text" "$kb"
             ;;
 
@@ -16283,7 +16388,15 @@ EOF
             _ts_standalone_present && _ts_standalone_present_flag=1
             [ "$_ts_standalone_present_flag" = 1 ] && _ts_standalone_running && _ts_standalone_running_flag=1
 
-            local _si_total=$((_si_count + _ts_managed_present + _ts_standalone_present_flag))
+            # Forkop 2 moved native tunnels (including Tailscale) to
+            # config tunnel children, which are not inbound servers.
+            local _si_tunnels="" _si_tun_count=0
+            if _forkop_v2; then
+                _si_tunnels=$(uci -q show "$PODKOP_UCI" 2>/dev/null |
+                    sed -n "s/^$PODKOP_UCI\.\([^.=]*\)=tunnel$/\1/p")
+                for _t in $_si_tunnels; do _si_tun_count=$((_si_tun_count + 1)); done
+            fi
+            local _si_total=$((_si_count + _si_tun_count + _ts_managed_present + _ts_standalone_present_flag))
             if [ "$_si_total" -eq 0 ]; then
                 local _ts_empty_add=''
                 # Podkop Plus is intentionally observer-only: it is orphaned and
@@ -16429,6 +16542,23 @@ EOF
                     [ "$_ts_managed_enabled" = true ] && _tm_en_lbl="${E_ON} Узел включён" || _tm_en_lbl="${E_OFF} Узел выключен"
                     _ts_toggle_rows="${_ts_toggle_rows}[{\"text\":\"$(json_escape "$_tm_en_lbl")\",\"callback_data\":\"ts_e_podkop-bot-tailscale_$([ "$_ts_managed_enabled" = true ] && echo 0 || echo 1)\"}],"
                 fi
+            fi
+
+            # Read-only tunnel inventory. Never infer connectivity from UCI
+            # and never print auth tokens, server passwords or private keys.
+            if _forkop_v2; then
+                local _tun _tun_kind _tun_owner _tun_name _tun_en _tun_icon
+                for _tun in $_si_tunnels; do
+                    _tun_kind=$(uci -q get "$PODKOP_UCI.$_tun.kind" 2>/dev/null)
+                    _tun_owner=$(uci -q get "$PODKOP_UCI.$_tun.section" 2>/dev/null)
+                    _tun_name=$(uci -q get "$PODKOP_UCI.$_tun.name" 2>/dev/null)
+                    _tun_en=$(uci -q get "$PODKOP_UCI.$_tun.enabled" 2>/dev/null)
+                    _tun_icon="$E_YLW"
+                    [ "$_tun_en" = 0 ] && _tun_icon="$E_OFF"
+                    _text=$(printf '%s\n\n%s <b>Туннель %s</b> · <code>%s</code>\n    Секция: <code>%s</code> · %s\n    Состояние подключения: не проверено (UCI)' \
+                        "$_text" "$_tun_icon" "$(html_escape "$_tun_kind")" \
+                        "$(html_escape "$_tun")" "$(html_escape "$_tun_owner")" "$(html_escape "$_tun_name")")
+                done
             fi
 
             for _s in $_si_sections; do

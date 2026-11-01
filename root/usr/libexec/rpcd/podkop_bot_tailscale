@@ -44,6 +44,34 @@ valid_hostname() {
     printf '%s' "$_h" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$'
 }
 
+# Forkop >=2.0 stores Tailscale in a tunnel child, not a server section.
+# This read-only detector deliberately does not mutate the new UCI model.
+native_find_tunnel_v2() {
+    uci -q show "$UCI_PKG" 2>/dev/null |
+        sed -n "s/^${UCI_PKG}\\.\\([^.=]*\\)\\.kind='tailscale'$/\\1/p" |
+        while IFS= read -r _n; do
+            [ "$(uci -q get "${UCI_PKG}.${_n}" 2>/dev/null)" = tunnel ] || continue
+            printf '%s\\n' "$_n"
+            break
+        done
+}
+
+# Native 2.0 writes are disabled until the tunnel/parent contract is fully mapped.
+# Returning an error before UCI changes is safer than writing retired server fields.
+tailscale_write_guard() {
+    case "$_provider" in
+        podkop-exp)
+            printf '{"ok":false,"reason":"embedded_core_unsupported","detail":"Podkop Experimental requires native tunnel support"}\\n'
+            return 1 ;;
+        forkop-native)
+            if tsnet_forkop_v2; then
+                printf '{"ok":false,"reason":"forkop_v2_tunnel_model","detail":"Configure Tailscale tunnels in Forkop 2 LuCI"}\\n'
+                return 1
+            fi ;;
+    esac
+    return 0
+}
+
 native_find_section() {
     uci -q show "$UCI_PKG" 2>/dev/null | sed -n "s/^${UCI_PKG}\.\([^.=]*\)\.protocol='tailscale'$/\1/p" | head -n 1
 }
@@ -99,8 +127,19 @@ status_json() {
 
     if [ "$_provider" = forkop-native ]; then
         _integration=native
-        _section=$(native_find_section)
-        if [ -n "$_section" ]; then
+        if tsnet_forkop_v2; then
+            _section=$(native_find_tunnel_v2)
+        else
+            _section=$(native_find_section)
+        fi
+        if [ -n "$_section" ] && tsnet_forkop_v2; then
+            _configured=true
+            _owner=$(uci -q get "forkop.${_section}.section" 2>/dev/null)
+            [ -n "$_owner" ] && [ "$(uci -q get "forkop.${_owner}.enabled" 2>/dev/null)" != 0 ] && _enabled=true
+            [ "$(uci -q get "forkop.${_section}.tailscale_accept_routes" 2>/dev/null)" != 0 ] && _accept=true
+            _host=$(uci -q get "forkop.${_section}.tailscale_hostname" 2>/dev/null)
+            _url=$(uci -q get "forkop.${_section}.tailscale_control_url" 2>/dev/null)
+        elif [ -n "$_section" ]; then
             _configured=true
             [ "$(uci -q get forkop.${_section}.enabled 2>/dev/null)" = 1 ] && _enabled=true
             [ "$(uci -q get forkop.${_section}.tailscale_advertise_exit_node 2>/dev/null)" = 1 ] && _adv=true
@@ -166,7 +205,7 @@ status_json() {
         --argjson legacy_present "$_legacy_present" --arg legacy_section "$_legacy_section" \
         --argjson legacy_enabled "$_legacy_enabled" --arg legacy_host "$_legacy_host" --arg legacy_url "$_legacy_url" \
         --argjson sb "$_sb" --argjson applied "$_applied" --argjson active "$_active" --argjson peers "$_peers" --arg runtime_state "$_runtime_state" \
-        '{ok:true,provider:$provider,integration:$integration,forkop_present:($provider!="none"),tailscale_supported:$cap,singbox_version:$ver,configured:$configured,section:$section,hostname:$host,control_url:$url,enabled:$enabled,accept_routes:$accept,advertise_exit_node:$adv,registered:$registered,runtime_applied:$applied,singbox_running:$sb,active_connections:$active,active_peers:$peers,runtime_state:$runtime_state,auth_url:$auth_url,standalone_tailscale_present:$sp,standalone_tailscale_running:$sr,legacy_native_present:$legacy_present,legacy_native_section:$legacy_section,legacy_native_enabled:$legacy_enabled,legacy_native_hostname:$legacy_host,legacy_native_control_url:$legacy_url}'
+        '{ok:true,provider:$provider,integration:$integration,forkop_present:($provider=="forkop-native" or $provider=="forkop-x"),tailscale_supported:$cap,singbox_version:$ver,configured:$configured,section:$section,hostname:$host,control_url:$url,enabled:$enabled,accept_routes:$accept,advertise_exit_node:$adv,registered:$registered,runtime_applied:$applied,singbox_running:$sb,active_connections:$active,active_peers:$peers,runtime_state:$runtime_state,auth_url:$auth_url,standalone_tailscale_present:$sp,standalone_tailscale_running:$sr,legacy_native_present:$legacy_present,legacy_native_section:$legacy_section,legacy_native_enabled:$legacy_enabled,legacy_native_hostname:$legacy_host,legacy_native_control_url:$legacy_url}'
 }
 
 parse_create_fields() {
@@ -186,6 +225,7 @@ parse_create_fields() {
 
 method_create() {
     json_in; _provider=$(tsnet_provider)
+    tailscale_write_guard || return
     [ "$_provider" != none ] || { printf '{"ok":false,"reason":"provider_missing"}\n'; return; }
     tsnet_capable || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }
     standalone_guard || return
@@ -228,7 +268,9 @@ method_create() {
 }
 
 method_set_enabled() {
-    json_in; _provider=$(tsnet_provider); _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
+    json_in; _provider=$(tsnet_provider)
+    tailscale_write_guard || return
+     _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
     case "$_v" in
         true|1) _want=true; tsnet_capable || { printf '{"ok":false,"reason":"tailscale_unsupported"}\n'; return; }; standalone_guard || return ;;
         false|0) _want=false ;;
@@ -258,7 +300,9 @@ method_set_enabled() {
 }
 
 method_set_accept_routes() {
-    json_in; _provider=$(tsnet_provider); _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
+    json_in; _provider=$(tsnet_provider)
+    tailscale_write_guard || return
+     _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
     case "$_v" in true|1) _want=true ;; false|0) _want=false ;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return ;; esac
     if [ "$_provider" = forkop-native ]; then
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
@@ -279,7 +323,9 @@ method_set_accept_routes() {
 }
 
 method_set_advertise() {
-    json_in; _provider=$(tsnet_provider); _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
+    json_in; _provider=$(tsnet_provider)
+    tailscale_write_guard || return
+     _v=$(printf '%s' "$_IN" | jq -r '.enabled // false')
     case "$_v" in true|1) _want=true ;; false|0) _want=false ;; *) printf '{"ok":false,"reason":"bad_value"}\n'; return ;; esac
     if [ "$_provider" = forkop-native ]; then
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
@@ -301,6 +347,7 @@ method_set_advertise() {
 
 method_reapply() {
     json_in; _provider=$(tsnet_provider)
+    tailscale_write_guard || return
     [ "$_provider" != none ] || { printf '{"ok":false,"reason":"provider_missing"}\n'; return; }
     [ "$_provider" != forkop-native ] || { printf '{"ok":false,"reason":"native_managed"}\n'; return; }
     [ -r "$TSNET_STATE_FILE" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
@@ -314,7 +361,9 @@ method_reapply() {
 }
 
 method_delete() {
-    json_in; _provider=$(tsnet_provider); _purge=$(printf '%s' "$_IN" | jq -r '.purge_state // false')
+    json_in; _provider=$(tsnet_provider)
+    tailscale_write_guard || return
+     _purge=$(printf '%s' "$_IN" | jq -r '.purge_state // false')
     _legacy=$(printf '%s' "$_IN" | jq -r '.legacy_native // false')
     case "$_purge" in true|1) _purge=true ;; *) _purge=false ;; esac
     case "$_legacy" in true|1) _legacy=true ;; *) _legacy=false ;; esac

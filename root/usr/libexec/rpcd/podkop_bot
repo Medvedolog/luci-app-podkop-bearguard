@@ -2045,6 +2045,12 @@ method_set_tier1_port() {
 	if [ -z "$_sec" ] || ! uci -q get "$_pkg.$_sec" >/dev/null 2>&1; then
 		printf '{"ok":false,"reason":"no_section","detail":"primary section not found"}\n'; return
 	fi
+	if [ "$_variant" = forkop ] &&
+	   [ "$_clean" != "$(uci -q get "$_pkg.$_sec.mixed_proxy_port" 2>/dev/null)" ] &&
+	   _bg_port_used "$_clean" ""; then
+		printf '{"ok":false,"reason":"port_occupied","detail":"Порт уже используется другим сервисом или сервером Forkop"}\n'
+		return
+	fi
 	if ! uci set "$_pkg.$_sec.mixed_proxy_port=$_clean" 2>/dev/null \
 	  || ! uci set "$_pkg.$_sec.mixed_proxy_enabled=1" 2>/dev/null; then
 		uci -q revert "$_pkg" 2>/dev/null

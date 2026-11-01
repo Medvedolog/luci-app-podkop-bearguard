@@ -21,6 +21,59 @@
  */
 
 var callService = rpc.declare({ object:'podkop_bot', method:'service', params:['action'] });
+var callStatus = rpc.declare({ object:'podkop_bot', method:'status' });
+var callEnsureMixed = rpc.declare({ object:'podkop_bot', method:'ensure_mixed_proxy' });
+
+function mixedProxySettings() {
+	var container=E('div',{'class':'cbi-section','style':'max-width:820px;margin-top:1.2em;padding:1em 1.2em;border:1px solid rgba(127,127,127,.25);border-radius:8px;'});
+	var head=E('h3',{'style':'margin-top:0;'},_('Mixed Proxy для Telegram-бота'));
+	var content=E('div',{},_('Проверяю настройки движка…'));
+	dom.content(container,[head,content]);
+	var manual={
+		netshift:_('NetShift → первая прокси-секция → Mixed Proxy: включите флажок, укажите свободный порт (обычно 2080), сохраните и примените.'),
+		'podkop-exp':_('Podkop Experimental → первая прокси-секция → Mixed Proxy: включите переключатель и задайте свободный порт, затем примените настройки.'),
+		original:_('Podkop → первая прокси-секция (main) → Mixed Proxy: включите флажок, порт 2080 и примените настройки.'),
+		evolution:_('Podkop Evolution → первая прокси-секция → Mixed Proxy: включите флажок и примените настройки.')
+	};
+	function refresh() {
+		return callStatus().then(function(st) {
+			st=st||{};
+			var mp=st.mixed_proxy||{},v=st.podkop_variant||'';
+			var auto=(v==='forkop'||v==='plus');
+			var blocks=[E('p',{},_('Mixed Proxy нужен для основного SOCKS5-канала (tier1), через который бот сможет работать при недоступности Telegram напрямую.'))];
+			if(mp.available&&mp.enabled) {
+				blocks.push(E('p',{'style':'color:#33a02c;'},_('Включён: порт ')+(mp.port||'?')+_(', секция ')+(mp.section||'?')+(mp.server?_(', сервер ')+mp.server:'')));
+			} else {
+				blocks.push(E('p',{'style':'color:#e8a33d;'},_('Mixed Proxy выключен или не найден.')));
+				if(auto) {
+					blocks.push(E('p',{},v==='forkop'
+						?_('Forkop: создать Mixed Proxy для первой включённой секции connection. Для Forkop 2.0 BearGuard создаёт отдельный сервер, проверяя 2080 и выбирая свободный порт. Для Forkop 1.x используется штатная настройка секции.')
+						:_('Podkop Plus: Mixed Proxy включается в основной секции.')));
+					var result=E('span',{'style':'margin-left:.6em;'});
+					blocks.push(E('div',{},[
+						E('button',{'class':'cbi-button cbi-button-apply','click':ui.createHandlerFn(this,function() {
+							dom.content(result,_('Проверяю порт…'));
+							return callEnsureMixed().then(function(r){
+								if(!r||!r.ok) {
+									dom.content(result,(r&&r.detail)||_('Ошибка создания Mixed Proxy'));
+									return;
+								}
+								dom.content(result,_('Порт ')+(r.port||'?')+_(', секция ')+(r.section||'?')+(r.probe==='unverified'?_(' · доступность Telegram не подтверждена'):''));
+								return refresh();
+							}).catch(function(){dom.content(result,_('Ошибка вызова'));});
+						})},_('Создать / включить Mixed Proxy')),
+						result
+					]));
+				} else blocks.push(E('p',{},manual[v]||_('Откройте первую прокси-секцию в штатном LuCI движка и вручную включите Mixed Proxy.')));
+			}
+			blocks.push(E('button',{'class':'cbi-button','style':'margin-top:.5em;','click':ui.createHandlerFn(this,function(){dom.content(content,_('Проверяю…'));return refresh();})},_('Обновить статус')));
+			dom.content(content,blocks);
+		}).catch(function(){dom.content(content,_('Не удалось получить состояние Mixed Proxy.'));});
+	}
+	refresh();
+	return container;
+}
+
 
 function actionButtons() {
 	var dangerBody = E('div', {
@@ -302,7 +355,7 @@ return view.extend({
 		o.optional = true;
 
 		return m.render().then(L.bind(function(formEl) {
-			return E('div', {}, [ formEl, actionButtons.call(this), pbFooter() ]);
+			return E('div', {}, [ formEl, mixedProxySettings(), actionButtons.call(this), pbFooter() ]);
 		}, this));
 	}
 });

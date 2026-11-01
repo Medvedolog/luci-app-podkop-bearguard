@@ -22,20 +22,6 @@ sh -n "$tmp/allocator.sh"
       *) return 1 ;;
     esac
   }
-  _bg_port_used 2080 "" || { echo "FAIL: occupied 2080 reported free" >&2; exit 1; }
-  # The above is inverted: used returns 0, so enforce that directly.
-) >"$tmp/first.log" 2>&1 && {
-  echo "FAIL: occupied-port semantics changed" >&2; cat "$tmp/first.log" >&2; exit 1;
-}
-(
-  . "$tmp/allocator.sh"
-  uci() {
-    case "$*" in
-      "-q show forkop") printf '%s\n' 'forkop.first=server' ;;
-      "-q get forkop.first.listen_port") printf '%s\n' 2080 ;;
-      *) return 1 ;;
-    esac
-  }
   _bg_port_used 2080 ""    # must succeed (occupied)
   if _bg_port_used 0 ""; then :; else echo "FAIL: invalid port accepted" >&2; exit 1; fi
   p=$(_bg_pick_port "")

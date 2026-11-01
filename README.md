@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🐻 Podkop BearGuard 0.19.25-dev2
+# 🐻 Podkop BearGuard 0.19.25-dev4
 
 **LuCI-комплекс для управления podkop_bot, Podkop/Forkop, Tailscale/tsnet, WARP, аварийным транспортом и диагностикой OpenWrt**
 
-`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.19.25-dev2` · OpenWrt · LuCI · opkg / apk
+`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.19.25-dev4` · OpenWrt · LuCI · opkg / apk
 
 [![Release](https://img.shields.io/github/v/release/Medvedolog/luci-app-podkop-bearguard?style=flat-square&label=release&color=0969da)](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/Medvedolog/luci-app-podkop-bearguard/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/Medvedolog/luci-app-podkop-bearguard/actions/workflows/ci.yml)
@@ -21,7 +21,7 @@
 
 ---
 
-> **0.19.25-dev2 — только разработка; не релиз, не проверено на роутерах:** Forkop 2.0 и Podkop Experimental 0.8.x распознаются отдельно. Чтение маршрутов и диагностика адаптированы частично; запись устаревших UCI-полей ограничена. Новые операции с Tailscale и подписками пока требуют штатного LuCI, а обновление Podkop Experimental — интерактивного запуска по SSH. [Состояние и ограничения](COMPAT_FORKOP2_PODKOP_EXP.md).
+> **0.19.25-dev4 — только разработка, аппаратные тесты этой версии ещё не пройдены:** Forkop 2.0 и Podkop Experimental 0.8.x распознаются отдельно. Чтение маршрутов и диагностика адаптированы частично; запись устаревших UCI-полей ограничена. Новые операции с Tailscale и подписками пока требуют штатного LuCI, а обновление Podkop Experimental — интерактивного запуска по SSH. [Состояние и ограничения](COMPAT_FORKOP2_PODKOP_EXP.md).
 
 ## Что это такое
 

@@ -93,6 +93,7 @@ podkop_variant_display() {
 	fi
 	case "$_variant" in
 		forkop) printf 'Forkop' ;;
+		podkop-exp) printf 'Podkop Experimental' ;;
 		plus) printf 'Podkop Plus' ;;
 		netshift) printf 'NetShift' ;;
 		evolution) printf 'Podkop Evolution' ;;
@@ -706,8 +707,14 @@ method_bot_logs() {
 # "podkop process" — the bot itself measures only sing-box, TZ 4.2), plus RAM
 # available/total. Read-only and cheap, safe to poll every few seconds.
 method_resources() {
+	# For podkop-exp the Go daemon embeds sing-box; it is the dataplane process.
+	_rs_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\\([^"]*\\)".*/\\1/p')
 	# sing-box: pidof may return several PIDs (forks) — sum their RSS.
-	_sb_pids=$(pidof sing-box 2>/dev/null)
+	if [ "$_rs_variant" = podkop-exp ]; then
+		_sb_pids=$(pidof podkop 2>/dev/null)
+	else
+		_sb_pids=$(pidof sing-box 2>/dev/null)
+	fi
 	_sb_running="false"; _sb_rss=0; _sb_n=0
 	if [ -n "$_sb_pids" ]; then
 		_sb_running="true"
@@ -1064,6 +1071,13 @@ method_podkop_update_run() {
 
 	_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	_repo_variant=$(_podkop_repo_variant "$_variant")
+	# The experimental installer can remove packages and requires interactive
+	# consent. Do not run it unattended from an RPC call.
+	if [ "$_repo_variant" = podkop-exp ]; then
+		rm -rf "$_lock" 2>/dev/null
+		printf '{"ok":false,"reason":"manual_update_required","detail":"Podkop Experimental must be updated interactively over SSH"}\\n'
+		return
+	fi
 	_repo=$(_podkop_repo_for "$_repo_variant")
 	_url="https://raw.githubusercontent.com/${_repo}/refs/heads/main/install.sh"
 	_tmp="/tmp/podkop_core_install.sh"
@@ -1072,7 +1086,12 @@ method_podkop_update_run() {
 
 	_net=$(_pkg_net_check)
 	[ "$_net" != "ok" ] && { rm -rf "$_lock" 2>/dev/null; printf '{"ok":false,"reason":"repos_unreachable","detail":%s}\n' "$(_json_str "$_net")"; return; }
-	_disk=$(_pkg_disk_check)
+	# Forkop 2 has accurate compressed-size/package dependency preflight.
+	# A fixed 50MB threshold incorrectly rejects safe in-place updates.
+	_disk=ok
+	if [ "$_repo_variant" != forkop ] || ! { case "$(uci -q get forkop.settings.config_version 2>/dev/null)" in 2.*) true ;; *) false ;; esac; }; then
+		_disk=$(_pkg_disk_check)
+	fi
 	[ "$_disk" != "ok" ] && { rm -rf "$_lock" 2>/dev/null; printf '{"ok":false,"reason":"low_disk","detail":%s}\n' "$(_json_str "$_disk")"; return; }
 
 	if ! _core_fetch "$_url" "$_tmp"; then
@@ -1088,6 +1107,13 @@ method_podkop_update_run() {
 	(
 		trap '_resolv_v4_restore; rm -rf "/tmp/podkop_core_update.lock" 2>/dev/null' EXIT INT TERM
 		_bearhole_export_env || true
+		# Forkop 2 owns its resolver/preflight and should not have /etc/resolv.conf
+		# replaced by public DNS, which can be unreachable on filtered WANs.
+		if [ "$_repo_variant" = forkop ] && { case "$(uci -q get forkop.settings.config_version 2>/dev/null)" in 2.*) true ;; *) false ;; esac; }; then
+			sh "$_tmp" </dev/null
+			echo "[podkop-update-exit $?]"
+			exit 0
+		fi
 		_resolv_v4_override
 		# Auto-answer the fork installer's interactive prompts with "n".
 		#
@@ -1487,6 +1513,23 @@ method_app_info() {
 
 method_singbox_info() {
 	_ver=""; _flavour="standard"; _pkgname=""
+	# Resolve the true owning package before inspecting an unrelated sing-box.
+	_sb_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\\([^"]*\\)".*/\\1/p')
+	if [ "$_sb_variant" = podkop-exp ]; then
+		_ver=$(opkg status podkop-exp 2>/dev/null | sed -n 's/^Version: //p' | head -n 1)
+		[ -n "$_ver" ] || _ver=$(apk info -v podkop-exp 2>/dev/null | sed -n 's/^podkop-exp-//p' | head -n 1)
+		[ -n "$_ver" ] || _ver=unknown
+		jq -cn --arg version "$_ver" '{ok:true,version:$version,flavour:"embedded",package:"podkop-exp"}'
+		return
+	fi
+	if [ "$_sb_variant" = forkop ] && [ -r /usr/share/sing-box-forkop/variant ]; then
+		_ver=$(opkg status sing-box-forkop 2>/dev/null | sed -n 's/^Version: //p' | head -n 1)
+		[ -n "$_ver" ] || _ver=$(apk info -v sing-box-forkop 2>/dev/null | sed -n 's/^sing-box-forkop-//p' | head -n 1)
+		[ -n "$_ver" ] || _ver=unknown
+		_flavour=$(head -n 1 /usr/share/sing-box-forkop/variant 2>/dev/null)
+		jq -cn --arg version "$_ver" --arg flavour "$_flavour" '{ok:true,version:$version,flavour:$flavour,package:"sing-box-forkop"}'
+		return
+	fi
 
 	# Package name + version from the package manager (variant-independent).
 	if command -v opkg >/dev/null 2>&1; then
@@ -2082,6 +2125,7 @@ _podkop_repo_variant() {
 }
 _podkop_repo_for() {
 	case "$1" in
+		podkop-exp) printf 'podkop-net/podkop-experimental' ;;
 		forkop-x)  printf 'slayer326/forkop' ;;
 		forkop)    printf 'ushan0v/forkop' ;;
 		plus)      printf 'ushan0v/podkop-plus' ;;
@@ -2092,6 +2136,7 @@ _podkop_repo_for() {
 }
 _podkop_name_for() {
 	case "$1" in
+		podkop-exp) printf 'Podkop Experimental' ;;
 		forkop-x)  printf 'Forkop X' ;;
 		forkop)    printf 'Forkop' ;;
 		plus)      printf 'Podkop Plus' ;;

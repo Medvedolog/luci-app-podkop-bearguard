@@ -127,7 +127,7 @@ fi
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
     :
 else
-    echo "FAIL  vendor.sha256"; fail=1
+    echo "FAIL  vendor.sha256"; sha256sum "$BOT_SRC"; fail=1
 fi
 
 if [ -f root/usr/share/luci-app-podkop-bot/install.sh ]; then

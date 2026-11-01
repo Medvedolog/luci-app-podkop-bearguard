@@ -693,7 +693,10 @@ method_ensure_mixed_proxy() {
 
 	# section: requested one, else the active section
 	_sec="$_req_sec"
-	[ -z "$_sec" ] && _sec=$(podkop_active_section "$_pkg")
+	if [ -z "$_sec" ]; then
+		if [ "$_variant" = forkop ]; then _sec=$(_bg_first_section)
+		else _sec=$(podkop_active_section "$_pkg"); fi
+	fi
 	if [ -z "$_sec" ] || ! uci -q get "$_pkg.$_sec" >/dev/null 2>&1; then
 		printf '{"ok":false,"reason":"no_section","detail":"section not found"}\n'; return
 	fi

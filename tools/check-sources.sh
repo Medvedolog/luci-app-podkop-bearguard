@@ -289,7 +289,7 @@ grep -Fq 'rescue_autostart' "$RESCUE_RPC" || {
 grep -Fq 'ensure_account(){' "$RESCUE_RPC" && grep -Fq 'start)method_start' "$RESCUE_RPC" || {
     echo "WARP Rescue: one-button start (account + discovery) missing" >&2; fail=1
 }
-grep -Fq '"set", "trigger", "start"' root/usr/share/rpcd/acl.d/luci-app-podkop-bot.json || {
+jq -e '."luci-app-podkop-bot".write.ubus.podkop_bot_warpscout_rescue | index("start") != null' root/usr/share/rpcd/acl.d/luci-app-podkop-bot.json >/dev/null 2>&1 || {
     echo "WARP Rescue: start RPC not in ACL" >&2; fail=1
 }
 grep -Fq "callRescueStart" "$WARPSCOUT_JS" && grep -Fq "Установить и запустить WARP" "$WARPSCOUT_JS" || {

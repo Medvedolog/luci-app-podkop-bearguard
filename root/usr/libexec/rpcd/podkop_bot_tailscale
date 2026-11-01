@@ -51,7 +51,7 @@ native_find_tunnel_v2() {
         sed -n "s/^${UCI_PKG}\\.\\([^.=]*\\)\\.kind='tailscale'$/\\1/p" |
         while IFS= read -r _n; do
             [ "$(uci -q get "${UCI_PKG}.${_n}" 2>/dev/null)" = tunnel ] || continue
-            printf '%s\\n' "$_n"
+            printf '%s\n' "$_n"
             break
         done
 }
@@ -61,11 +61,11 @@ native_find_tunnel_v2() {
 tailscale_write_guard() {
     case "$_provider" in
         podkop-exp)
-            printf '{"ok":false,"reason":"embedded_core_unsupported","detail":"Podkop Experimental requires native tunnel support"}\\n'
+            printf '{"ok":false,"reason":"embedded_core_unsupported","detail":"Podkop Experimental requires native tunnel support"}\n'
             return 1 ;;
         forkop-native)
             if tsnet_forkop_v2; then
-                printf '{"ok":false,"reason":"forkop_v2_tunnel_model","detail":"Configure Tailscale tunnels in Forkop 2 LuCI"}\\n'
+                printf '{"ok":false,"reason":"forkop_v2_tunnel_model","detail":"Configure Tailscale tunnels in Forkop 2 LuCI"}\n'
                 return 1
             fi ;;
     esac

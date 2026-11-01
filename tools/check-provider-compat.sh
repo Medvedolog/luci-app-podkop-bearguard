@@ -16,4 +16,5 @@ grep -Fq 'forkop_v2_tunnel_model' root/usr/libexec/rpcd/podkop_bot_tailscale
 grep -Fq 'embedded_core_unsupported' root/usr/libexec/rpcd/podkop_bot_tailscale
 grep -Fq 'podkop-exp) return 1' root/usr/lib/podkop_bot/tsnet-provider.sh
 grep -Fq 'podkop|forkop-x)' root/usr/lib/podkop_bot/tsnet-runtime-apply.sh
+sh tools/test-forkop2-mixed-port.sh
 printf '%s\n' 'BearGuard embedded/native compatibility guards OK'

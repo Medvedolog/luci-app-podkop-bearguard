@@ -93,6 +93,7 @@ podkop_variant_display() {
 	fi
 	case "$_variant" in
 		forkop) if _fk2 forkop; then printf 'Forkop 2'; else printf 'Forkop'; fi ;;
+		podkop-exp) printf 'Podkop Experimental' ;;
 		plus) printf 'Podkop Plus' ;;
 		netshift) printf 'NetShift' ;;
 		evolution) printf 'Podkop Evolution' ;;
@@ -160,7 +161,7 @@ podkop_active_section() {
 _fk2() {
 	[ "$1" = "forkop" ] || return 1
 	case "$(uci -q get forkop.settings.config_version 2>/dev/null)" in 2.*|[3-9].*|[1-9][0-9].*) return 0 ;; esac
-	return 1
+	[ -r /usr/share/sing-box-forkop/variant ]
 }
 # _fk2_mixed PKG SEC — "name|enabled|port" of the mixed server routed to SEC, enabled first.
 _fk2_mixed() {
@@ -250,6 +251,146 @@ _fk2_link_uris() {
 			printf "%s\t%s\n", o, opt[c SUBSEP "uri"] } }' | sort -n -k1,1 | cut -f2-
 }
 
+# Forkop 2.0 migrated per-section mixed_proxy_* into routed mixed servers.
+# Read the new model; writes remain disabled until there is a native adapter.
+# Same answers as _fk2/_fk2_mixed above (one definition of the 2.0 model).
+_forkop_v2() { _fk2 forkop; }
+_forkop_mixed_server() { _fk2_mixed forkop "$1" | cut -d'|' -f1; }
+_forkop_v2_read_only() {
+    [ "$1" = forkop ] && _forkop_v2 || return 1
+    printf '{"ok":false,"reason":"forkop_v2_mixed_server","detail":"Forkop 2 uses a routed mixed server. Configure it in Forkop LuCI."}\n'
+    return 0
+}
+
+# Forkop 2: create a routed mixed server (upstream 2.0 UCI model).
+_bg_port_used() {
+    _candidate="$1"; _skip="$2"
+    case "$_candidate" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$_candidate" -ge 1 ] 2>/dev/null && [ "$_candidate" -le 65535 ] 2>/dev/null || return 0
+    for _item in $(uci -q show forkop 2>/dev/null | sed -n 's/^forkop\.\([^.=]*\)=server$/\1/p'); do
+        [ "$_item" = "$_skip" ] && continue
+        [ "$(uci -q get "forkop.$_item.listen_port" 2>/dev/null)" != "$_candidate" ] || return 0
+    done
+    for _pkg in forkop podkop netshift podkop-plus; do
+        uci -q show "$_pkg" 2>/dev/null | grep -Eq "\.mixed_proxy_port='?$_candidate'?$" && return 0
+    done
+    _hex=$(printf '%04X' "$_candidate")
+    for _file in /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6; do
+        [ -r "$_file" ] || continue
+        awk -v p="$_hex" 'NR>1 && substr($2,length($2)-3)==p && (FILENAME ~ /udp/ || $4=="0A") {found=1;exit} END {exit !found}' "$_file" && return 0
+    done
+    return 1
+}
+_bg_pick_port() {
+    _candidate=2080
+    while [ "$_candidate" -le 2280 ]; do
+        if ! _bg_port_used "$_candidate" "$1"; then printf '%s' "$_candidate"; return; fi
+        _candidate=$((_candidate+1))
+    done
+    return 1
+}
+_bg_first_section() {
+    for _item in $(uci -q show forkop 2>/dev/null | sed -n 's/^forkop\.\([^.=]*\)=section$/\1/p'); do
+        [ "$(uci -q get "forkop.$_item.action" 2>/dev/null)" = connection ] || continue
+        [ "$(uci -q get "forkop.$_item.enabled" 2>/dev/null)" != 0 ] || continue
+        printf '%s' "$_item"; return
+    done
+    return 1
+}
+_bg_ensure_forkop2_mixed() {
+    _sec="$1"
+    case "$_sec" in ''|*[!A-Za-z0-9_-]*)
+        printf '{"ok":false,"reason":"no_section","detail":"Нет подходящей секции Forkop"}\n'; return ;;
+    esac
+    [ "$(uci -q get "forkop.$_sec" 2>/dev/null)" = section ] &&
+    [ "$(uci -q get "forkop.$_sec.action" 2>/dev/null)" = connection ] &&
+    [ "$(uci -q get "forkop.$_sec.enabled" 2>/dev/null)" != 0 ] || {
+        printf '{"ok":false,"reason":"not_proxy_section","detail":"Секция должна быть включена и иметь action=connection"}\n'; return;
+    }
+    uci_txn_begin || { printf '{"ok":false,"reason":"uci_busy"}\n'; return; }
+    _existing=$(_forkop_mixed_server "$_sec")
+    _created=false; _reenabled=false
+    if [ -n "$_existing" ]; then
+        _port=$(uci -q get "forkop.$_existing.listen_port" 2>/dev/null)
+        if [ "$(uci -q get "forkop.$_existing.enabled" 2>/dev/null)" != 0 ]; then
+            case "$_port" in ''|*[!0-9]*) uci_txn_end; printf '{"ok":false,"reason":"invalid_existing_port"}\n'; return ;; esac
+            [ "$_port" -ge 1 ] 2>/dev/null && [ "$_port" -le 65535 ] 2>/dev/null || {
+                uci_txn_end; printf '{"ok":false,"reason":"invalid_existing_port"}\n'; return;
+            }
+            uci_txn_end
+            jq -cn --arg section "$_sec" --arg server "$_existing" --argjson port "$_port" \
+                '{ok:true,already_enabled:true,section:$section,server:$server,port:$port}'
+            return
+        fi
+        _reenabled=true
+        if _bg_port_used "$_port" "$_existing"; then _port=$(_bg_pick_port "$_existing"); fi
+    else
+        _port=$(_bg_pick_port "")
+    fi
+    [ -n "$_port" ] || { uci_txn_end; printf '{"ok":false,"reason":"no_free_port","detail":"Нет свободного порта 2080–2280"}\n'; return; }
+    _backup="/tmp/forkop-bearguard-mixed.$$.bak"
+    cp -p /etc/config/forkop "$_backup" 2>/dev/null || { uci_txn_end; printf '{"ok":false,"reason":"backup_failed"}\n'; return; }
+    _ok=1
+    if [ -n "$_existing" ]; then
+        _server="$_existing"
+        uci -q set "forkop.$_server.enabled=1" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.listen_port=$_port" || _ok=0
+    else
+        _name=$(printf 'bg_%s_mixed' "$_sec" | cut -c 1-48)
+        _server="$_name"; _num=1
+        while uci -q get "forkop.$_server" >/dev/null 2>&1; do
+            _server="$_name""_""$_num"; _num=$((_num+1))
+            [ "$_num" -le 99 ] || break
+        done
+        [ "$_num" -le 99 ] || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server=server" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.label=BearGuard Mixed Proxy" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.enabled=1" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.protocol=mixed" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.listen=::" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.listen_port=$_port" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.open_firewall=0" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.routing_mode=section" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.routing_section=$_sec" || _ok=0
+        [ "$_ok" != 1 ] || uci -q set "forkop.$_server.mixed_auth_enabled=0" || _ok=0
+        _created=true
+    fi
+    if [ "$_ok" != 1 ] || ! uci -q commit forkop; then
+        cp -p "$_backup" /etc/config/forkop 2>/dev/null || true
+        uci -q revert forkop >/dev/null 2>&1 || true
+        rm -f "$_backup"; uci_txn_end
+        printf '{"ok":false,"reason":"uci_write_failed","rolled_back":true}\n'; return
+    fi
+    _reload=1
+    if [ -x /etc/init.d/forkop ]; then
+        if command -v timeout >/dev/null 2>&1; then
+            timeout 60 /etc/init.d/forkop reload >/dev/null 2>&1 || _reload=0
+        else
+            /etc/init.d/forkop reload >/dev/null 2>&1 || _reload=0
+        fi
+    else _reload=0; fi
+    if [ "$_reload" != 1 ]; then
+        _restored=true
+        cp -p "$_backup" /etc/config/forkop 2>/dev/null || _restored=false
+        uci -q revert forkop >/dev/null 2>&1 || true
+        [ "$_restored" != true ] || /etc/init.d/forkop reload >/dev/null 2>&1 || true
+        rm -f "$_backup"; uci_txn_end
+        jq -cn --argjson rolled_back "$_restored" '{ok:false,reason:"reload_failed",rolled_back:$rolled_back}'
+        return
+    fi
+    rm -f "$_backup" "$_STATUS_CACHE" 2>/dev/null
+    uci_txn_end
+    _ip=$(_lan_ipv4); [ -n "$_ip" ] || _ip=127.0.0.1
+    # WAN reachability is independent: a blocked Telegram must not undo a valid UCI server.
+    _probe=unverified
+    if command -v curl >/dev/null 2>&1 &&
+       curl -sS -o /dev/null --connect-timeout 2 --max-time 5 \
+            --proxy "socks5h://127.0.0.1:$_port" https://api.telegram.org 2>/dev/null; then _probe=ok; fi
+    jq -cn --arg section "$_sec" --arg server "$_server" --arg ip "$_ip" \
+        --argjson port "$_port" --argjson created "$_created" --argjson reenabled "$_reenabled" --arg probe "$_probe" \
+        '{ok:true,section:$section,server:$server,port:$port,created:$created,reenabled:$reenabled,probe:$probe,endpoint:("socks5h://"+$ip+":"+($port|tostring))}'
+}
+
 # -- mixed_proxy sub-object as a JSON fragment (no outer braces) --------------
 emit_mixed_proxy() {
 	_variant="$1"
@@ -271,6 +412,21 @@ emit_mixed_proxy() {
 		return
 	fi
 	_sec=$(podkop_active_section "$_pkg")
+	if [ "$_variant" = forkop ] && _forkop_v2; then
+		_sec=$(_bg_first_section)
+		[ -n "$_sec" ] || { printf '"mixed_proxy":{"available":false,"reason":"no_connection_section","auto_create":false}'; return; }
+		_srv=$(_forkop_mixed_server "$_sec")
+		_port=$(uci -q get "forkop.$_srv.listen_port" 2>/dev/null)
+		_enabled=false
+		[ -n "$_srv" ] && [ "$(uci -q get "forkop.$_srv.enabled" 2>/dev/null)" != 0 ] && _enabled=true
+		case "$_port" in ''|*[!0-9]*) _port= ;; esac
+		if [ -n "$_port" ]; then
+			printf '"mixed_proxy":{"available":true,"enabled":%s,"section":"%s","port":%s,"read_only":false,"auto_create":true,"native_server":true,"server":%s}' "$_enabled" "$_sec" "$_port" "$(_json_str "$_srv")"
+		else
+			printf '"mixed_proxy":{"available":false,"reason":"mixed_server_missing","auto_create":true,"detail":"BearGuard может создать Mixed Proxy для первой секции Forkop 2.0"}'
+		fi
+		return
+	fi
 	_en=$(_sec_mixed_en "${_pkg}" "${_sec}")
 	_port=$(_sec_mixed_port "${_pkg}" "${_sec}")
 
@@ -593,6 +749,16 @@ method_ensure_mixed_proxy() {
 		_variant=$(printf '%s' "$_st" | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	fi
 	[ -z "$_variant" ] && _variant="unknown"
+	if [ "$_variant" = forkop ] && _forkop_v2; then
+		_sec="$_req_sec"
+		[ -n "$_sec" ] || _sec=$(_bg_first_section)
+		_bg_ensure_forkop2_mixed "$_sec"
+		return
+	fi
+	if [ "$_variant" != forkop ] && [ "$_variant" != plus ] && [ "$_variant" != unknown ]; then
+		printf '{"ok":false,"reason":"manual_enable_required","detail":"Включите Mixed Proxy в настройках первой прокси-секции движка"}\n'
+		return
+	fi
 	if [ "$_variant" = "unknown" ]; then
 		printf '{"ok":false,"reason":"variant_unknown","detail":"podkop variant not detected"}\n'; return
 	fi
@@ -612,7 +778,10 @@ method_ensure_mixed_proxy() {
 
 	# section: requested one, else the active section
 	_sec="$_req_sec"
-	[ -z "$_sec" ] && _sec=$(podkop_active_section "$_pkg")
+	if [ -z "$_sec" ]; then
+		if [ "$_variant" = forkop ]; then _sec=$(_bg_first_section)
+		else _sec=$(podkop_active_section "$_pkg"); fi
+	fi
 	if [ -z "$_sec" ] || ! uci -q get "$_pkg.$_sec" >/dev/null 2>&1; then
 		printf '{"ok":false,"reason":"no_section","detail":"section not found"}\n'; return
 	fi
@@ -649,6 +818,12 @@ method_ensure_mixed_proxy() {
 	# --- auto-port: if unset, pick the first free port from 2080 up, skipping any
 	# port already used by another section's mixed_proxy_port (no collisions) ---
 	_port="$_old_port"
+	# Forkop 1.x also gets a socket-aware allocator. A configured but disabled
+	# port is not blindly reused: another service may have taken it meanwhile.
+	if [ "$_variant" = forkop ]; then
+		_port=$(_bg_pick_port "")
+		[ -n "$_port" ] || { printf '{"ok":false,"reason":"no_free_port"}\n'; return; }
+	fi
 	if [ -z "$_port" ]; then
 		_used_ports=$(_mixed_used_ports "$_pkg")
 		_port=2080
@@ -816,8 +991,14 @@ method_bot_logs() {
 # "podkop process" — the bot itself measures only sing-box, TZ 4.2), plus RAM
 # available/total. Read-only and cheap, safe to poll every few seconds.
 method_resources() {
+	# For podkop-exp the Go daemon embeds sing-box; it is the dataplane process.
+	_rs_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	# sing-box: pidof may return several PIDs (forks) — sum their RSS.
-	_sb_pids=$(pidof sing-box 2>/dev/null)
+	if [ "$_rs_variant" = podkop-exp ]; then
+		_sb_pids=$(pidof podkop 2>/dev/null)
+	else
+		_sb_pids=$(pidof sing-box 2>/dev/null)
+	fi
 	_sb_running="false"; _sb_rss=0; _sb_n=0
 	if [ -n "$_sb_pids" ]; then
 		_sb_running="true"
@@ -1174,6 +1355,13 @@ method_podkop_update_run() {
 
 	_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	_repo_variant=$(_podkop_repo_variant "$_variant")
+	# The experimental installer can remove packages and requires interactive
+	# consent. Do not run it unattended from an RPC call.
+	if [ "$_repo_variant" = podkop-exp ]; then
+		rm -rf "$_lock" 2>/dev/null
+		printf '{"ok":false,"reason":"manual_update_required","detail":"Podkop Experimental must be updated interactively over SSH"}\n'
+		return
+	fi
 	_repo=$(_podkop_repo_for "$_repo_variant")
 	_url="https://raw.githubusercontent.com/${_repo}/refs/heads/main/install.sh"
 	_tmp="/tmp/podkop_core_install.sh"
@@ -1182,7 +1370,12 @@ method_podkop_update_run() {
 
 	_net=$(_pkg_net_check)
 	[ "$_net" != "ok" ] && { rm -rf "$_lock" 2>/dev/null; printf '{"ok":false,"reason":"repos_unreachable","detail":%s}\n' "$(_json_str "$_net")"; return; }
-	_disk=$(_pkg_disk_check)
+	# Forkop 2 has accurate compressed-size/package dependency preflight.
+	# A fixed 50MB threshold incorrectly rejects safe in-place updates.
+	_disk=ok
+	if [ "$_repo_variant" != forkop ] || ! { case "$(uci -q get forkop.settings.config_version 2>/dev/null)" in 2.*) true ;; *) false ;; esac; }; then
+		_disk=$(_pkg_disk_check)
+	fi
 	[ "$_disk" != "ok" ] && { rm -rf "$_lock" 2>/dev/null; printf '{"ok":false,"reason":"low_disk","detail":%s}\n' "$(_json_str "$_disk")"; return; }
 
 	if ! _core_fetch "$_url" "$_tmp"; then
@@ -1198,6 +1391,13 @@ method_podkop_update_run() {
 	(
 		trap '_resolv_v4_restore; rm -rf "/tmp/podkop_core_update.lock" 2>/dev/null' EXIT INT TERM
 		_bearhole_export_env || true
+		# Forkop 2 owns its resolver/preflight and should not have /etc/resolv.conf
+		# replaced by public DNS, which can be unreachable on filtered WANs.
+		if [ "$_repo_variant" = forkop ] && { case "$(uci -q get forkop.settings.config_version 2>/dev/null)" in 2.*) true ;; *) false ;; esac; }; then
+			sh "$_tmp" </dev/null
+			echo "[podkop-update-exit $?]"
+			exit 0
+		fi
 		_resolv_v4_override
 		# Auto-answer the fork installer's interactive prompts with "n".
 		#
@@ -1412,6 +1612,11 @@ _wan_if() {
 # mixed_proxy_port, default 2080.
 _primary_section() {
 	_pkg="$1"
+	if [ "$_pkg" = forkop ] && _forkop_v2; then
+		for _candidate in $(uci -q show forkop 2>/dev/null | sed -n 's/^forkop\.\([^.=]*\)=section$/\1/p'); do
+			[ -z "$(_forkop_mixed_server "$_candidate")" ] || { printf '%s' "$_candidate"; return; }
+		done
+	fi
 	# first section with mixed_proxy_enabled=1 (the bot's key name — NOT
 	# "mixed_proxy"), else the section named 'main', else empty.
 	for _s in $(uci -q show "$_pkg" 2>/dev/null | sed -n "s/^$_pkg\.\([^.=]*\)=section/\1/p"); do
@@ -1597,6 +1802,23 @@ method_app_info() {
 
 method_singbox_info() {
 	_ver=""; _flavour="standard"; _pkgname=""
+	# Resolve the true owning package before inspecting an unrelated sing-box.
+	_sb_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
+	if [ "$_sb_variant" = podkop-exp ]; then
+		_ver=$(opkg status podkop-exp 2>/dev/null | sed -n 's/^Version: //p' | head -n 1)
+		[ -n "$_ver" ] || _ver=$(apk info -v podkop-exp 2>/dev/null | sed -n 's/^podkop-exp-//p' | head -n 1)
+		[ -n "$_ver" ] || _ver=unknown
+		jq -cn --arg version "$_ver" '{ok:true,version:$version,flavour:"embedded",package:"podkop-exp"}'
+		return
+	fi
+	if [ "$_sb_variant" = forkop ] && [ -r /usr/share/sing-box-forkop/variant ]; then
+		_ver=$(opkg status sing-box-forkop 2>/dev/null | sed -n 's/^Version: //p' | head -n 1)
+		[ -n "$_ver" ] || _ver=$(apk info -v sing-box-forkop 2>/dev/null | sed -n 's/^sing-box-forkop-//p' | head -n 1)
+		[ -n "$_ver" ] || _ver=unknown
+		_flavour=$(head -n 1 /usr/share/sing-box-forkop/variant 2>/dev/null)
+		jq -cn --arg version "$_ver" --arg flavour "$_flavour" '{ok:true,version:$version,flavour:$flavour,package:"sing-box-forkop"}'
+		return
+	fi
 
 	# Package name + version from the package manager (variant-independent).
 	if command -v opkg >/dev/null 2>&1; then
@@ -1887,6 +2109,7 @@ method_list_interfaces() {
 # this is the one Mixed-Proxy parameter we already manage for the bot's sake.
 method_set_tier1_port() {
 	_read_input
+	_tp_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
 	_val=$(_field value)
 	_clean=$(printf '%s' "$_val" | tr -d '\r\n' | sed 's/[[:space:]]//g')
 	if ! printf '%s' "$_clean" | grep -qE '^[0-9]+$' || ! _valid_port "$_clean"; then
@@ -1909,6 +2132,12 @@ method_set_tier1_port() {
 	fi
 	if [ -z "$_sec" ] || ! uci -q get "$_pkg.$_sec" >/dev/null 2>&1; then
 		printf '{"ok":false,"reason":"no_section","detail":"primary section not found"}\n'; return
+	fi
+	if [ "$_variant" = forkop ] &&
+	   [ "$_clean" != "$(_sec_mixed_port "$_pkg" "$_sec" 2>/dev/null)" ] &&
+	   _bg_port_used "$_clean" "$(_fk2 "$_pkg" && _fk2_mixed "$_pkg" "$_sec" | cut -d'|' -f1)"; then
+		printf '{"ok":false,"reason":"port_occupied","detail":"Порт уже используется другим сервисом или сервером Forkop"}\n'
+		return
 	fi
 	if ! _sec_mixed_stage "$_pkg" "$_sec" "$_clean" 1; then
 		uci -q revert "$_pkg" 2>/dev/null
@@ -2176,8 +2405,8 @@ method_runtime_sections() {
 		_secs_json="$_secs_json$_row"
 	done
 
-	printf '{"ok":true,"available":true,"variant":"%s","uci_pkg":"%s","active_section":%s,"primary_section":%s,"sections":[%s]}\n' \
-		"$_variant" "$_pkg" "$(_json_str "$_active")" "$(_json_str "$_primary")" "$_secs_json"
+	printf '{"ok":true,"available":true,"variant":"%s","uci_pkg":"%s","forkop_v2":%s,"active_section":%s,"primary_section":%s,"sections":[%s]}\n' \
+		"$_variant" "$_pkg" "$([ "$_variant" = forkop ] && _forkop_v2 && echo true || echo false)" "$(_json_str "$_active")" "$(_json_str "$_primary")" "$_secs_json"
 }
 
 # -- podkop_update_check: check the installed Podkop/fork for a newer release.
@@ -2195,6 +2424,7 @@ _podkop_repo_variant() {
 }
 _podkop_repo_for() {
 	case "$1" in
+		podkop-exp) printf 'podkop-net/podkop-experimental' ;;
 		forkop-x)  printf 'slayer326/forkop' ;;
 		forkop)    printf 'ushan0v/forkop' ;;
 		plus)      printf 'ushan0v/podkop-plus' ;;
@@ -2205,6 +2435,7 @@ _podkop_repo_for() {
 }
 _podkop_name_for() {
 	case "$1" in
+		podkop-exp) printf 'Podkop Experimental' ;;
 		forkop-x)  printf 'Forkop X' ;;
 		forkop)    printf 'Forkop' ;;
 		plus)      printf 'Podkop Plus' ;;
@@ -2868,9 +3099,82 @@ method_active_probe() {
 	printf '%s\n' "$_out"
 }
 
+
+# Native read-only inventory for Forkop 2.0 and Podkop Experimental 0.8.
+# Never return raw Forkop config / UCI exports: they contain subscription
+# URLs and secret connection links. Do not mutate either routing engine.
+method_provider_inventory() {
+    if _forkop_v2; then
+        command -v ubus >/dev/null 2>&1 || { printf '{"ok":false,"available":false,"reason":"ubus_missing"}\n'; return; }
+        local _config _state _state_summary
+        _config=$(ubus -t 4 call forkop config '{}' 2>/dev/null) || {
+            printf '{"ok":false,"available":false,"backend":"forkop2","reason":"forkop_ubus_unavailable"}\n'; return;
+        }
+        _state=$(ubus -t 4 call forkop state '{}' 2>/dev/null) || _state='{}'
+        _state_summary=$(printf '%s' "$_state" | jq -c '{revision:(.revision // 0),running:(.service.forkop.running // 0),enabled:(.service.forkop.enabled // 0),core_running:(.service.sing_box.running // 0)}' 2>/dev/null)
+        [ -n "$_state_summary" ] || _state_summary='{}'
+        printf '%s' "$_config" | jq -ce --argjson state "$_state_summary" '
+          (.sections // []) as $all |
+          {ok:true,available:true,backend:"forkop2",state:$state,
+           sections:[ $all[] | select(.".type" == "section") | . as $p |
+             {id:$p[".name"],label:($p.label // $p[".name"]),
+              action:($p.action // "connection"),enabled:($p.enabled // "1"),
+              sources:{
+                 links:([$all[]|select(.".type"=="connection_link" and .section==$p[".name"])]|length),
+                 subscriptions:([$all[]|select(.".type"=="subscription_url" and .section==$p[".name"])]|length),
+                 urltests:([$all[]|select(.".type"=="urltest" and .section==$p[".name"])]|length),
+                 fallbacks:([$all[]|select(.".type"=="fallback_group" and .section==$p[".name"])]|length),
+                 tunnels:([$all[]|select(.".type"=="tunnel" and .section==$p[".name"])]|length),
+                 mixed:([$all[]|select(.".type"=="server" and .protocol=="mixed" and .routing_mode=="section" and .routing_section==$p[".name"])]|length)
+              }} ]}
+        ' 2>/dev/null || printf '{"ok":false,"available":false,"backend":"forkop2","reason":"invalid_ubus_config"}\n'
+        return
+    fi
+    case "$(uci -q get podkop.settings.config_version 2>/dev/null)" in 2|2.*) ;; *) printf '{"ok":false,"available":false,"reason":"not_modern_provider"}\n'; return ;; esac
+    if command -v apk >/dev/null 2>&1 && apk info -e podkop-exp >/dev/null 2>&1; then
+        :
+    elif command -v opkg >/dev/null 2>&1 && opkg status podkop-exp 2>/dev/null | grep -q '^Status: .* installed$'; then
+        :
+    else
+        printf '{"ok":false,"available":false,"reason":"podkop_exp_not_installed"}\n'; return
+    fi
+    uci -q show podkop 2>/dev/null | awk -F= '
+       {key=$1; sub(/^podkop\./,"",key); value=$2
+        for(i=3;i<=NF;i++)value=value "=" $i
+        gsub(/\047/,"",value); gsub(/[\t\r\n]/," ",value)
+        dot=index(key,".")
+        if(!dot){ ids[++n]=key; kind[key]=value }
+        else { id=substr(key,1,dot-1); opt=substr(key,dot+1)
+            if(opt=="label") label[id]=value
+            else if(opt=="enabled") enabled[id]=value
+            else if(opt=="section") owner[id]=value
+            else if(opt=="source") source[id]=value
+            else if(opt=="role") role[id]=value
+            else if(opt=="type") stype[id]=value
+        }
+       }
+       END {for(i=1;i<=n;i++){
+          id=ids[i]
+          if(kind[id]=="section") printf "section\t%s\t%s\t%s\t\t\t\n",id,label[id],enabled[id]
+          else if(kind[id]=="source") printf "source\t%s\t%s\t%s\t\t\t\n",id,label[id],stype[id]
+          else if(kind[id]=="member") printf "member\t%s\t\t\t%s\t%s\t%s\n",id,owner[id],source[id],role[id]
+       }}' | jq -Rs '
+         [split("\n")[] | select(length>0) | split("\t") |
+           {type:.[0],id:.[1],label:.[2],value:.[3],owner:.[4],source:.[5],role:.[6]}] as $all |
+         {ok:true,available:true,backend:"podkop-exp-v2",
+          sections:[$all[]|select(.type=="section")|. as $sec|
+            {id:$sec.id,label:(if $sec.label=="" then $sec.id else $sec.label end),
+             enabled:(if $sec.value=="" then "1" else $sec.value end),
+             members:[ $all[]|select(.type=="member" and .owner==$sec.id)|
+                . as $m|{source:$m.source,role:(if $m.role=="" then "server" else $m.role end),
+                source_type:([ $all[]|select(.type=="source" and .id==$m.source)|.value][0] // "builtin"),
+                source_label:([ $all[]|select(.type=="source" and .id==$m.source)|.label][0] // $m.source)}]}]}
+       ' 2>/dev/null || printf '{"ok":false,"available":false,"backend":"podkop-exp-v2","reason":"parse_failed"}\n'
+}
+
 case "$1" in
 	list)
-		echo '{ "list": {}, "status": {}, "service": { "action": "start_bot" }, "installer": { "action": "status", "config_path": "x", "config_inline": "x" }, "logs": { "offset": 0 }, "bot_logs": { "lines": 200 }, "resources": {}, "transport_state": {}, "transport_probe": { "target": "x" }, "set_transport_policy": { "policy": "x" }, "fallback_crud": { "op": "x", "value": "x", "index": 0 }, "list_interfaces": {}, "set_uci_field": { "field": "x", "value": "x" }, "set_tier1_port": { "value": "x" }, "active_probe": { "cached": "x", "section": "x", "proxy": "x", "label": "x" }, "runtime_sections": {}, "podkop_update_check": {}, "app_info": {}, "singbox_info": {}, "check_update": { "force": "x" }, "luci_update_check": { "force": "x" }, "luci_update_run": {}, "luci_update_log": { "offset": "x" }, "podkop_update_run": {}, "podkop_update_log": { "offset": 0 }, "update_upload": {}, "update_paste": { "body": "x" }, "test_telegram": { "token": "x" }, "ensure_mixed_proxy": { "section": "x" }, "test_github": {} }'
+		echo '{ "list": {}, "status": {}, "service": { "action": "start_bot" }, "installer": { "action": "status", "config_path": "x", "config_inline": "x" }, "logs": { "offset": 0 }, "bot_logs": { "lines": 200 }, "resources": {}, "transport_state": {}, "transport_probe": { "target": "x" }, "set_transport_policy": { "policy": "x" }, "fallback_crud": { "op": "x", "value": "x", "index": 0 }, "list_interfaces": {}, "set_uci_field": { "field": "x", "value": "x" }, "set_tier1_port": { "value": "x" }, "active_probe": { "cached": "x", "section": "x", "proxy": "x", "label": "x" }, "runtime_sections": {}, "provider_inventory": {}, "podkop_update_check": {}, "app_info": {}, "singbox_info": {}, "check_update": { "force": "x" }, "luci_update_check": { "force": "x" }, "luci_update_run": {}, "luci_update_log": { "offset": "x" }, "podkop_update_run": {}, "podkop_update_log": { "offset": 0 }, "update_upload": {}, "update_paste": { "body": "x" }, "test_telegram": { "token": "x" }, "ensure_mixed_proxy": { "section": "x" }, "test_github": {} }'
 		;;
 	call)
 		case "$2" in
@@ -2889,6 +3193,7 @@ case "$1" in
 			set_tier1_port)       method_set_tier1_port ;;
 			active_probe)         method_active_probe ;;
 			runtime_sections)     method_runtime_sections ;;
+			provider_inventory)   method_provider_inventory ;;
 			podkop_update_check)  method_podkop_update_check ;;
 			app_info)             method_app_info ;;
 			singbox_info)         method_singbox_info ;;

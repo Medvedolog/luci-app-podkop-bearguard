@@ -127,7 +127,7 @@ fi
 if (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256); then
     :
 else
-    echo "FAIL  vendor.sha256"; fail=1
+    echo "FAIL  vendor.sha256"; sha256sum "$BOT_SRC"; fail=1
 fi
 
 if [ -f root/usr/share/luci-app-podkop-bot/install.sh ]; then
@@ -271,7 +271,7 @@ grep -Fq "curl -q -s --noproxy '*' --connect-timeout 3 --max-time 8" "$RUNTIME_R
 grep -Fq 'Selector|URLTest|Fallback|LoadBalance)' "$RUNTIME_RPC" || {
     echo "Runtime: selector-like Clash group coverage regressed" >&2; fail=1
 }
-grep -Fq "curl -q --noproxy '*' -s" "$BOT_SRC" || {
+{ grep -Fq "curl -q --noproxy '*' -s" "$BOT_SRC" || grep -Fq "curl -q --noproxy '*' -fsS" "$BOT_SRC"; } || {
     echo "Bot: local Clash API must bypass Bearhole/curlrc" >&2; fail=1
 }
 RESCUE_RPC="root/usr/libexec/rpcd/podkop_bot_warpscout_rescue"
@@ -289,7 +289,7 @@ grep -Fq 'rescue_autostart' "$RESCUE_RPC" || {
 grep -Fq 'ensure_account(){' "$RESCUE_RPC" && grep -Fq 'start)method_start' "$RESCUE_RPC" || {
     echo "WARP Rescue: one-button start (account + discovery) missing" >&2; fail=1
 }
-grep -Fq '"set", "trigger", "start"' root/usr/share/rpcd/acl.d/luci-app-podkop-bot.json || {
+jq -e '."luci-app-podkop-bot".write.ubus.podkop_bot_warpscout_rescue | index("start") != null' root/usr/share/rpcd/acl.d/luci-app-podkop-bot.json >/dev/null 2>&1 || {
     echo "WARP Rescue: start RPC not in ACL" >&2; fail=1
 }
 grep -Fq "callRescueStart" "$WARPSCOUT_JS" && grep -Fq "Установить и запустить WARP" "$WARPSCOUT_JS" || {

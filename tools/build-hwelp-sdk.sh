@@ -59,8 +59,23 @@ rm -rf "$SDK_DIR/package/hwelp-proxy"
 cp -a "$ROOT/hwelp-proxy" "$SDK_DIR/package/hwelp-proxy"
 rm -f "$SDK_DIR/package/hwelp-proxy/owlab.yaml" "$SDK_DIR/package/hwelp-proxy/README.md"
 
+# Verify the SDK host prerequisites separately so a .prereq-build failure is
+# reported before the package build rather than hidden by the top-level make.
+# Do not bypass these checks: a failed prerequisite invalidates the package.
+if ! make -C "$SDK_DIR" -r -f "$SDK_DIR/include/prereq-build.mk" prereq V=s; then
+    echo "OpenWrt SDK host prerequisite check failed (SDK: $SDK_URL)." >&2
+    echo "Inspect the tool/version errors above; no package was produced." >&2
+    exit 1
+fi
+
 make -C "$SDK_DIR" defconfig >/dev/null
-make -C "$SDK_DIR" package/hwelp-proxy/compile -j"$(nproc)" V=s
+if ! make -C "$SDK_DIR" package/hwelp-proxy/compile -j"$(nproc)" V=s; then
+    echo "SDK package compilation failed. Printing host prerequisite diagnostics:" >&2
+    # OpenWrt SDK's toplevel.mk normally hides prereq stderr (2>/dev/null),
+    # leaving only .prereq-build Error 1. Run that test directly to diagnose.
+    make -C "$SDK_DIR" -r -f "$SDK_DIR/include/prereq-build.mk" prereq V=s || true
+    exit 1
+fi
 
 PKG=$(find "$SDK_DIR/bin" -type f \( -name 'hwelp-proxy_*.ipk' -o -name 'hwelp-proxy-*.apk' \) | head -n1)
 [ -n "$PKG" ] || { echo "hwelp-proxy package not found after SDK build" >&2; exit 1; }

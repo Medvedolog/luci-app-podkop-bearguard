@@ -10,7 +10,13 @@ LOCK="/tmp/podkop_uci.lock"
 NATIVE_STATE_BASE="/etc/forkop/tailscale"
 
 json_in() { _IN=$(cat 2>/dev/null); [ -n "$_IN" ] || _IN='{}'; }
-lock_begin() { command -v flock >/dev/null 2>&1 || return 0; exec 8>>"$LOCK" 2>/dev/null || return 0; flock -x -w 10 8 2>/dev/null || flock -x -n 8 2>/dev/null || return 0; }
+lock_begin() {
+    # No fail-open: two concurrent RPC or Telegram writes may corrupt Forkop.
+    command -v flock >/dev/null 2>&1 || return 1
+    (umask 077; : >> "$LOCK") 2>/dev/null || return 1
+    exec 8>>"$LOCK" 2>/dev/null || return 1
+    flock -x -w 10 8 2>/dev/null || { exec 8>&-; return 1; }
+}
 lock_end() { exec 8>&- 2>/dev/null || true; }
 
 standalone_tailscale_present() {
@@ -82,7 +88,23 @@ native_gen_section() {
     return 1
 }
 native_restart() { [ -x "$FORKOP_INIT" ] && "$FORKOP_INIT" restart >/dev/null 2>&1; }
-native_backup() { _b="/tmp/forkop.tailscale.$$.bak"; cp -p /etc/config/forkop "$_b" 2>/dev/null || : >"$_b"; printf '%s' "$_b"; }
+native_backup() {
+    # Never use an empty snapshot as rollback source or expose auth keys in /tmp.
+    _b=$(mktemp /tmp/forkop.tailscale.XXXXXX) || return 1
+    (umask 077; cat /etc/config/forkop > "$_b") 2>/dev/null &&
+        [ -s "$_b" ] && chmod 600 "$_b" 2>/dev/null || {
+        rm -f "$_b"
+        return 1
+    }
+    printf '%s' "$_b"
+}
+native_begin() {
+    lock_begin || return 1
+    _bak=$(native_backup) || { lock_end; return 1; }
+}
+native_begin_failure() {
+    printf '{"ok":false,"reason":"backup_or_lock_failed","detail":"Forkop configuration was not modified"}\n'
+}
 native_restore() { [ -f "$1" ] || return 1; cp -p "$1" /etc/config/forkop 2>/dev/null || return 1; rm -f "$1"; uci -q revert forkop >/dev/null 2>&1 || true; }
 
 runtime_apply() {
@@ -246,7 +268,7 @@ method_create() {
     if [ "$_provider" = forkop-native ]; then
         [ -z "$(native_find_section)" ] || { printf '{"ok":false,"reason":"already_configured"}\n'; return; }
         _sec=$(native_gen_section) || { printf '{"ok":false,"reason":"section_name_exhausted"}\n'; return; }
-        lock_begin; _bak=$(native_backup); _ok=1
+        native_begin || { native_begin_failure; return; }; _ok=1
         uci -q set "forkop.${_sec}=server" || _ok=0
         [ $_ok = 1 ] && uci -q set "forkop.${_sec}.protocol=tailscale" || _ok=0
         [ $_ok = 1 ] && uci -q set "forkop.${_sec}.enabled=0" || _ok=0
@@ -286,7 +308,7 @@ method_set_enabled() {
     if [ "$_provider" = forkop-native ]; then
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
         _vi=0; [ "$_want" = true ] && _vi=1
-        lock_begin; _bak=$(native_backup)
+        native_begin || { native_begin_failure; return; }
         if ! uci -q set "forkop.${_sec}.enabled=$_vi" || ! uci -q commit forkop || ! native_restart; then
             native_restore "$_bak" >/dev/null 2>&1 || true; native_restart >/dev/null 2>&1 || true; lock_end
             printf '{"ok":false,"reason":"restart_failed","rolled_back":true}\n'; return
@@ -385,7 +407,7 @@ method_delete() {
     if [ "$_legacy" = true ]; then
         [ "$_provider" != forkop-native ] || { printf '{"ok":false,"reason":"legacy_delete_not_allowed_on_native"}\n'; return; }
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
-        lock_begin; _bak=$(native_backup)
+        native_begin || { native_begin_failure; return; }
         if ! uci -q delete "forkop.${_sec}" || ! uci -q commit forkop; then
             native_restore "$_bak" >/dev/null 2>&1 || true; lock_end
             printf '{"ok":false,"reason":"uci_write_failed","rolled_back":true}\n'; return
@@ -398,7 +420,7 @@ method_delete() {
 
     if [ "$_provider" = forkop-native ]; then
         _sec=$(native_find_section); [ -n "$_sec" ] || { printf '{"ok":false,"reason":"not_configured"}\n'; return; }
-        lock_begin; _bak=$(native_backup); _was=$(uci -q get "forkop.${_sec}.enabled" 2>/dev/null)
+        native_begin || { native_begin_failure; return; }; _was=$(uci -q get "forkop.${_sec}.enabled" 2>/dev/null)
         if [ "$_was" = 1 ]; then
             uci -q set "forkop.${_sec}.enabled=0" && uci -q commit forkop && native_restart || { native_restore "$_bak" >/dev/null 2>&1 || true; lock_end; printf '{"ok":false,"reason":"disable_failed","rolled_back":true}\n'; return; }
         fi

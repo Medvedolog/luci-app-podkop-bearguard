@@ -12,12 +12,13 @@ grep -Fq 'podkop-net/podkop-experimental' root/usr/libexec/rpcd/podkop_bot
 grep -Fq '_forkop_mixed_server()' root/usr/libexec/rpcd/podkop_bot
 grep -Fq '_forkop_v2_read_only' root/usr/libexec/rpcd/podkop_bot
 grep -Fq 'manual_update_required' root/usr/libexec/rpcd/podkop_bot
-grep -Fq 'forkop_v2_tunnel_model' root/usr/libexec/rpcd/podkop_bot_tailscale
+grep -Fq 'exit_advertisement_is_core_managed' root/usr/libexec/rpcd/podkop_bot_tailscale
 grep -Fq 'embedded_core_unsupported' root/usr/libexec/rpcd/podkop_bot_tailscale
 grep -Fq 'podkop-exp) return 1' root/usr/lib/podkop_bot/tsnet-provider.sh
 grep -Fq 'podkop|forkop-x)' root/usr/lib/podkop_bot/tsnet-runtime-apply.sh
 sh tools/test-forkop2-mixed-port.sh
-# Ensure the embedded bot is the exact validated dev5 build.
+sh tools/test-forkop2-tailscale-native.sh root/usr/lib/podkop_bot/podkop_bot
+# Ensure the embedded bot is the exact validated dev6 build.
 (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256)
 grep -Fq '_group_selected_human_name()' root/usr/lib/podkop_bot/podkop_bot
 grep -Fq '_forkop_native_human_label()' root/usr/lib/podkop_bot/podkop_bot

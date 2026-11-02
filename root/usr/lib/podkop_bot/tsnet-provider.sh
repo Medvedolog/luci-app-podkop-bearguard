@@ -20,8 +20,9 @@ _ts_pkg_installed() {
     return 1
 }
 
-# Forkop 2.0 migrates native Tailscale from server/protocol to tunnel/kind.
-# Positive version/package evidence takes precedence over legacy marker files.
+# Forkop 2 supports two Tailscale roles: server/protocol=tailscale joins the
+# router to a tailnet, while tunnel/kind=tailscale is a routing outbound.
+# Positive version/package evidence takes precedence over legacy markers.
 tsnet_forkop_v2() {
     _v=$(uci -q get forkop.settings.config_version 2>/dev/null)
     case "$_v" in 2.*) return 0 ;; esac
@@ -87,7 +88,7 @@ tsnet_config_path() {
             _p=$(uci -q get podkop.settings.config_path 2>/dev/null)
             [ -n "$_p" ] || _p=/etc/sing-box/config.json
             ;;
-        forkop-x)
+        forkop-x|forkop-native)
             _p=$(uci -q get forkop.settings.config_path 2>/dev/null)
             if [ -z "$_p" ]; then
                 if [ -f /tmp/sing-box/config.json ]; then
@@ -104,11 +105,23 @@ tsnet_config_path() {
     printf '%s\n' "$_p"
 }
 
+# The resident Forkop ubus state includes core.features.tailscale.available.
+# It checks BOTH with_tailscale and with_gvisor. The cached state is cheaper
+# than launching a second sing-box Go process on low-memory routers.
+tsnet_forkop_v2_core_tailscale() {
+    command -v ubus >/dev/null 2>&1 || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    _ts_cap_reply=$(ubus call forkop state '{}' 2>/dev/null) || return 1
+    printf '%s' "$_ts_cap_reply" | jq -e '.capabilities.core.known == true and .capabilities.core.features.tailscale.available == true' >/dev/null 2>&1
+}
+
 tsnet_capable() {
     case "$(tsnet_provider)" in
-        # Both require their native integration, not the legacy JSON overlay.
+        # Podkop-exp has an embedded Go core; this legacy tsnet integration must
+        # not run through its binary or a standalone sing-box JSON overlay.
         podkop-exp) return 1 ;;
-        forkop-native) tsnet_forkop_v2 && return 1 ;;
+        forkop-native)
+            if tsnet_forkop_v2; then tsnet_forkop_v2_core_tailscale; return; fi ;;
     esac
     command -v sing-box >/dev/null 2>&1 || return 1
 

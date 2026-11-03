@@ -56,6 +56,12 @@ render_endpoint() {
 }
 
 apply_runtime() {
+    # Never mutate a Go embedded core or Forkop's native generated dataplane.
+    # The legacy overlay is supported only for the two explicitly verified providers.
+    case "$(tsnet_provider)" in
+        podkop|forkop-x) ;;
+        *) log "event=runtime_apply result=unsupported_provider"; return 4 ;;
+    esac
     provider_busy && return 3
     _cfg=$(tsnet_config_path)
     [ -r "$_cfg" ] || return 2

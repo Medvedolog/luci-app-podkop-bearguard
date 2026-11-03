@@ -20,8 +20,27 @@ _ts_pkg_installed() {
     return 1
 }
 
+# Forkop 2 supports two Tailscale roles: server/protocol=tailscale joins the
+# router to a tailnet, while tunnel/kind=tailscale is a routing outbound.
+# Positive version/package evidence takes precedence over legacy markers.
+tsnet_forkop_v2() {
+    _v=$(uci -q get forkop.settings.config_version 2>/dev/null)
+    case "$_v" in 2.*) return 0 ;; esac
+    _ts_pkg_installed sing-box-forkop
+}
+
 tsnet_provider() {
+    # Experimental 0.8 has a Go supervisor with an embedded sing-box core.
+    # Its UCI namespace and binary name are inherited from stable Podkop.
+    if _ts_pkg_installed podkop-exp; then
+        printf '%s\n' podkop-exp
+        return 0
+    fi
     if [ -f /etc/config/forkop ]; then
+        if tsnet_forkop_v2; then
+            printf '%s\n' forkop-native
+            return 0
+        fi
         # Forkop X has a dedicated migration helper. Check the positive marker
         # first so a future file-layout change in either fork cannot flip the
         # provider (and therefore updater/release source) by absence alone.
@@ -54,6 +73,8 @@ tsnet_provider() {
 
 tsnet_config_path() {
     _provider=$(tsnet_provider)
+    # podkop-exp does not generate a standalone sing-box JSON configuration.
+    [ "$_provider" != podkop-exp ] || return 1
 
     # Prefer the actual sing-box service conffile when a package exposes it.
     _p=$(uci -q get sing-box.main.conffile 2>/dev/null)
@@ -67,7 +88,7 @@ tsnet_config_path() {
             _p=$(uci -q get podkop.settings.config_path 2>/dev/null)
             [ -n "$_p" ] || _p=/etc/sing-box/config.json
             ;;
-        forkop-x)
+        forkop-x|forkop-native)
             _p=$(uci -q get forkop.settings.config_path 2>/dev/null)
             if [ -z "$_p" ]; then
                 if [ -f /tmp/sing-box/config.json ]; then
@@ -84,7 +105,24 @@ tsnet_config_path() {
     printf '%s\n' "$_p"
 }
 
+# The resident Forkop ubus state includes core.features.tailscale.available.
+# It checks BOTH with_tailscale and with_gvisor. The cached state is cheaper
+# than launching a second sing-box Go process on low-memory routers.
+tsnet_forkop_v2_core_tailscale() {
+    command -v ubus >/dev/null 2>&1 || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    _ts_cap_reply=$(ubus call forkop state '{}' 2>/dev/null) || return 1
+    printf '%s' "$_ts_cap_reply" | jq -e '.capabilities.core.known == true and .capabilities.core.features.tailscale.available == true' >/dev/null 2>&1
+}
+
 tsnet_capable() {
+    case "$(tsnet_provider)" in
+        # Podkop-exp has an embedded Go core; this legacy tsnet integration must
+        # not run through its binary or a standalone sing-box JSON overlay.
+        podkop-exp) return 1 ;;
+        forkop-native)
+            if tsnet_forkop_v2; then tsnet_forkop_v2_core_tailscale; return; fi ;;
+    esac
     command -v sing-box >/dev/null 2>&1 || return 1
 
     # Capability probing must never execute sing-box. On 256 MB routers a second
@@ -123,6 +161,23 @@ tsnet_capable() {
 }
 
 tsnet_version_hint() {
+    # Never spawn a Go core just to paint the status page.
+    _provider=$(tsnet_provider)
+    case "$_provider" in
+        podkop-exp|forkop-native)
+            if [ "$_provider" = podkop-exp ]; then _pkg=podkop-exp
+            elif tsnet_forkop_v2; then _pkg=sing-box-forkop
+            else _pkg=; fi
+            if [ -n "$_pkg" ]; then
+                if command -v opkg >/dev/null 2>&1; then
+                    _ver=$(opkg status "$_pkg" 2>/dev/null | sed -n 's/^Version: //p' | head -n 1)
+                elif command -v apk >/dev/null 2>&1; then
+                    _ver=$(apk info -v "$_pkg" 2>/dev/null | sed -n "s/^$_pkg-//p" | head -n 1)
+                fi
+                [ -z "${_ver:-}" ] || { printf '%s %s\n' "$_pkg" "$_ver"; return 0; }
+            fi
+            ;;
+    esac
     # Never spawn sing-box just to paint a status page.
     [ -r /etc/forkop/sing-box-version ] && { head -n 1 /etc/forkop/sing-box-version; return 0; }
     if command -v apk >/dev/null 2>&1; then

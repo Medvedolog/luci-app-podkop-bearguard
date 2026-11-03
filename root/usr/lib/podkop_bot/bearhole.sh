@@ -16,6 +16,7 @@ BH_END="# END PODKOP BEARHOLE"
 HWELP=/usr/bin/hwelp-proxy
 OWFEED_SUBSCRIBE=https://repo.owfeed.org/subscribe.sh
 HWELP_GITHUB_API=https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest
+HWELP_GITHUB_DL=https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/latest/download
 HWELP_SOURCE="$BH_DIR/hwelp.install_source"
 
 mkdir -p "$BH_DIR" 2>/dev/null
@@ -177,8 +178,13 @@ bh_probe_route(){
     if bh_probe_small "$_ep" 'https://api.github.com/repos/Medvedolog/luci-app-podkop-bearguard/releases/latest' "$_api"; then _ghapi=ok; _asset_url=$(jq -r '.assets[0].browser_download_url // empty' "$_api" 2>/dev/null); if [ -n "$_asset_url" ]; then _asset=fail; bh_probe_small "$_ep" "$_asset_url" "$_tmp"&&_asset=ok; fi; fi
     bh_probe_small "$_ep" 'https://codeload.github.com/Medvedolog/luci-app-podkop-bearguard/tar.gz/refs/heads/main' "$_tmp"&&_codeload=ok
     for _feed in $(bh_feed_targets); do bh_probe_small "$_ep" "$_feed" "$_tmp"||{ _feeds=fail; break; }; done
-    rm -f "$_tmp" "$_api" 2>/dev/null; _status=FAIL
-    if [ "$_core" = ok ]&&[ "$_raw" = ok ]&&[ "$_ghapi" = ok ]&&[ "$_codeload" = ok ]&&[ "$_feeds" = ok ]&&{ [ "$_asset" = ok ]||[ "$_asset" = skip ]; }; then _status=VALID; elif [ "$_core" = ok ]||[ "$_raw" = ok ]||[ "$_feeds" = ok ]; then _status=DEGRADED; fi
+    _status=FAIL
+    # api.github.com is only a convenience: anonymous calls are capped at 60/h per exit IP, so a
+    # shared VPN/WARP exit often gets 403 while github.com, raw and codeload work fine. Release
+    # assets have an API-free path (releases/latest/download), so API alone does not disqualify.
+    if [ "$_ghapi" != ok ]&&[ "$_asset" = skip ]; then bh_probe_small "$_ep" "$HWELP_GITHUB_DL/VERSION" "$_tmp"&&_asset=ok||_asset=fail; fi
+    if [ "$_core" = ok ]&&[ "$_raw" = ok ]&&[ "$_codeload" = ok ]&&[ "$_feeds" = ok ]&&{ [ "$_asset" = ok ]||[ "$_asset" = skip ]; }; then _status=VALID; elif [ "$_core" = ok ]||[ "$_raw" = ok ]||[ "$_feeds" = ok ]; then _status=DEGRADED; fi
+    rm -f "$_tmp" "$_api" 2>/dev/null
     printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$_id" "$_label" "$_ep" "$_core" "$_raw" "$_ghapi" "$_codeload" "$_asset" "$_feeds" "$_status" "$(date +%s 2>/dev/null||echo 0)"
 }
 
@@ -251,13 +257,20 @@ bh_install_hwelp_github(){
     bh_log "event=hwelp_install stage=source_try source=github arch=$_arch format=$_fmt"
     for _proxy in $(bh_bootstrap_http_candidates); do
         rm -f "$_api" "$_pkg" 2>/dev/null
-        bh_curl "$_proxy" -H 'Accept: application/vnd.github+json' -o "$_api" "$HWELP_GITHUB_API" >/dev/null 2>&1||continue
-        if [ "$_fmt" = ipk ]; then
-            _url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^hwelp-proxy_.*_" + $a + "\\.ipk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
-        else
-            _url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^hwelp-proxy-.*_" + $a + "\\.apk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+        _url=
+        if bh_curl "$_proxy" -H 'Accept: application/vnd.github+json' -o "$_api" "$HWELP_GITHUB_API" >/dev/null 2>&1; then
+            if [ "$_fmt" = ipk ]; then
+                _url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^hwelp-proxy_.*_" + $a + "\\.ipk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+            else
+                _url=$(jq -r --arg a "$_arch" '.assets[]? | select(.name | test("^hwelp-proxy-.*_" + $a + "\\.apk$")) | .browser_download_url' "$_api" 2>/dev/null | head -n1)
+            fi
         fi
-        [ -n "$_url" ] || continue
+        if [ -z "$_url" ]; then
+            # API rate-limited or blocked: the release VERSION asset names the package directly.
+            _rel=$(bh_curl "$_proxy" "$HWELP_GITHUB_DL/VERSION" 2>/dev/null | tr -d ' \r\n')
+            case "$_rel" in ''|*[!0-9A-Za-z._-]*) continue;; esac
+            if [ "$_fmt" = ipk ]; then _url="$HWELP_GITHUB_DL/hwelp-proxy_${_rel}_${_arch}.ipk"; else _url="$HWELP_GITHUB_DL/hwelp-proxy-${_rel}_${_arch}.apk"; fi
+        fi
         bh_curl "$_proxy" -o "$_pkg" "$_url" >/dev/null 2>&1||continue
         if [ "$_fmt" = ipk ]; then
             bh_pkg_run "$_proxy" opkg install "$_pkg" >/dev/null 2>&1||continue

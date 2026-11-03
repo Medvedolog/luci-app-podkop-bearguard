@@ -60,7 +60,14 @@ cp -a "$ROOT/hwelp-proxy" "$SDK_DIR/package/hwelp-proxy"
 rm -f "$SDK_DIR/package/hwelp-proxy/owlab.yaml" "$SDK_DIR/package/hwelp-proxy/README.md"
 
 make -C "$SDK_DIR" defconfig >/dev/null
-make -C "$SDK_DIR" package/hwelp-proxy/compile -j"$(nproc)" V=s
+if ! make -C "$SDK_DIR" package/hwelp-proxy/compile -j"$(nproc)" V=s; then
+    echo "SDK package compilation failed. Printing host prerequisite diagnostics:" >&2
+    # toplevel.mk hides prereq stderr, leaving only ".prereq-build Error 1".
+    # Its own prereq target runs the same checks with TOPDIR/INCLUDE_DIR set
+    # (calling include/prereq-build.mk directly fails on "/prereq.mk").
+    make -C "$SDK_DIR" prereq V=s || true
+    exit 1
+fi
 
 PKG=$(find "$SDK_DIR/bin" -type f \( -name 'hwelp-proxy_*.ipk' -o -name 'hwelp-proxy-*.apk' \) | head -n1)
 [ -n "$PKG" ] || { echo "hwelp-proxy package not found after SDK build" >&2; exit 1; }

@@ -1,0 +1,122 @@
+name: Publish BearGuard 0.20.0-r1 TEST from verified CI artifact
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-test-020.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-bearguard-test-020
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the source artifact and prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA=3ce3983df38b85edf9615a057757fd3d9666ead5
+          RUN_ID=41630575580
+          ARTIFACT_ID=13227963486
+          TAG=0.20.0-r1
+
+          run_sha="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .head_sha)"
+          run_conclusion="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .conclusion)"
+          run_repo="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .repository.full_name)"
+          test "$run_sha" = "$EXPECTED_SHA" || { echo "::error::Wrong build commit"; exit 1; }
+          test "$run_conclusion" = success || { echo "::error::Build did not succeed"; exit 1; }
+          test "$run_repo" = "$REPO" || { echo "::error::Unexpected build repository"; exit 1; }
+
+          gh api "repos/$REPO/actions/artifacts/$ARTIFACT_ID" > artifact.json
+          test "$(jq -r .workflow_run.head_sha artifact.json)" = "$EXPECTED_SHA"
+          test "$(jq -r .expired artifact.json)" = false
+          test "$(jq -r .name artifact.json)" = owfeed-packages
+
+          gh api "repos/$REPO/releases/tags/$TAG" > release.json
+          test "$(jq -r .prerelease release.json)" = true || { echo "::error::Target is not prerelease"; exit 1; }
+          test "$(jq -r .draft release.json)" = false || { echo "::error::Release is still draft"; exit 1; }
+
+          echo "Verified CI success and published prerelease."
+
+      - name: Download, unpack, and select actual package files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p extracted upload
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$REPO/actions/artifacts/13227963486/zip" > /tmp/owfeed-packages.zip
+          unzip -t /tmp/owfeed-packages.zip | tail -1
+          unzip -q /tmp/owfeed-packages.zip -d extracted
+          find extracted -maxdepth 4 -type f | sort
+
+          test -f extracted/noarch/luci-app-podkop-bot-0.20.0-r1.apk
+          test -f extracted/all/luci-app-podkop-bot_0.20.0-r1_all.ipk
+
+          # Only publish built packages, never signs/metadata or arbitrary paths.
+          # Flatten the artifact paths into GitHub release assets; disallow name collisions.
+          while IFS= read -r -d '' file; do
+            name="$(basename "$file")"
+            case "$name" in
+              *.apk|*.ipk) ;;
+              *) continue ;;
+            esac
+            if test -e "upload/$name"; then
+              cmp -s "$file" "upload/$name" || {
+                echo "::error::Conflicting package name: $name"
+                exit 1
+              }
+            else
+              cp "$file" "upload/$name"
+            fi
+          done < <(find extracted -type f -print0)
+          test "$(find upload -maxdepth 1 -type f -name '*.apk' | wc -l)" -ge 1
+          test "$(find upload -maxdepth 1 -type f -name '*.ipk' | wc -l)" -ge 1
+          ls -lh upload
+
+      - name: Fix prerelease tag to match the compiled commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG=0.20.0-r1
+          SHA=3ce3983df38b85edf9615a057757fd3d9666ead5
+          CURRENT="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha)"
+          case "$CURRENT" in
+            "$SHA") echo "Tag already correct." ;;
+            2f52c80c4c0660d953d539f41eef63fc14520d5e)
+              gh api -X PATCH "repos/$REPO/git/refs/tags/$TAG" \
+                -f sha="$SHA" -F force=true >/dev/null ;;
+            *) echo "::error::Tag was moved unexpectedly; refusing to overwrite $CURRENT"; exit 1 ;;
+          esac
+          test "$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha)" = "$SHA"
+
+      - name: Upload APK/IPK, keep prerelease and not latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG=0.20.0-r1
+          gh release upload "$TAG" upload/* --repo "$REPO" --clobber
+          ID="$(jq -r .id release.json)"
+          gh api -X PATCH "repos/$REPO/releases/$ID" \
+            -f target_commitish=3ce3983df38b85edf9615a057757fd3d9666ead5 \
+            -F prerelease=true -F draft=false -f make_latest=false >/dev/null
+          gh api "repos/$REPO/releases/tags/$TAG" > verify.json
+          test "$(jq -r .prerelease verify.json)" = true
+          test "$(jq '.assets | map(select(.name | endswith(".apk"))) | length' verify.json)" -ge 1
+          test "$(jq '.assets | map(select(.name | endswith(".ipk"))) | length' verify.json)" -ge 1
+          echo "Published test packages: https://github.com/$REPO/releases/tag/$TAG"

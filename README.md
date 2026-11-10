@@ -20,7 +20,7 @@
 </div>
 
 <!-- experimental-0.20.0-r1-status -->
-> **Тестовая версия 0.20.0-r1 — Forkop 2.0 и Podkop Experimental 0.8.x.** [Предварительный релиз](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/tag/0.20.0-r1) · [изменения и исходный код (PR #25)](https://github.com/Medvedolog/luci-app-podkop-bearguard/pull/25). Ветка `main` и установка через `releases/latest` остаются на стабильной 0.19.24; возможности 0.20.0 доступны в тестовой ветке `claude/funny-pascal-1kzrka`. В релизе пока **нет вложенных APK/IPK**, а опубликованный тег указывает на старый коммит `2f52c80`; до исправления не используйте страницу релиза для установки 0.20.0. Тесты на реальном роутере для Forkop 2.0 / Podkop Experimental 0.8.x не подтверждены.
+> **Тестовая версия 0.20.0-r1 — Forkop 2.0 и Podkop Experimental 0.8.x.** [Предварительный релиз](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/tag/0.20.0-r1) · [изменения и исходный код (PR #25)](https://github.com/Medvedolog/luci-app-podkop-bearguard/pull/25). Ветка `main` и установка через `releases/latest` остаются на стабильной 0.19.24; возможности 0.20.0 доступны в тестовой ветке `claude/funny-pascal-1kzrka`. В [pre-release `0.20.0-r1`](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/tag/0.20.0-r1) опубликованы APK/IPK из успешной CI-сборки `3ce3983`; это тестовая, а не стабильная версия. Тесты на реальном роутере для Forkop 2.0 / Podkop Experimental 0.8.x не подтверждены.
 
 
 ---

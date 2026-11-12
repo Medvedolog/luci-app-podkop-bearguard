@@ -312,7 +312,7 @@ _bg_ensure_forkop2_mixed() {
     _created=false; _reenabled=false
     if [ -n "$_existing" ]; then
         _port=$(uci -q get "forkop.$_existing.listen_port" 2>/dev/null)
-        if [ "$(uci -q get "forkop.$_existing.enabled" 2>/dev/null)" != 0 ]; then
+        if [ "$(uci -q get "forkop.$_existing.enabled" 2>/dev/null)" = 1 ]; then
             case "$_port" in ''|*[!0-9]*) uci_txn_end; printf '{"ok":false,"reason":"invalid_existing_port"}\n'; return ;; esac
             [ "$_port" -ge 1 ] 2>/dev/null && [ "$_port" -le 65535 ] 2>/dev/null || {
                 uci_txn_end; printf '{"ok":false,"reason":"invalid_existing_port"}\n'; return;
@@ -418,7 +418,7 @@ emit_mixed_proxy() {
 		_srv=$(_forkop_mixed_server "$_sec")
 		_port=$(uci -q get "forkop.$_srv.listen_port" 2>/dev/null)
 		_enabled=false
-		[ -n "$_srv" ] && [ "$(uci -q get "forkop.$_srv.enabled" 2>/dev/null)" != 0 ] && _enabled=true
+		[ -n "$_srv" ] && [ "$(uci -q get "forkop.$_srv.enabled" 2>/dev/null)" = 1 ] && _enabled=true
 		case "$_port" in ''|*[!0-9]*) _port= ;; esac
 		if [ -n "$_port" ]; then
 			printf '"mixed_proxy":{"available":true,"enabled":%s,"section":"%s","port":%s,"read_only":false,"auto_create":true,"native_server":true,"server":%s}' "$_enabled" "$_sec" "$_port" "$(_json_str "$_srv")"

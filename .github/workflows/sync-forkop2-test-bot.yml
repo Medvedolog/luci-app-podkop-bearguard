@@ -18,7 +18,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fL --retry 3 --connect-timeout 10 --max-time 90 \
-            https://raw.githubusercontent.com/Medvedolog/podkop_bot/09a1d267abbbd701fd46c4555473db96f380b97a/podkop_bot.sh \
+            https://raw.githubusercontent.com/Medvedolog/podkop_bot/7f1e343f2d1ab06c14de524a6f7e297041f44f57/podkop_bot.sh \
             -o root/usr/lib/podkop_bot/podkop_bot
           (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
           sh -n root/usr/lib/podkop_bot/podkop_bot
@@ -26,6 +26,7 @@ jobs:
           grep -Fq '_handle_forkop_ext "fk_ut_menu"' root/usr/lib/podkop_bot/podkop_bot
           grep -Fq 'urltest_settings|urltest_filters_menu)' root/usr/lib/podkop_bot/podkop_bot
           grep -Fq 'Do NOT activate a latent, unused include_outbounds list' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'ts_cap_info' root/usr/lib/podkop_bot/podkop_bot
       - name: Check package integration and compatibility
         run: |
           set -euo pipefail

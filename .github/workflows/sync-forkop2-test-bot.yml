@@ -1,0 +1,43 @@
+name: Sync Forkop 2 bot P0 fixes into BearGuard test branch
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/sync-forkop2-test-bot.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/funny-pascal-1kzrka
+          persist-credentials: true
+      - name: Sync pinned, reviewed test bot and vendor checksum
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 10 --max-time 90 \
+            https://raw.githubusercontent.com/Medvedolog/podkop_bot/69786ad1cfed3b6d52aaaf28cc60627586c2b273/podkop_bot.sh \
+            -o root/usr/lib/podkop_bot/podkop_bot
+          (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
+          sh -n root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'only exact, verified Selector/Fallback membership' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq '_handle_forkop_ext "fk_ut_menu"' root/usr/lib/podkop_bot/podkop_bot
+      - name: Check package integration and compatibility
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y jq
+          sh tools/check-provider-compat.sh
+          sh tools/check-bot-transport.sh
+          sh tools/check-tailscale-rpc-acl.sh
+      - name: Commit verified vendored bot
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/vendor.sha256
+          git diff --cached --quiet && { echo "Nothing to sync"; exit 0; }
+          git commit -m "fix: sync Forkop 2 URLTest and safe Clash switching from podkop_bot"
+          git push origin HEAD:claude/funny-pascal-1kzrka

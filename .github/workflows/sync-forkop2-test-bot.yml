@@ -18,7 +18,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fL --retry 3 --connect-timeout 10 --max-time 90 \
-            https://raw.githubusercontent.com/Medvedolog/podkop_bot/7f1e343f2d1ab06c14de524a6f7e297041f44f57/podkop_bot.sh \
+            https://raw.githubusercontent.com/Medvedolog/podkop_bot/8625c7e9e6056263b4386a96b6bdf5d7b9c230dc/podkop_bot.sh \
             -o root/usr/lib/podkop_bot/podkop_bot
           (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
           sh -n root/usr/lib/podkop_bot/podkop_bot
@@ -27,6 +27,12 @@ jobs:
           grep -Fq 'urltest_settings|urltest_filters_menu)' root/usr/lib/podkop_bot/podkop_bot
           grep -Fq 'Do NOT activate a latent, unused include_outbounds list' root/usr/lib/podkop_bot/podkop_bot
           grep -Fq 'ts_cap_info' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'BOT_VERSION="0.20.1"' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'Mixed UCI сервер:' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'Индивидуальные обходы (cure)' root/usr/lib/podkop_bot/podkop_bot
+          test "$(cat version.txt)" = "0.20.1"
+          grep -Fq 'PKG_VERSION:=0.20.1' Makefile
+
       - name: Check package integration and compatibility
         run: |
           set -euo pipefail

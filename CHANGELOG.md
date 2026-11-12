@@ -1,5 +1,12 @@
 # История изменений
 
+### 0.20.1-r1 — опубликованный TEST (Forkop 2.0 / Podkop Experimental v0.8.13)
+
+- **[Публикация]** [Pre-release `0.20.1-r1`](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/tag/0.20.1-r1) содержит 11 APK/IPK из [успешной CI-сборки](https://github.com/Medvedolog/luci-app-podkop-bearguard/actions/runs/43290977819); тег указывает на `ff410fe37b65d37273e97c2fa1f419d836f22c79`. Стабильный `0.19.24-1` не заменён.
+- **[Forkop 2.0]** Исправлены транзакционное переключение существующих Mixed-серверов и откат при ошибке; нативные фильтры дочернего URLTest, определение подтверждённого конечного узла во вложенном URLTest, безопасный выбор через Clash API; добавлена диагностика поддержки Tailscale ядром.
+- **[Podkop Experimental]** Адаптер сопоставлен с v0.8.13 (`config_version=2`, `source`, `member`, `server_choice=fastest/loss/balance`, `cure`). Интерактивный upstream-установщик не запускается из Telegram автоматически.
+- **[Ограничение]** CI и тестовое OpenWrt-окружение пройдены, но аппаратные испытания AX6000 не завершены; это **не стабильный релиз**.
+
 <!-- experimental-0.20.0-r1-status -->
 ### 0.20.0-r1 — TEST, Forkop 2.0 / Podkop Experimental 0.8.x (не stable)
 

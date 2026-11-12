@@ -1,4 +1,4 @@
-name: Sync Forkop 2 bot P0 fixes into BearGuard test branch
+name: Sync Forkop 2 bot verified hotfix into BearGuard test branch
 on:
   push:
     branches: [main]
@@ -18,12 +18,14 @@ jobs:
         run: |
           set -euo pipefail
           curl -fL --retry 3 --connect-timeout 10 --max-time 90 \
-            https://raw.githubusercontent.com/Medvedolog/podkop_bot/69786ad1cfed3b6d52aaaf28cc60627586c2b273/podkop_bot.sh \
+            https://raw.githubusercontent.com/Medvedolog/podkop_bot/09a1d267abbbd701fd46c4555473db96f380b97a/podkop_bot.sh \
             -o root/usr/lib/podkop_bot/podkop_bot
           (cd root/usr/lib/podkop_bot && sha256sum podkop_bot > vendor.sha256)
           sh -n root/usr/lib/podkop_bot/podkop_bot
           grep -Fq 'only exact, verified Selector/Fallback membership' root/usr/lib/podkop_bot/podkop_bot
           grep -Fq '_handle_forkop_ext "fk_ut_menu"' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'urltest_settings|urltest_filters_menu)' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'Do NOT activate a latent, unused include_outbounds list' root/usr/lib/podkop_bot/podkop_bot
       - name: Check package integration and compatibility
         run: |
           set -euo pipefail
@@ -39,5 +41,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add root/usr/lib/podkop_bot/podkop_bot root/usr/lib/podkop_bot/vendor.sha256
           git diff --cached --quiet && { echo "Nothing to sync"; exit 0; }
-          git commit -m "fix: sync Forkop 2 URLTest and safe Clash switching from podkop_bot"
+          git commit -m "fix: sync verified Forkop 2 URLTest filter regression fixes from podkop_bot"
           git push origin HEAD:claude/funny-pascal-1kzrka

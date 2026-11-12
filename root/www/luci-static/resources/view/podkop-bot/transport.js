@@ -225,7 +225,7 @@ return view.extend({
 			var probeBtn=(t.endpoint&&t.endpoint!==''&&!t._noProbe)?E('button',{'class':'cbi-button','style':'padding:.1em .6em;font-size:90%;','click':ui.createHandlerFn(self,'probeOne',t)},_('Тест')):E('span',{});
 			var probeResult=E('span',{'id':'probe-'+t.id,'style':'margin-left:.6em;color:#888;font-size:90%;'});t._resultNode=probeResult;
 			var extraBtn=E('span',{});
-			if(t.id==='tier1')extraBtn=E('button',{'class':'cbi-button','style':'padding:.1em .4em;font-size:85%;','title':_('изменить порт Mixed Proxy'),'click':ui.createHandlerFn(self,'editTier1Port',t.endpoint)},'✎');
+			if(t.id==='tier1'&&!(self.sectionsData&&self.sectionsData.forkop_v2))extraBtn=E('button',{'class':'cbi-button','style':'padding:.1em .4em;font-size:85%;','title':_('изменить порт Mixed Proxy'),'click':ui.createHandlerFn(self,'editTier1Port',t.endpoint)},'✎');
 			else if(t.id==='tier3')extraBtn=E('button',{'class':'cbi-button','style':'padding:.1em .4em;font-size:85%;','title':_('задать или изменить свой прокси'),'click':ui.createHandlerFn(self,'editCustomProxy',t.endpoint)},'✎');
 			else if(t.id==='tier4')extraBtn=E('button',{'class':'cbi-button','style':'padding:.1em .4em;font-size:85%;','title':_('выбрать интерфейс привязки'),'click':ui.createHandlerFn(self,'editBindIface')},'⚙');
 			else if(t._warp)extraBtn=E('a',{'class':'cbi-button','style':'padding:.1em .5em;font-size:85%;','href':L.url('admin/services/podkop-bot/transport/warp-revolver')},_('WARP Rescue'));
@@ -241,7 +241,8 @@ return view.extend({
 				E('div',{'style':'display:flex;align-items:center;flex-wrap:wrap;gap:.3em;'},[dotWrap,sysBadge,probeBtn,extraBtn,crudBtns]),probeResult,
 				(t.endpoint&&t.endpoint!=='direct')?E('div',{'style':'color:#888;font-size:85%;margin-left:1.1em;font-family:monospace;word-break:break-all;'},fbDisplay(t.endpoint)):(t.note?E('div',{'style':'color:#888;font-size:85%;margin-left:1.1em;'},t.note):E('span',{})),
 				(t.endpoint&&t.endpoint!=='direct'&&t.note)?E('div',{'style':'color:#888;font-size:82%;margin-left:1.1em;'},t.note):E('span',{}),
-				(t.id==='tier1'&&!t.configured)?E('button',{'class':'cbi-button cbi-button-action','style':'margin:.4em 0 .2em 1.1em;padding:.1em .6em;font-size:90%;','click':ui.createHandlerFn(self,'enableMixedProxy')},_('Включить Mixed Proxy')):E('span',{})
+				(t.id==='tier1'&&!t.configured&&['forkop','plus'].indexOf((self.sectionsData||{}).variant)>=0)?E('button',{'class':'cbi-button cbi-button-action','style':'margin:.4em 0 .2em 1.1em;padding:.1em .6em;font-size:90%;','click':ui.createHandlerFn(self,'enableMixedProxy')},_('Создать / включить Mixed Proxy')):
+				(t.id==='tier1'&&!t.configured?E('div',{'style':'margin:.4em 0 .2em 1.1em;color:#888;font-size:90%;'},_('Включите Mixed Proxy в первой прокси-секции штатного LuCI движка, сохраните и примените настройки.')):E('span',{}))
 			]);
 		}));
 	},

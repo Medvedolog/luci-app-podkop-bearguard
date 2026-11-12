@@ -24,6 +24,7 @@ jobs:
           grep -Fxq 'PKG_VERSION:=0.20.1' Makefile
           grep -Fq 'LUCI_APP_VERSION="0.20.1"' root/usr/libexec/rpcd/podkop_bot
           grep -Fq 'BOT_VERSION="0.20.1"' root/usr/lib/podkop_bot/podkop_bot
+          grep -Fq 'Forkop2 leaves are section/subscription/name tags' root/usr/lib/podkop_bot/podkop_bot
           (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256)
           sh tools/check-provider-compat.sh
           sh tools/test-forkop2-mixed-status-0201.sh

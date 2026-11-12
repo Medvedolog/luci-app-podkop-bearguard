@@ -43,8 +43,8 @@ jobs:
     steps:
       - name: Trigger full native APK and IPK build on experimental ref
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api -X POST "repos/\${{ github.repository }}/actions/workflows/ci.yml/dispatches" -f ref=claude/funny-pascal-1kzrka
+          gh api -X POST "repos/${{ github.repository }}/actions/workflows/ci.yml/dispatches" -f ref=claude/funny-pascal-1kzrka
           echo "Triggered full CI build for 0.20.1 experimental ref"

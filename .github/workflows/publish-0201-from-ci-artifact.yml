@@ -70,10 +70,19 @@ jobs:
         run: |
           set -euo pipefail
           # Refuse to change any existing tag or release for a different commit.
-          current="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || true)"
+          # An absent tag returns GitHub API 404. The gh --jq wrapper can
+          # return that JSON error as stdout, so never mistake it for a SHA.
+          current_json="$(gh api "repos/$REPO/git/ref/tags/$TAG" 2>/dev/null || true)"
+          current="$(printf '%s' "$current_json" | jq -r '.object.sha // empty' 2>/dev/null || true)"
           if test -n "$current" && test "$current" != "$EXPECTED_SHA"; then
             echo "::error::Existing tag $TAG points to unexpected SHA $current"
             exit 1
+          fi
+          if test -z "$current" && test -n "$current_json"; then
+            # Fail closed on all unexpected API errors (including 403).
+            test "$(printf '%s' "$current_json" | jq -r '.status // empty')" = 404 || {
+              echo "::error::Unable to safely determine tag state"; exit 1;
+            }
           fi
           if gh api "repos/$REPO/releases/tags/$TAG" > release.json 2>/dev/null; then
             test "$(jq -r .prerelease release.json)" = true

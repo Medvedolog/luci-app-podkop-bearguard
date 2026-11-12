@@ -1,0 +1,50 @@
+name: Verify BearGuard 0.20.1 experimental and dispatch package build
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/verify-0201-test.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/funny-pascal-1kzrka
+      - name: Validate 0.20.1 package metadata and embedded bot
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y jq
+          test "$(cat version.txt)" = "0.20.1"
+          grep -Fxq 'PKG_VERSION:=0.20.1' Makefile
+          grep -Fq 'LUCI_APP_VERSION="0.20.1"' root/usr/libexec/rpcd/podkop_bot
+          grep -Fq 'BOT_VERSION="0.20.1"' root/usr/lib/podkop_bot/podkop_bot
+          (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256)
+          sh tools/check-provider-compat.sh
+          sh tools/test-forkop2-mixed-status-0201.sh
+          sh tools/check-sources.sh
+          sh tools/check-async-wrappers.sh
+          sh tools/check-bot-transport.sh
+          sh tools/check-package.sh
+      - name: Validate staging of 0.20.1-r1 without publishing
+        run: |
+          set -euo pipefail
+          sh tools/stage.sh 0.20.1-r1
+          test -s dist/VERSION
+          test "$(cat dist/VERSION)" = "0.20.1-r1"
+  dispatch-build:
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Trigger full native APK and IPK build on experimental ref
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api -X POST "repos/\${{ github.repository }}/actions/workflows/ci.yml/dispatches" -f ref=claude/funny-pascal-1kzrka
+          echo "Triggered full CI build for 0.20.1 experimental ref"

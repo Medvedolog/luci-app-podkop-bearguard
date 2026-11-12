@@ -30,7 +30,7 @@ jobs:
           sh tools/check-sources.sh
           sh tools/check-async-wrappers.sh
           sh tools/check-bot-transport.sh
-          sh tools/check-package.sh
+          # check-package.sh validates compiled SDK artifacts; run it in native build CI, not here.
       - name: Validate staging of 0.20.1-r1 without publishing
         run: |
           set -euo pipefail

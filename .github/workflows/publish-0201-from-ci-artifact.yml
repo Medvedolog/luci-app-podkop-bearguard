@@ -1,0 +1,100 @@
+name: Publish BearGuard 0.20.1-r1 from verified build artifact
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-0201-from-ci-artifact.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: bearguard-0201-test-release
+  cancel-in-progress: false
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      EXPECTED_SHA: ff410fe37b65d37273e97c2fa1f419d836f22c79
+      TAG: 0.20.1-r1
+    steps:
+      - name: Confirm exact successful build and retrieve matching artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_ID=43290977819
+          RUN_SHA="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.head_sha')"
+          RUN_EVENT="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.event')"
+          RUN_RESULT="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.conclusion')"
+          RUN_BRANCH="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.head_branch')"
+          test "$RUN_SHA" = "$EXPECTED_SHA"
+          test "$RUN_EVENT" = workflow_dispatch
+          test "$RUN_RESULT" = success
+          test "$RUN_BRANCH" = claude/funny-pascal-1kzrka
+          test "$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.repository.full_name')" = "$REPO"
+          gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" > artifacts.json
+          ART_ID="$(jq -er '[.artifacts[] | select(.name == "owfeed-packages" and .expired == false)] | if length == 1 then .[0].id else error("Expected exactly one package artifact") end' artifacts.json)"
+          gh api "repos/$REPO/actions/artifacts/$ART_ID" > artifact.json
+          test "$(jq -r .workflow_run.head_sha artifact.json)" = "$EXPECTED_SHA"
+          test "$(jq -r .name artifact.json)" = owfeed-packages
+          test "$(jq -r .workflow_run.id artifact.json)" = "$RUN_ID"
+          test "$(jq -r .expired artifact.json)" = false
+          gh api -H "Accept: application/vnd.github+json" "repos/$REPO/actions/artifacts/$ART_ID/zip" > artifact.zip
+          unzip -t artifact.zip > /dev/null
+          mkdir -p extracted upload
+          unzip -q artifact.zip -d extracted
+          test -s extracted/noarch/luci-app-podkop-bot-0.20.1-r1.apk
+          test -s extracted/all/luci-app-podkop-bot_0.20.1-r1_all.ipk
+          # Only package payloads may be attached. Detect flattened filename collisions.
+          while IFS= read -r -d '' item; do
+            name="$(basename "$item")"
+            case "$name" in *.apk|*.ipk) ;; *) continue ;; esac
+            if test -e "upload/$name"; then
+              cmp -s "$item" "upload/$name" || { echo "::error::Ambiguous duplicate $name"; exit 1; }
+            else
+              cp "$item" "upload/$name"
+            fi
+          done < <(find extracted -type f -print0)
+          test "$(find upload -maxdepth 1 -type f -name '*.apk' | wc -l)" -ge 1
+          test "$(find upload -maxdepth 1 -type f -name '*.ipk' | wc -l)" -ge 1
+          echo "Artifact run $RUN_ID SHA=$RUN_SHA assets:"
+          ls -lh upload
+
+      - name: Publish to dedicated prerelease only
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Refuse to change any existing tag or release for a different commit.
+          current="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || true)"
+          if test -n "$current" && test "$current" != "$EXPECTED_SHA"; then
+            echo "::error::Existing tag $TAG points to unexpected SHA $current"
+            exit 1
+          fi
+          if gh api "repos/$REPO/releases/tags/$TAG" > release.json 2>/dev/null; then
+            test "$(jq -r .prerelease release.json)" = true
+            test "$(jq -r .draft release.json)" = false
+          else
+            gh api -X POST "repos/$REPO/releases" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$EXPECTED_SHA" \
+              -f name="BearGuard 0.20.1-r1 TEST · Forkop 2 / Podkop Experimental 0.8.13" \
+              -F prerelease=true -F draft=false -f make_latest=false \
+              -f body="Experimental test build for Forkop 2.0 and Podkop Experimental v0.8.13. Mixed Proxy transaction/rollback, URLTest and safe Clash API guards, native Tailscale diagnostics, source/member/choice/cure compatibility. Hardware validation on AX6000 still required. Built from verified commit $EXPECTED_SHA." > release.json
+          fi
+          gh release upload "$TAG" upload/* --repo "$REPO" --clobber
+          release_id="$(jq -r .id release.json)"
+          gh api -X PATCH "repos/$REPO/releases/$release_id" \
+            -f target_commitish="$EXPECTED_SHA" -F prerelease=true -F draft=false -f make_latest=false >/dev/null
+          gh api "repos/$REPO/releases/tags/$TAG" > verify.json
+          test "$(jq -r .prerelease verify.json)" = true
+          test "$(jq -r .draft verify.json)" = false
+          test "$(jq -r .target_commitish verify.json)" = "$EXPECTED_SHA"
+          test "$(jq '[.assets[] | select(.name == "luci-app-podkop-bot-0.20.1-r1.apk")] | length' verify.json)" = 1
+          test "$(jq '[.assets[] | select(.name == "luci-app-podkop-bot_0.20.1-r1_all.ipk")] | length' verify.json)" = 1
+          test "$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha')" = "$EXPECTED_SHA"
+          echo "Published verified prerelease: https://github.com/$REPO/releases/tag/$TAG"

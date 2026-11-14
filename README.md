@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🐻 Podkop BearGuard 0.20.1
+# 🐻 Podkop BearGuard 0.20.2
 
 **LuCI-комплекс для управления podkop_bot, Podkop/Forkop, Tailscale/tsnet, WARP, аварийным транспортом и диагностикой OpenWrt**
 
-`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.20.1` · OpenWrt · LuCI · opkg / apk
+`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.20.2` · OpenWrt · LuCI · opkg / apk
 
 [![Release](https://img.shields.io/github/v/release/Medvedolog/luci-app-podkop-bearguard?style=flat-square&label=release&color=0969da)](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/Medvedolog/luci-app-podkop-bearguard/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/Medvedolog/luci-app-podkop-bearguard/actions/workflows/ci.yml)
@@ -21,7 +21,7 @@
 
 ---
 
-> **0.20.1 — тестовая ветка, аппаратная проверка ожидается.** Встроенный `podkop_bot` 0.20.1 сопоставлен с Podkop Experimental **v0.8.13**: новая UCI-модель `config_version=2`, источники, строки `member`, выбор `fastest/loss/balance` и индивидуальные `cure` (отображение без записи). Для Forkop 2 исправлены URLTest/Clash, статус существующего Mixed-сервера и безопасное применение Mixed с откатом; добавлена диагностика поддержки Tailscale в ядре. Установщик Experimental может удалять несовместимые пакеты, поэтому его автоматический запуск из бота заблокирован. **Это исходники, а не готовый APK 0.20.1; стабильный 0.20.0-r1 остаётся прежним.**
+> **0.20.2 — тестовая ветка, на железе не проверялась.** Исправлены регрессии 0.20.1: в Podkop Experimental снова виден список серверов секции, в Forkop 2 снова работают выбор сервера в группах с пробелами, кириллицей или `/` в имени и обновление подписок из Telegram. Сверено с Forkop **2.0.0** и Podkop Experimental **v0.8.14** (engine r25): группы секций с меткой находятся и в боте, и в LuCI, LuCI читает Clash API при выключенном YACD, несколько адресов проверки серверов не схлопываются в один. Стабильный релиз остаётся прежним.
 
 
 ## Что это такое

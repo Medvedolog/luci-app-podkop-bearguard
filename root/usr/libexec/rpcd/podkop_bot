@@ -19,7 +19,7 @@
 BOT_PATH="/usr/bin/podkop_bot"
 INIT_PATH="/etc/init.d/podkop_bot"
 INSTALLER_PATH="/usr/lib/podkop_bot/install.sh"
-LUCI_APP_VERSION="0.20.1"   # UI/version.txt use the clean X.Y.Z; the packaging -N suffix (control) is stripped before comparison
+LUCI_APP_VERSION="0.20.2"   # UI/version.txt use the clean X.Y.Z; the packaging -N suffix (control) is stripped before comparison
 
 # -- shared UCI lock ---------------------------------------------------------
 # The bot writes the same package from two processes (its command loop and the
@@ -229,9 +229,31 @@ _sec_mixed_stage() {
 	return 0
 }
 
-# _sec_clash_tag PKG SEC — the section's group in the Clash API: its label on
-# Forkop 2 (links run as "<label>/<name>"), its name everywhere else.
+# _sec_clash_tag PKG SEC [VARIANT] — the section's group in the Clash API: its
+# label on Forkop 2 (links run as "<label>/<name>"), the rule name on Podkop
+# Experimental 0.8 (group "<name>-out", see model/names.go), its name elsewhere.
 _sec_clash_tag() {
+	if [ "${3:-}" = podkop-exp ]; then
+		case "$(uci -q get "$1.settings.config_version" 2>/dev/null)" in
+			2|2.*)
+				_sct=$(uci -q show "$1" 2>/dev/null | awk -v p="$1." -v want="$2" '
+					{ eq = index($0, "="); k = substr($0, 1, eq - 1); v = substr($0, eq + 1)
+					  sub("^" p, "", k); sub(/^\047/, "", v); sub(/\047$/, "", v); gsub(/\047\\\047\047/, "\047", v)
+					  d = index(k, ".")
+					  if (!d) { if (v == "section") ord[++n] = k; next }
+					  if (substr(k, d + 1) == "label") lab[substr(k, 1, d - 1)] = v }
+					END { for (i = 1; i <= n; i++) {
+						sec = ord[i]; l = lab[sec]; gsub(/[ \t\r\n]+/, " ", l); sub(/^ /, "", l); sub(/ $/, "", l)
+						if (l == "") l = sec
+						c = l
+						if (c in taken) c = l " (" sec ")"
+						for (num = 2; c in taken; num++) c = l " (" sec ") #" num
+						taken[c] = 1
+						if (sec == want) { print c; exit } } }')
+				[ -n "$_sct" ] && { printf '%s' "$_sct"; return; }
+				;;
+		esac
+	fi
 	if _fk2 "$1"; then
 		_sct=$(uci -q get "$1.$2.label" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 		[ -n "$_sct" ] && { printf '%s' "$_sct"; return; }
@@ -2922,8 +2944,15 @@ method_active_probe() {
 	# leaf outbound is commonly "<section>-out".
 	_srv_count=0
 	_srv_delay=""
-	_clash_addr=$(jq -r '.experimental.clash_api.external_controller // empty' /etc/sing-box/config.json 2>/dev/null)
-	[ -z "$_clash_addr" ] && _clash_addr="$(_lan_ipv4):9090"
+	_clash_addr=""
+	# A config.json left by an earlier Podkop is not the embedded engine's.
+	[ "$_variant" = podkop-exp ] || _clash_addr=$(jq -r '.experimental.clash_api.external_controller // empty' /etc/sing-box/config.json 2>/dev/null)
+	# Podkop Experimental embeds sing-box (no config.json) and, like Forkop 2,
+	# binds the API to 127.0.0.1 unless YACD is on. Loopback works in both cases.
+	[ -z "$_clash_addr" ] && _clash_addr="127.0.0.1:9090"
+	case "$_clash_addr" in
+		0.0.0.0:*|'[::]:'*|':'*) _clash_addr="127.0.0.1:${_clash_addr##*:}" ;;
+	esac
 	_clash_secret=$(uci -q get "$_pkg.settings.yacd_secret_key" 2>/dev/null)
 	_clash_hdr=""
 	[ -n "$_clash_secret" ] && _clash_hdr="Authorization: Bearer $_clash_secret"
@@ -2938,7 +2967,7 @@ method_active_probe() {
 	fi
 	_proxy_name=""
 	if [ -n "$_proxies" ] && [ "$_proxies" != "null" ] && command -v jq >/dev/null 2>&1; then
-		_sel=$(printf '%s' "$_proxies" | jq -r --arg s "$(_sec_clash_tag "$_pkg" "$_sec")" '
+		_sel=$(printf '%s' "$_proxies" | jq -r --arg s "$(_sec_clash_tag "$_pkg" "$_sec" "$_variant")" '
 			.proxies as $p |
 			if ($p[$s] and (($p[$s].type == "Selector") or ($p[$s].type == "URLTest") or ($p[$s].type == "Fallback") or ($p[$s].type == "LoadBalance"))) then $s
 			elif $p[$s + "-out"] then ($s + "-out")

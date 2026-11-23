@@ -18,7 +18,8 @@ grep -Fq 'podkop-exp) return 1' root/usr/lib/podkop_bot/tsnet-provider.sh
 grep -Fq 'podkop|forkop-x)' root/usr/lib/podkop_bot/tsnet-runtime-apply.sh
 sh tools/test-forkop2-mixed-port.sh
 sh tools/test-forkop2-tailscale-native.sh root/usr/lib/podkop_bot/podkop_bot
-# Ensure the embedded bot is the exact validated dev6 build.
+sh tools/test-0202-compat.sh root/usr/lib/podkop_bot/podkop_bot root/usr/libexec/rpcd/podkop_bot
+# Ensure the embedded bot is the exact validated build (vendor.sha256).
 (cd root/usr/lib/podkop_bot && sha256sum -c vendor.sha256)
 grep -Fq '_group_selected_human_name()' root/usr/lib/podkop_bot/podkop_bot
 grep -Fq '_forkop_native_human_label()' root/usr/lib/podkop_bot/podkop_bot

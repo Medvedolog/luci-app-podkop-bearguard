@@ -6,6 +6,7 @@ TSNET_RUNTIME_DIR="/tmp/podkop-bot-tsnet"
 TSNET_CAP_CACHE="$TSNET_RUNTIME_DIR/capability"
 TSNET_ENDPOINT_TAG="podkop-bot-tailscale"
 TSNET_IDENTITY_DIR="$TSNET_STATE_DIR/tailscale-state"
+TSNET_ENGINE_STATUS_BOT="/usr/lib/podkop_bot/podkop_bot"
 
 mkdir -p "$TSNET_RUNTIME_DIR" 2>/dev/null || true
 
@@ -69,6 +70,36 @@ tsnet_provider() {
         return 0
     fi
     printf '%s\n' none
+}
+
+# Resolve engine state through the same read-only helper as BearGuard Overview.
+# Check provider as well: an Experimental daemon must not authorize a restart
+# of the unrelated standalone service behind a stale provider/config snapshot.
+tsnet_engine_state() {
+    local provider="${1:-}" reply state
+    [ -n "$provider" ] || provider=$(tsnet_provider)
+    if [ -r "$TSNET_ENGINE_STATUS_BOT" ] &&
+       grep -Fxq '# Supports --engine-status-json (read-only)' "$TSNET_ENGINE_STATUS_BOT"; then
+        reply=$(sh "$TSNET_ENGINE_STATUS_BOT" --engine-status-json 2>/dev/null) &&
+        state=$(printf '%s\n' "$reply" | jq -ers --arg provider "$provider" '
+            select(length == 1) | .[0] | select(type == "object")
+            | select(
+                if $provider == "podkop-exp" then
+                    .variant == "podkop-exp" and .service == "podkop"
+                else
+                    .service == "sing-box" and (
+                        (($provider == "forkop-native" or $provider == "forkop-x") and .variant == "forkop")
+                        or ($provider == "podkop" and (.variant == "original" or .variant == "evolution")))
+                    and .state == .process_state
+                end)
+            | select(.process_state == "running" or .process_state == "stopped")
+            | select(if .process_state == "running" then
+                (.pid | numbers | . >= 1 and . <= 2147483647 and . == floor)
+              else .state != "running" end)
+            | .state | select(. == "running" or . == "stopped")
+        ' 2>/dev/null) && { printf '%s\n' "$state"; return 0; }
+    fi
+    printf '%s\n' unknown
 }
 
 tsnet_config_path() {

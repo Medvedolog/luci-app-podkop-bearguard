@@ -1852,7 +1852,8 @@ _bg_experimental_info() {
 	reply=$(ubus -t 2 call podkop run '{"command":"get_system_info","params":[]}' 2>/dev/null) || reply=""
 	body=$(printf '%s' "$reply" | jq -ces 'select(length == 1) | .[0]
 		| select(.code == 0 and (.stdout | type == "string"))
-		| .stdout | fromjson | select(.engine | type == "string" and length > 0)' 2>/dev/null) || body=""
+		| .stdout | fromjson | select(type == "object")
+		| select(any(.engine, .sing_box_version; strings | test("\\S")))' 2>/dev/null) || body=""
 	# If the service does not answer, don't spawn a second Go process just
 	# to identify the built-in engine on a memory-constrained router.
 	[ -n "$body" ] || body='{}'
@@ -1868,8 +1869,8 @@ method_singbox_info() {
 	if [ "$_sb_variant" = podkop-exp ] || [ -n "$exp_version" ]; then
 		embedded=$(_bg_experimental_info)
 		jq -c --arg pkgver "$exp_version" '{
-			ok: true, version: (.sing_box_version | strings // "unknown"),
-			engine: (.engine | strings // ""), flavour: "embedded",
+			ok: true, version: ((.sing_box_version | strings | select(test("\\S"))) // "unknown"),
+			engine: ((.engine | strings | select(test("\\S"))) // ""), flavour: "embedded",
 			package: "podkop-exp", package_version: $pkgver
 		}' <<EOF
 $embedded
@@ -1910,15 +1911,6 @@ EOF
 		_line=$(apk list --installed 2>/dev/null | grep -E '^sing-box' | head -1)
 		_pkgname=$(printf '%s' "$_line" | sed 's/-[0-9].*//')
 		_ver=$(printf '%s' "$_line" | sed -n 's/^sing-box[a-z-]*-\([0-9][^ ]*\).*/\1/p')
-	fi
-	# Fork installers may put sing-box outside opkg/apk. Ask the installed
-	# binary first, avoiding a full installer status scan on the Overview tab.
-	if [ -z "$_ver" ] && command -v sing-box >/dev/null 2>&1; then
-		if command -v timeout >/dev/null 2>&1; then
-			_ver=$(timeout 3 sing-box version 2>/dev/null | awk '$1=="sing-box" && $2=="version" {print $3; exit}')
-		else
-			_ver=$(sing-box version 2>/dev/null | awk '$1=="sing-box" && $2=="version" {print $3; exit}')
-		fi
 	fi
 	# Fallback version source: variant-specific state file, then unknown.
 	# Path differs by variant: forkop → /etc/forkop, plus → /etc/podkop-plus

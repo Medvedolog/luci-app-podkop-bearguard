@@ -4,11 +4,21 @@
 
 log() { logger -t podkop-bot-tsnet "$*"; }
 
-singbox_running() {
-    if [ -x /etc/init.d/sing-box ]; then
-        /etc/init.d/sing-box running >/dev/null 2>&1 && return 0
+engine_state_for_apply() {
+    local state
+    if [ "$1" = "$(tsnet_provider)" ]; then
+        state=$(tsnet_engine_state "$1")
+    else
+        state=unknown
     fi
-    pidof sing-box >/dev/null 2>&1
+    case "$state" in
+        running|stopped) printf '%s\n' "$state" ;;
+        *) log "event=runtime_apply result=engine_status_unverified"; return 1 ;;
+    esac
+}
+
+restart_owned_singbox() {
+    /etc/init.d/sing-box restart >/dev/null 2>&1
 }
 
 provider_busy() {
@@ -56,12 +66,15 @@ render_endpoint() {
 }
 
 apply_runtime() {
+    local provider engine_state
     # Never mutate a Go embedded core or Forkop's native generated dataplane.
     # The legacy overlay is supported only for the two explicitly verified providers.
-    case "$(tsnet_provider)" in
+    provider=$(tsnet_provider)
+    case "$provider" in
         podkop|forkop-x) ;;
         *) log "event=runtime_apply result=unsupported_provider"; return 4 ;;
     esac
+    engine_state_for_apply "$provider" >/dev/null || return 5
     provider_busy && return 3
     _cfg=$(tsnet_config_path)
     [ -r "$_cfg" ] || return 2
@@ -89,16 +102,29 @@ apply_runtime() {
     cp -p "$_cfg" "$_bak" 2>/dev/null || { rm -f "$_tmp" "$_bak"; return 1; }
     chmod --reference="$_cfg" "$_tmp" 2>/dev/null || chmod 600 "$_tmp" 2>/dev/null || true
     chown --reference="$_cfg" "$_tmp" 2>/dev/null || true
+    engine_state=$(engine_state_for_apply "$provider") || { rm -f "$_tmp" "$_bak"; return 5; }
     mv -f "$_tmp" "$_cfg" || { rm -f "$_tmp" "$_bak"; return 1; }
 
-    if singbox_running; then
-        if /etc/init.d/sing-box restart >/dev/null 2>&1; then
+    if [ "$engine_state" = running ]; then
+        # Another provider or a failed status transport must not authorize a
+        # restart between the config swap and the service operation.
+        engine_state=$(engine_state_for_apply "$provider") || {
+            mv -f "$_bak" "$_cfg" >/dev/null 2>&1 || true
+            return 5
+        }
+        if [ "$engine_state" = stopped ]; then
+            rm -f "$_bak"
+            return 0
+        fi
+        if restart_owned_singbox; then
             rm -f "$_bak"
             log "event=runtime_apply restart=ok provider=$(tsnet_provider) enabled=$(tsnet_state_get enabled)"
             return 0
         fi
         mv -f "$_bak" "$_cfg" >/dev/null 2>&1 || true
-        /etc/init.d/sing-box restart >/dev/null 2>&1 || true
+        if engine_state_for_apply "$provider" >/dev/null; then
+            restart_owned_singbox || true
+        fi
         log "event=runtime_apply rollback=restart_failed provider=$(tsnet_provider)"
         return 1
     fi

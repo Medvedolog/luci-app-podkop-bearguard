@@ -73,10 +73,78 @@ MOCK_UBUS='{"code":0,"stdout":"{\"sing_box_version\":\"1.14.4-pdk-209086dbd08a\"
 	run "$T/fake-bot" method_singbox_info | assert '.package == "podkop-exp" and .version == "1.14.4-pdk-209086dbd08a" and (.engine | contains("r28"))'
 MOCK_OPKG='' MOCK_VARIANT=podkop-exp MOCK_UBUS='{"code":1,"stdout":"{\"engine\":\"bad\"}"}' \
 	run "$T/fake-bot" method_singbox_info | assert '.package == "podkop-exp" and .version == "unknown" and .engine == ""'
+MOCK_UBUS='{"code":0,"stdout":"{\"sing_box_version\":\"1.14.4-pdk-209086dbd08a\"}"}' \
+	run "$T/fake-bot" method_singbox_info | assert '.version == "1.14.4-pdk-209086dbd08a" and .engine == ""'
+MOCK_UBUS='{"code":0,"stdout":"{\"sing_box_version\":\"1.14.4-pdk-209086dbd08a\",\"engine\":\" \"}"}' \
+	run "$T/fake-bot" method_singbox_info | assert '.version == "1.14.4-pdk-209086dbd08a" and .engine == ""'
 MOCK_OPKG='podkop-engine - 1.14.4-r28' \
 	run "$T/fake-bot" method_singbox_info | assert '.package == "podkop-engine" and .flavour == "slim" and .package_version == "1.14.4-r28"'
 MOCK_OPKG='' MOCK_APK='podkop-engine-full-1.14.4-r28' \
 	run "$T/fake-bot" method_singbox_info | assert '.package == "podkop-engine-full" and .flavour == "full" and .package_version == "1.14.4-r28"'
+
+PROVIDER=root/usr/lib/podkop_bot/tsnet-provider.sh
+APPLY=root/usr/lib/podkop_bot/tsnet-runtime-apply.sh
+TSRPC=root/usr/libexec/rpcd/podkop_bot_tailscale
+sed -n '/^tsnet_engine_state() {/,/^}/p' "$PROVIDER" > "$T/ts-engine.sh"
+sed -n '/^tailscale_write_guard() {/,/^}/p' "$TSRPC" >> "$T/ts-engine.sh"
+ts_state() {
+	sh -c 'TSNET_ENGINE_STATUS_BOT="$1"; . "$2"; tsnet_engine_state "$3"' sh "$1" "$T/ts-engine.sh" "$2"
+}
+forkop='{"state":"running","process_state":"running","pid":4242,"variant":"forkop","service":"sing-box"}'
+[ "$(MOCK_STATE=$forkop ts_state "$T/fake-bot" forkop-native)" = running ]
+[ "$(MOCK_STATE=$forkop ts_state "$T/fake-bot" podkop)" = unknown ]
+[ "$(ts_state "$T/fake-bot" podkop-exp)" = running ]
+[ "$(ts_state "$T/fake-bot" forkop-native)" = unknown ]
+[ "$(ts_state "$T/old-bot" forkop-native)" = unknown ]
+[ ! -e "$BAD_BOT_RUN" ]
+no_pid='{"state":"running","process_state":"running","variant":"forkop","service":"sing-box"}'
+[ "$(MOCK_STATE=$no_pid ts_state "$T/fake-bot" forkop-native)" = unknown ]
+guard=$(sh -c 'TSNET_ENGINE_STATUS_BOT="$1"; . "$2"; _provider=forkop-native; tailscale_write_guard' sh "$T/old-bot" "$T/ts-engine.sh") || :
+printf '%s\n' "$guard" | assert '.ok == false and .reason == "engine_status_unverified"'
+
+for name in engine_state_for_apply apply_runtime; do
+	sed -n "/^$name() {/,/^}/p" "$APPLY"
+done > "$T/apply.sh"
+cat > "$T/apply-stubs.sh" <<'STUB'
+log() { :; }
+tsnet_provider() { echo forkop-x; }
+tsnet_engine_state() {
+    printf '.\n' >> "$CHECKS"
+    sed -n "$(wc -l < "$CHECKS")p" "$STATES"
+}
+provider_busy() { return 1; }
+render_endpoint() { echo '{"type":"tailscale","tag":"test-tsnet"}'; }
+tsnet_state_get() { echo true; }
+tsnet_config_path() { echo "$CFG"; }
+restart_owned_singbox() { echo requested >> "$RESTARTS"; }
+TSNET_ENDPOINT_TAG=test-tsnet
+STUB
+export CFG="$T/config.json" CHECKS="$T/checks" STATES="$T/states" RESTARTS="$T/restarts"
+apply_case() {
+	want="$1"; shift
+	echo '{"endpoints":[]}' > "$CFG"
+	cp "$CFG" "$T/original"
+	: > "$CHECKS"; : > "$RESTARTS"
+	printf '%s\n' "$@" > "$STATES"
+	got=0
+	sh -c '. "$1"; . "$2"; apply_runtime' sh "$T/apply-stubs.sh" "$T/apply.sh" || got=$?
+	[ "$got" = "$want" ]
+}
+apply_case 5 unknown
+cmp -s "$CFG" "$T/original" && [ ! -s "$RESTARTS" ]
+apply_case 5 running unknown
+cmp -s "$CFG" "$T/original" && [ ! -s "$RESTARTS" ]
+apply_case 5 running running unknown
+cmp -s "$CFG" "$T/original" && [ ! -s "$RESTARTS" ]
+apply_case 0 running running running
+[ "$(cat "$RESTARTS")" = requested ]
+assert '.endpoints[0].tag == "test-tsnet"' < "$CFG"
+apply_case 0 stopped stopped
+[ ! -s "$RESTARTS" ]
+assert '.endpoints[0].tag == "test-tsnet"' < "$CFG"
+[ -z "$(find "$T" -name '.podkop-bot-tsnet.*' -print)" ]
+! grep -q 'pidof sing-box' "$APPLY" "$TSRPC"
+! grep -Eq '(^|[[:space:]/])sing-box version[[:space:]]' "$rpcd"
 
 node - <<'JS'
 const assert = require('node:assert/strict');

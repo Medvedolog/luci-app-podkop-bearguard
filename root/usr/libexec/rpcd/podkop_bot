@@ -17,6 +17,7 @@
 #     while the process is alive.
 
 BOT_PATH="/usr/bin/podkop_bot"
+ENGINE_STATUS_BOT_PATH="/usr/lib/podkop_bot/podkop_bot"
 INIT_PATH="/etc/init.d/podkop_bot"
 INSTALLER_PATH="/usr/lib/podkop_bot/install.sh"
 LUCI_APP_VERSION="0.20.2"   # UI/version.txt use the clean X.Y.Z; the packaging -N suffix (control) is stripped before comparison
@@ -1008,35 +1009,40 @@ method_bot_logs() {
 		"$_lines" "$_init_status" "$(_json_str "$_log")"
 }
 
-# -- resources: lightweight live diagnostics for the Overview mini-card.
-# sing-box PID(s) + summed RSS (podkop runs sing-box; there is no separate
-# "podkop process" — the bot itself measures only sing-box, TZ 4.2), plus RAM
-# available/total. Read-only and cheap, safe to poll every few seconds.
+_bg_engine_status() {
+	local out
+	# Never run an older bot with an unknown option: it may enter daemon mode.
+	if [ -r "$ENGINE_STATUS_BOT_PATH" ] &&
+	   grep -Fxq '# Supports --engine-status-json (read-only)' "$ENGINE_STATUS_BOT_PATH"; then
+		out=$(sh "$ENGINE_STATUS_BOT_PATH" --engine-status-json 2>/dev/null) &&
+		printf '%s\n' "$out" | jq -ces '
+			def state: . == "running" or . == "stopped" or . == "unknown";
+			select(length == 1) | .[0]
+			| select(type == "object" and (.state | state) and (.process_state | state))
+			| {state, process_state,
+				variant: (.variant | strings // ""),
+				service: (.service | strings // ""),
+				pid: (if .process_state == "running" then
+					(.pid | numbers | select(. >= 1 and . <= 2147483647 and . == floor)) // null
+					else null end)}
+		' 2>/dev/null && return 0
+	fi
+	printf '%s\n' '{"state":"unknown","process_state":"unknown","variant":"","service":"","pid":null}'
+}
+
+_bg_engine_rss() {
+	# The PID is the resolver's owned procd instance, not a name match.
+	case "$1" in ''|*[!0-9]*) return ;; esac
+	awk '$1 == "VmRSS:" && $2 ~ /^[0-9]+$/ { print int($2 / 1024); exit }' "/proc/$1/status" 2>/dev/null
+}
+
+# -- resources: dataplane state and owned process memory are separate facts.
+# In Experimental RSS belongs to the whole podkop daemon, not only sing-box.
 method_resources() {
-	# For podkop-exp the Go daemon embeds sing-box; it is the dataplane process.
-	_rs_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
-	# sing-box: pidof may return several PIDs (forks) — sum their RSS.
-	if [ "$_rs_variant" = podkop-exp ]; then
-		_sb_pids=$(pidof podkop 2>/dev/null)
-	else
-		_sb_pids=$(pidof sing-box 2>/dev/null)
-	fi
-	_sb_running="false"; _sb_rss=0; _sb_n=0
-	if [ -n "$_sb_pids" ]; then
-		_sb_running="true"
-		for _p in $_sb_pids; do
-			_r=$(awk '/VmRSS/{print int($2/1024)}' "/proc/$_p/status" 2>/dev/null)
-			[ -n "$_r" ] && { _sb_rss=$((_sb_rss + _r)); _sb_n=$((_sb_n + 1)); }
-		done
-	fi
-	# normalise PID list to a JSON array
-	_sb_pid_json="["
-	_first=1
-	for _p in $_sb_pids; do
-		[ "$_first" = "1" ] && _first=0 || _sb_pid_json="${_sb_pid_json},"
-		_sb_pid_json="${_sb_pid_json}${_p}"
-	done
-	_sb_pid_json="${_sb_pid_json}]"
+	local engine pid rss _ram_avail _ram_total _ram_used _ram_pct _bot_running
+	engine=$(_bg_engine_status)
+	pid=$(printf '%s\n' "$engine" | jq -r '.pid // empty')
+	rss=$(_bg_engine_rss "$pid") || rss=""
 
 	# RAM
 	_ram_avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null)
@@ -1050,9 +1056,16 @@ method_resources() {
 	# bot's own liveness (reuse existing helper)
 	if bot_is_running; then _bot_running="true"; else _bot_running="false"; fi
 
-	printf '{"ok":true,"singbox":{"running":%s,"pids":%s,"count":%s,"rss_mb":%s},"ram":{"avail_mb":%s,"total_mb":%s,"used_mb":%s,"used_pct":%s},"bot_running":%s}\n' \
-		"$_sb_running" "$_sb_pid_json" "$_sb_n" "$_sb_rss" \
-		"$_ram_avail" "$_ram_total" "$_ram_used" "$_ram_pct" "$_bot_running"
+	jq -cn --argjson engine "$engine" --argjson rss "${rss:-null}" \
+		--argjson available "$_ram_avail" --argjson total "$_ram_total" \
+		--argjson used "$_ram_used" --argjson percent "$_ram_pct" --argjson bot "$_bot_running" '
+		{ok: true, singbox: ($engine | . + {
+			running: (if .state == "unknown" then null else .state == "running" end),
+			pids: (if .pid == null then [] else [.pid] end),
+			count: (if .pid == null then 0 else 1 end),
+			rss_mb: $rss}),
+		 ram: {avail_mb: $available, total_mb: $total, used_mb: $used, used_pct: $percent},
+		 bot_running: $bot}'
 }
 
 UPDATE_CACHE="/tmp/podkop_bot_update_check.json"   # daily version-check cache
@@ -1822,15 +1835,45 @@ method_app_info() {
 	printf '{"ok":true,"luci_app_version":"%s","repo":"https://github.com/Medvedolog/luci-app-podkop-bearguard"}\n' "$LUCI_APP_VERSION"
 }
 
+_bg_package_version() {
+	local ver
+	ver=$(opkg list-installed "$1" 2>/dev/null | awk -v name="$1" '$1 == name && $2 == "-" { print $3; exit }')
+	if [ -z "$ver" ]; then
+		ver=$(apk info -v "$1" 2>/dev/null | awk -v prefix="$1-" '
+			index($1, prefix) == 1 && substr($1, length(prefix)+1, 1) ~ /[0-9]/ {
+				print substr($1, length(prefix)+1); exit
+			}')
+	fi
+	printf '%s' "$ver"
+}
+
+_bg_experimental_info() {
+	local reply body
+	reply=$(ubus -t 2 call podkop run '{"command":"get_system_info","params":[]}' 2>/dev/null) || reply=""
+	body=$(printf '%s' "$reply" | jq -ces 'select(length == 1) | .[0]
+		| select(.code == 0 and (.stdout | type == "string"))
+		| .stdout | fromjson | select(.engine | type == "string" and length > 0)' 2>/dev/null) || body=""
+	# If the service does not answer, don't spawn a second Go process just
+	# to identify the built-in engine on a memory-constrained router.
+	[ -n "$body" ] || body='{}'
+	printf '%s\n' "$body"
+}
+
 method_singbox_info() {
 	_ver=""; _flavour="standard"; _pkgname=""
+	local exp_version embedded owned_package
 	# Resolve the true owning package before inspecting an unrelated sing-box.
 	_sb_variant=$(_cached_status | sed -n 's/.*"podkop_variant":"\([^"]*\)".*/\1/p')
-	if [ "$_sb_variant" = podkop-exp ]; then
-		_ver=$(opkg status podkop-exp 2>/dev/null | sed -n 's/^Version: //p' | head -n 1)
-		[ -n "$_ver" ] || _ver=$(apk info -v podkop-exp 2>/dev/null | sed -n 's/^podkop-exp-//p' | head -n 1)
-		[ -n "$_ver" ] || _ver=unknown
-		jq -cn --arg version "$_ver" '{ok:true,version:$version,flavour:"embedded",package:"podkop-exp"}'
+	exp_version=$(_bg_package_version podkop-exp)
+	if [ "$_sb_variant" = podkop-exp ] || [ -n "$exp_version" ]; then
+		embedded=$(_bg_experimental_info)
+		jq -c --arg pkgver "$exp_version" '{
+			ok: true, version: (.sing_box_version | strings // "unknown"),
+			engine: (.engine | strings // ""), flavour: "embedded",
+			package: "podkop-exp", package_version: $pkgver
+		}' <<EOF
+$embedded
+EOF
 		return
 	fi
 	if [ "$_sb_variant" = forkop ] && [ -r /usr/share/sing-box-forkop/variant ]; then
@@ -1841,6 +1884,21 @@ method_singbox_info() {
 		jq -cn --arg version "$_ver" --arg flavour "$_flavour" '{ok:true,version:$version,flavour:$flavour,package:"sing-box-forkop"}'
 		return
 	fi
+
+	# Standalone Engine replaces the OpenWrt sing-box package but does not
+	# have a sing-box-prefixed package name. The failsafe service isn't core.
+	for owned_package in podkop-engine-full podkop-engine; do
+		_ver=$(_bg_package_version "$owned_package")
+		[ -n "$_ver" ] || continue
+		_flavour=slim
+		[ "$owned_package" = podkop-engine-full ] && _flavour=full
+		jq -cn --arg version "$_ver" --arg package "$owned_package" \
+			--arg flavour "$_flavour" '{
+				ok: true, version: $version, flavour: $flavour,
+				package: $package, package_version: $version
+			}'
+		return
+	done
 
 	# Package name + version from the package manager (variant-independent).
 	if command -v opkg >/dev/null 2>&1; then

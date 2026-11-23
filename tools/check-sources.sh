@@ -315,5 +315,7 @@ grep -Fq 'tools/hwelp-version.sh' .github/workflows/ci.yml || {
     echo "CI must version hwelp-proxy from the release tag" >&2; fail=1
 }
 
+sh tools/test-engine-status.sh || fail=1
+
 [ "$fail" -eq 0 ] || { echo "source checks failed"; exit 1; }
 echo "source checks passed"

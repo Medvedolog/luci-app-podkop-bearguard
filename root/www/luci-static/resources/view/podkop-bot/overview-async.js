@@ -41,11 +41,11 @@ return base.constructor.extend({
 	buildResources:function(r){
 		if(!r||r.ok===false)return E('div',{'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},_('Ресурсы')),rrow(_('Состояние'),dot('grey',_('недоступно')))]);
 		var sb=r.singbox||{},ram=r.ram||{};
-		var sbNode=sb.running?dot('green',_('работает')+' · PID '+((sb.pids&&sb.pids.length)?sb.pids.join(', '):'?')+(sb.count>1?(' ('+sb.count+')'):'')+' · RSS '+(sb.rss_mb!=null?sb.rss_mb:'?')+' MB'):dot('red',_('не запущен'));
+		var sbNode=this.buildSingboxResource(sb);
 		var ramColour=(ram.avail_mb!=null&&ram.avail_mb<60)?'yellow':'green';
 		var ramNode=dot(ramColour,(ram.avail_mb!=null?ram.avail_mb:'?')+' / '+(ram.total_mb!=null?ram.total_mb:'?')+' MB '+_('свободно')+(ram.used_pct!=null?(' · '+ram.used_pct+'% занято'):''));
 		var hwelpCell=E('span',{},dot('grey',_('проверяю…'))),warpCell=E('span',{},dot('grey',_('проверяю…')));
-		var box=E('div',{'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},_('Ресурсы')),rrow('sing-box',sbNode),rrow('hwelp proxy',hwelpCell),rrow(_('WARP Rescue'),warpCell),rrow(_('Оперативная память'),ramNode)]);
+		var box=E('div',{'class':'cbi-section','style':'max-width:600px;border:1px solid var(--border-color-medium,rgba(127,127,127,.2));border-radius:8px;padding:1em 1.2em;background:var(--background-color-high,var(--background-color,var(--background,rgba(40,40,40,.94))));margin-top:1em;'},[E('h3',{'style':'margin-top:0;'},_('Ресурсы')),rrow(this.singboxResourceLabel(sb),sbNode),rrow('hwelp proxy',hwelpCell),rrow(_('WARP Rescue'),warpCell),rrow(_('Оперативная память'),ramNode)]);
 		Promise.all([callBearholeStatus().catch(function(){return null;}),callRescueStatus().catch(function(){return null;})]).then(function(v){
 			var bh=v[0],wr=v[1];
 			if(!bh||bh.ok===false)dom.content(hwelpCell,dot('grey',_('недоступно')));

@@ -21,6 +21,8 @@ jobs:
       - run: sh tools/check-sources.sh
       - name: Verify 0.20.3 vendored bot and update versions
         run: sh tools/test-modern-sync-0203.sh
+      - name: Installer no-downgrade regression
+        run: sh tools/test-installer-no-downgrade-0203.sh
       - name: Modern Forkop 2 / Podkop Experimental editor regressions
         run: |
           sh tools/test-modern-0203.sh

@@ -30,7 +30,7 @@ printf '#!/bin/sh\nBOT_VERSION="$(touch /tmp/should-not-exist)"\n' > "$tmp/bot"
 if version_of "$tmp/bot" >/dev/null; then echo 'FAIL: unsafe version input accepted' >&2; exit 1; fi
 
 ver_gt 0.20.3-dev4 0.20.2
-ver_gt 0.20.3-dev4 0.20.3-dev4
+ver_gt 0.20.3-dev4 0.20.3-dev3
 ver_gt 0.20.3 0.20.3-dev4
 if ver_gt 0.20.3-dev4 0.20.3; then exit 1; fi
 if ver_gt 0.20.3-dev4 0.20.3-dev4; then exit 1; fi

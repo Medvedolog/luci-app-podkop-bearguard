@@ -19,6 +19,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: sh tools/check-sources.sh
+      - name: Verify 0.20.3 vendored bot and update versions
+        run: sh tools/test-modern-sync-0203.sh
+      - name: Modern Forkop 2 / Podkop Experimental editor regressions
+        run: |
+          sh tools/test-modern-0203.sh
+          sh tools/test-modern-dns-0203.sh
       - run: sh -n root/usr/libexec/rpcd/podkop_bot_warpscout
       - run: sh tools/check-async-wrappers.sh
 

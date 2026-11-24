@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🐻 Podkop BearGuard 0.20.3-dev
+# 🐻 Podkop BearGuard 0.20.3-dev4
 
 **LuCI-комплекс для управления podkop_bot, Podkop/Forkop, Tailscale/tsnet, WARP, аварийным транспортом и диагностикой OpenWrt**
 
-`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.20.3-dev` · OpenWrt · LuCI · opkg / apk
+`Podkop BearGuard` · package: `luci-app-podkop-bot` · `0.20.3-dev4` · OpenWrt · LuCI · opkg / apk
 
 [![Release](https://img.shields.io/github/v/release/Medvedolog/luci-app-podkop-bearguard?style=flat-square&label=release&color=0969da)](https://github.com/Medvedolog/luci-app-podkop-bearguard/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/Medvedolog/luci-app-podkop-bearguard/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/Medvedolog/luci-app-podkop-bearguard/actions/workflows/ci.yml)
@@ -21,7 +21,7 @@
 
 ---
 
-> **0.20.3 — разработка, пока не релиз.** Встроенный `podkop_bot 0.20.3-dev3` синхронизирован с [PR #18](https://github.com/Medvedolog/podkop_bot/pull/18) по точному Git blob и SHA256. В [BearGuard PR #27](https://github.com/Medvedolog/luci-app-podkop-bearguard/pull/27) сохранён функционал 0.20.2-r3 и добавлены современные Telegram-редакторы Forkop 2 / Podkop Experimental: маршруты, списки, устройства, параметры секций, DNS/Bootstrap и LAN-списки. Тестируются обе схемы UCI, корректность встроенной версии и сохранность установщика. **Нет готового пакета 0.20.3 и нет аппаратного подтверждения.** До проверки OpenWrt opkg/apk не переносить в `main`, не публиковать stable и не устанавливать на рабочий маршрутизатор без резервной конфигурации.
+> **0.20.3-dev4 — разработка, не стабильный релиз.** BearGuard содержит **побайтово идентичный** [podkop_bot 0.20.3-dev4](https://github.com/Medvedolog/podkop_bot/pull/18), с закреплёнными SHA256 и Git blob. В [BearGuard PR #27](https://github.com/Medvedolog/luci-app-podkop-bearguard/pull/27) сохранены улучшения 0.20.2-r3 и добавлены управление отдельными упорядоченными DNS-серверами Podkop Experimental, DNS fallback/detour и WAN для Forkop 2, IPv6/CIDR, мониторинг WAN, режимы BitTorrent, а также все ранее восстановленные списки и параметры секций. Проверки включают source integrity, shell/Telegram/UCI mock и сборки пакетов OpenWrt через CI. **Полевые испытания на физических маршрутизаторах ещё не выполнялись; до них нельзя считать 0.20.3 стабильной версией.** [Список функций и ограничений](https://github.com/Medvedolog/podkop_bot/blob/dev/0.20.3-legacy-parity/docs/ROADMAP_0.20.3.md).
 
 > **0.20.2 — тестовая ветка, на железе не проверялась.** Исправлены регрессии 0.20.1: в Podkop Experimental снова виден список серверов секции, в Forkop 2 снова работают выбор сервера в группах с пробелами, кириллицей или `/` в имени и обновление подписок из Telegram. Сверено с Forkop **2.0.0** и Podkop Experimental **v0.8.14** (engine r25): группы секций с меткой находятся и в боте, и в LuCI, LuCI читает Clash API при выключенном YACD, несколько адресов проверки серверов не схлопываются в один. Стабильный релиз остаётся прежним.
 

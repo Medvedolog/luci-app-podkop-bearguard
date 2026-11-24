@@ -2,8 +2,8 @@
 # Keep this immutable-source manifest consistent with vendor.sha256.
 bot_repository=Medvedolog/podkop_bot
 bot_branch=dev/0.20.3-legacy-parity
-bot_commit=03692f8d9e2481783b8c4d70453aa1ed13ffb6ff
+bot_commit=1245b003f9a2e23e957aad36cc287aac37072a11
 bot_blob=a883e91e30fe2d51461336415946672b736c552d
 bot_sha256=148c2c2aaac456df9fb3d6620a4bab90fafb3b2bda2ca6e287d568267f7857a6
-installer_blob=68032c66ea5c8b6cdf57c9f5b5a6b442313425ac
+installer_blob=773c5c6e3a21ec36b187cee4df2e9e8260a5ab79
 init_blob=cf729a3cc7040e3d8fd17e5d1da81cc336e33ec8

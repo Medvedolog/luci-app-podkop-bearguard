@@ -11,9 +11,9 @@ async=root/usr/libexec/rpcd/podkop_bot_update_async
 [ "$(sed -n 's/^BOT_VERSION="\([^"]*\)".*/\1/p' "$bot" | head -n1)" = 0.20.3-dev3 ]
 (cd "$base" && sha256sum -c vendor.sha256)
 [ "$(git hash-object "$bot")" = a883e91e30fe2d51461336415946672b736c552d ]
-[ "$(git hash-object "$base/install.sh")" = 68032c66ea5c8b6cdf57c9f5b5a6b442313425ac ]
+[ "$(git hash-object "$base/install.sh")" = 773c5c6e3a21ec36b187cee4df2e9e8260a5ab79 ]
 [ "$(git hash-object "$base/podkop_bot_init")" = cf729a3cc7040e3d8fd17e5d1da81cc336e33ec8 ]
-grep -qx 'bot_commit=03692f8d9e2481783b8c4d70453aa1ed13ffb6ff' "$base/vendor.source"
+grep -qx 'bot_commit=1245b003f9a2e23e957aad36cc287aac37072a11' "$base/vendor.source"
 grep -qx 'bot_blob=a883e91e30fe2d51461336415946672b736c552d' "$base/vendor.source"
 grep -qx 'bot_sha256=148c2c2aaac456df9fb3d6620a4bab90fafb3b2bda2ca6e287d568267f7857a6' "$base/vendor.source"
 

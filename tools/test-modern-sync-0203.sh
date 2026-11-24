@@ -10,12 +10,12 @@ async=root/usr/libexec/rpcd/podkop_bot_update_async
 [ "$(sed -n 's/^LUCI_APP_VERSION="\([^"]*\)".*/\1/p' root/usr/libexec/rpcd/podkop_bot)" = 0.20.3 ]
 [ "$(sed -n 's/^BOT_VERSION="\([^"]*\)".*/\1/p' "$bot" | head -n1)" = 0.20.3-dev4 ]
 (cd "$base" && sha256sum -c vendor.sha256)
-[ "$(git hash-object "$bot")" = 89ec4bdc4d37d8637074a43a573945ab433f0ed9 ]
+[ "$(git hash-object "$bot")" = 37ea0e75f2a1f2f20be74a5340e249736c6c5749 ]
 [ "$(git hash-object "$base/install.sh")" = c06f7f007e307de893e0dc2212fc61368de8cd05 ]
 [ "$(git hash-object "$base/podkop_bot_init")" = cf729a3cc7040e3d8fd17e5d1da81cc336e33ec8 ]
-grep -qx 'bot_commit=eb9db9524544ea7359d6d46b9c3378aa90fbfcd6' "$base/vendor.source"
-grep -qx 'bot_blob=89ec4bdc4d37d8637074a43a573945ab433f0ed9' "$base/vendor.source"
-grep -qx 'bot_sha256=496a99c93eaee753e3b87bd248da5c89a543294b79817f68d90321c40b72982b' "$base/vendor.source"
+grep -qx 'bot_commit=643b608650de6d31005ba91adc58e9f1c43b05b2' "$base/vendor.source"
+grep -qx 'bot_blob=37ea0e75f2a1f2f20be74a5340e249736c6c5749' "$base/vendor.source"
+grep -qx 'bot_sha256=9927d5fa18ecc4b41faa6945e66cf648c3bec44863915c1bce50c7d3b69da728' "$base/vendor.source"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM

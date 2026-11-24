@@ -30,6 +30,7 @@ jobs:
           sh tools/test-modern-dns-rows-0203.sh
           sh tools/test-modern-advanced-0203.sh
           sh tools/test-modern-ipv6-0203.sh
+          sh tools/test-modern-rollback-0203.sh
       - run: sh -n root/usr/libexec/rpcd/podkop_bot_warpscout
       - run: sh tools/check-async-wrappers.sh
 

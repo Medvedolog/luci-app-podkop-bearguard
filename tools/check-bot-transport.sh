@@ -7,7 +7,7 @@ BOT="root/usr/lib/podkop_bot/podkop_bot"
 sh -n "$BOT"
 
 expected_version=$(cat version.txt)
-grep -Fq "BOT_VERSION=\"$expected_version\"" "$BOT" || {
+grep -Eq "^BOT_VERSION=\"$expected_version(-dev[0-9]+)?\"$" "$BOT" || {
     echo "bot transport: vendored BOT_VERSION does not match $expected_version" >&2; exit 1;
 }
 grep -Fq 'PODKOP_TRANSPORT_PATCH_V2' "$BOT" || {

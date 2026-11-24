@@ -1,0 +1,75 @@
+name: Publish BearGuard 0.20.2-r3 test packages
+on:
+  push:
+    branches: [automation/publish-test-0202-r3]
+    paths:
+      - '.github/workflows/publish-0202-r3.yml'
+      - 'tools/publish-0202-r3.sh'
+      - 'docs/RELEASE-0202-R3.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-test-0202-r3
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'Medvedolog/luci-app-podkop-bearguard'
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify exact successful OpenWrt package artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: 1cab8ee29646204e666388bfe4d0e0bed62d014b
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_SHA"
+          run=45201952848
+          artifact=14832906964
+          digest=sha256:ca627284dc8976194fde5e2301341dc93b902cf283232a4f7318a1bccdad0826
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" > run.json
+          jq -e --arg sha "$EXPECTED_SHA" --arg repo "$GITHUB_REPOSITORY" \
+            '.head_sha==$sha and .repository.full_name==$repo and .head_branch=="dev/0.20.2"
+             and .event=="pull_request" and .conclusion=="success" and .run_attempt==1' run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact" > artifact.json
+          jq -e --arg sha "$EXPECTED_SHA" --arg digest "$digest" --argjson run "$run" \
+            '.workflow_run.head_sha==$sha and .workflow_run.id==$run and .name=="owfeed-packages"
+             and (.expired | not) and .digest==$digest' artifact.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > artifact.zip
+          echo "${digest#sha256:}  artifact.zip" | sha256sum --strict -c -
+          mkdir upload
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          with ZipFile("artifact.zip") as archive:
+              for member in archive.infolist():
+                  path = PurePosixPath(member.filename)
+                  if member.is_dir() or path.suffix not in {".apk", ".ipk"}:
+                      continue
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit("unexpected package member path")
+                  target = Path("upload") / path.name
+                  data = archive.read(member)
+                  if target.exists() and target.read_bytes() != data:
+                      raise SystemExit(f"conflicting package filename {target}")
+                  target.write_bytes(data)
+          PY
+          test "$(find upload -maxdepth 1 -type f | wc -l)" -eq 11
+          (cd upload && sha256sum -- * > SHA256SUMS)
+          test -s upload/luci-app-podkop-bot_0.20.2-r3_all.ipk
+          test -s upload/luci-app-podkop-bot-0.20.2-r3.apk
+          cp docs/RELEASE-0202-R3.md release-notes.md
+      - name: Publish verified test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/publish-0202-r3.sh Medvedolog/luci-app-podkop-bearguard 1cab8ee29646204e666388bfe4d0e0bed62d014b 'BearGuard 0.20.2-r3 TEST · Podkop Experimental 0.8.21 / Forkop 2.0'

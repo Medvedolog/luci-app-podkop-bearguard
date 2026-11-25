@@ -29,6 +29,7 @@ jobs:
           sh tools/test-modern-dns-0203.sh
           sh tools/test-modern-dns-rows-0203.sh
           sh tools/test-modern-advanced-0203.sh
+          sh tools/test-exp-0823-0203.sh
           sh tools/test-proxy-priorities-0203.sh
           sh tools/test-modern-mixed-auth-0203.sh
           sh tools/test-modern-ipv6-0203.sh

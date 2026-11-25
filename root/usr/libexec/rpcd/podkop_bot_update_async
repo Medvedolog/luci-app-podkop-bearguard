@@ -17,18 +17,33 @@ HWELP_RESULT="$STATE_DIR/hwelp_install.result"
 mkdir -p "$STATE_DIR" 2>/dev/null
 
 json_str(){ printf '%s' "$1" | jsonfilter -e '@' >/dev/null 2>&1 && printf '%s' "$1" || printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g;s/"/\\"/g')"; }
-version_of(){ [ -f "$1" ] && sed -n 's/^BOT_VERSION="\([0-9][0-9.]*\)".*/\1/p' "$1" | head -n1; }
+# Accept stable and dev versions without evaluating any file contents as code.
+version_of(){
+  [ -f "$1" ] || return 1
+  _v=$(sed -n 's/^BOT_VERSION="\([^"]*\)".*/\1/p' "$1" | head -n1)
+  printf '%s\n' "$_v" | grep -Eq '^[0-9]+(\.[0-9]+){2}(-dev[0-9]+)?$' || return 1
+  printf '%s' "$_v"
+}
 ver_gt(){
-  a=$1 b=$2; [ "$a" = "$b" ] && return 1
-  i=1
-  while [ "$i" -le 4 ]; do
-    av=$(printf '%s' "$a" | cut -d. -f"$i"); bv=$(printf '%s' "$b" | cut -d. -f"$i")
-    case "$av" in ''|*[!0-9]*) av=0;; esac; case "$bv" in ''|*[!0-9]*) bv=0;; esac
+  local a="$1" b="$2" base_a base_b i av bv ad bd
+  [ "$a" != "$b" ] || return 1
+  base_a=$(printf '%s' "$a" | cut -d- -f1)
+  base_b=$(printf '%s' "$b" | cut -d- -f1)
+  for i in 1 2 3 4; do
+    av=$(printf '%s' "$base_a" | cut -d. -f"$i")
+    bv=$(printf '%s' "$base_b" | cut -d. -f"$i")
+    case "$av" in ''|*[!0-9]*) av=0;; esac
+    case "$bv" in ''|*[!0-9]*) bv=0;; esac
     [ "$av" -gt "$bv" ] 2>/dev/null && return 0
     [ "$av" -lt "$bv" ] 2>/dev/null && return 1
-    i=$((i+1))
   done
-  return 1
+  # For equal core versions: stable outranks dev; dev4 outranks dev3.
+  case "$a" in *-dev*) ad=$(printf '%s' "$a" | sed 's/.*-dev//');; *) ad=stable;; esac
+  case "$b" in *-dev*) bd=$(printf '%s' "$b" | sed 's/.*-dev//');; *) bd=stable;; esac
+  [ "$ad" = stable ] && [ "$bd" != stable ] && return 0
+  [ "$bd" = stable ] && return 1
+  [ "$ad" = stable ] && return 1
+  [ "$ad" -gt "$bd" ] 2>/dev/null
 }
 pid_alive(){ [ -s "$PID_FILE" ] || return 1; p=$(cat "$PID_FILE" 2>/dev/null); case "$p" in ''|*[!0-9]*) return 1;; esac; kill -0 "$p" 2>/dev/null; }
 hwelp_install_alive(){ [ -s "$HWELP_PID" ] || return 1; p=$(cat "$HWELP_PID" 2>/dev/null); case "$p" in ''|*[!0-9]*) return 1;; esac; kill -0 "$p" 2>/dev/null; }

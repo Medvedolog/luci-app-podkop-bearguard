@@ -15,7 +15,7 @@ async=root/usr/libexec/rpcd/podkop_bot_update_async
 [ "$(git hash-object "$base/podkop_bot_init")" = cf729a3cc7040e3d8fd17e5d1da81cc336e33ec8 ]
 grep -qx 'bot_commit=44b088131b51e8ea864a340600e8c710cecd50d6' "$base/vendor.source"
 grep -qx 'bot_blob=5127b378ddf6f884e54e72075757c47223d5cab3' "$base/vendor.source"
-grep -qx 'bot_sha256=efb08a83410e52a19709ced4c4f9f4498da61060e52ae03a240154c7e8c81958' "$base/vendor.source"
+grep -qx 'bot_sha256=79173a3fba91737e7e433f39eef3ad756ba82e984c89c5e5cd29f149d436829a' "$base/vendor.source"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
